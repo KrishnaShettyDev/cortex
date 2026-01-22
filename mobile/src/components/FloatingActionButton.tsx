@@ -1,0 +1,47 @@
+import React from 'react';
+import { TouchableOpacity, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { gradients, shadows } from '../theme';
+
+interface FloatingActionButtonProps {
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  size?: number;
+}
+
+export function FloatingActionButton({
+  icon,
+  onPress,
+  size = 56,
+}: FloatingActionButtonProps) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.8}
+      style={[styles.container, shadows.lg]}
+    >
+      <LinearGradient
+        colors={gradients.primary as [string, string, ...string[]]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          styles.gradient,
+          { width: size, height: size, borderRadius: size / 2 },
+        ]}
+      >
+        <Ionicons name={icon} size={24} color="#0D0D0D" />
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    borderRadius: 28,
+  },
+  gradient: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
