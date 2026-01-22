@@ -11,6 +11,7 @@ ENV/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
 
 # Node.js
 node_modules/
@@ -53,6 +54,7 @@ server.log
 .expo/
 web-build/
 .expo-shared/
+expo-env.d.ts
 
 # Android
 *.apk
