@@ -14,7 +14,7 @@ export function GradientIcon({ size = 48, variant = 'default' }: GradientIconPro
   if (variant === 'solid') {
     return (
       <LinearGradient
-        colors={gradients.primary as [string, string, ...string[]]}
+        colors={gradients.primary}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[styles.gradient, { width: size, height: size, borderRadius: size / 2 }]}
@@ -25,7 +25,7 @@ export function GradientIcon({ size = 48, variant = 'default' }: GradientIconPro
   return (
     <View style={[styles.container, { width: size, height: size, borderRadius: size / 2 }]}>
       <LinearGradient
-        colors={gradients.primary as [string, string, ...string[]]}
+        colors={gradients.primary}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[styles.gradient, { width: size, height: size, borderRadius: size / 2 }]}

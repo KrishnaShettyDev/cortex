@@ -31,6 +31,7 @@ export const ANALYTICS_EVENTS = {
   CALENDAR_VIEW_TOGGLED: 'calendar_view_toggled',
   CALENDAR_NAVIGATED: 'calendar_navigated',
   CALENDAR_EVENT_TAPPED: 'calendar_event_tapped',
+  CALENDAR_MEET_JOINED: 'calendar_meet_joined',
   CALENDAR_REFRESHED: 'calendar_refreshed',
 
   // Integrations

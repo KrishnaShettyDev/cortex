@@ -58,6 +58,8 @@ export interface CalendarEventResponse {
 }
 
 // Calendar Events List types
+export type MeetingType = 'google_meet' | 'zoom' | 'teams' | 'webex' | 'video' | 'offline';
+
 export interface CalendarEventItem {
   id: string;
   title: string;
@@ -69,6 +71,8 @@ export interface CalendarEventItem {
   attendees: string[];
   color?: string;
   html_link?: string;
+  meet_link?: string; // Google Meet or video conference link
+  meeting_type: MeetingType; // Type of meeting for icon display
 }
 
 export interface CalendarEventsResponse {

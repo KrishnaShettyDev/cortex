@@ -145,12 +145,12 @@ export default function AuthScreen() {
   useEffect(() => {
     console.log('=== Google Auth Response ===');
     console.log('Response type:', response?.type);
-    console.log('Response params:', response?.params);
+    console.log('Response params:', (response as any)?.params);
     console.log('============================');
 
     if (response?.type === 'success') {
       // Get id_token from authentication response
-      const idToken = response.params?.id_token;
+      const idToken = (response as any).params?.id_token;
       console.log('Got ID token:', idToken ? 'yes' : 'no');
       if (idToken) {
         handleGoogleToken(idToken);

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet, Animated, ViewStyle } from 'react-native';
+import { View, StyleSheet, Animated, ViewStyle, DimensionValue } from 'react-native';
 import { colors, borderRadius, spacing } from '../theme';
 
 interface SkeletonProps {
@@ -47,7 +47,7 @@ export const Skeleton: React.FC<SkeletonProps> = ({
       style={[
         styles.skeleton,
         {
-          width,
+          width: width as DimensionValue,
           height,
           borderRadius: radius,
           opacity,

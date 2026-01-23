@@ -100,18 +100,31 @@ export function getThemeColors(mode: ThemeMode) {
   return mode === 'light' ? lightColors : darkColors;
 }
 
-export const darkGradients = {
-  primary: ['#7DD3C0', '#A78BFA', '#F472B6'] as const,
-  subtle: ['rgba(167, 139, 250, 0.3)', 'rgba(244, 114, 182, 0.3)'] as const,
-  glass: ['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)'] as const,
-  accent: ['#A78BFA', '#F472B6'] as const,
+// Gradient color arrays - typed for LinearGradient compatibility
+type GradientColors = [string, string, ...string[]];
+
+export const darkGradients: {
+  primary: GradientColors;
+  subtle: GradientColors;
+  glass: GradientColors;
+  accent: GradientColors;
+} = {
+  primary: ['#7DD3C0', '#A78BFA', '#F472B6'],
+  subtle: ['rgba(167, 139, 250, 0.3)', 'rgba(244, 114, 182, 0.3)'],
+  glass: ['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)'],
+  accent: ['#A78BFA', '#F472B6'],
 };
 
-export const lightGradients = {
-  primary: ['#7DD3C0', '#A78BFA', '#F472B6'] as const,
-  subtle: ['rgba(167, 139, 250, 0.2)', 'rgba(244, 114, 182, 0.2)'] as const,
-  glass: ['rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.02)'] as const,
-  accent: ['#A78BFA', '#F472B6'] as const,
+export const lightGradients: {
+  primary: GradientColors;
+  subtle: GradientColors;
+  glass: GradientColors;
+  accent: GradientColors;
+} = {
+  primary: ['#7DD3C0', '#A78BFA', '#F472B6'],
+  subtle: ['rgba(167, 139, 250, 0.2)', 'rgba(244, 114, 182, 0.2)'],
+  glass: ['rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.02)'],
+  accent: ['#A78BFA', '#F472B6'],
 };
 
 // Default gradients (dark)

@@ -5,6 +5,10 @@ import {
   LocalChatMessage,
   MutationQueueItem,
 } from './schema';
+import { logger } from '../../utils/logger';
+
+// Re-export types for convenience
+export type { MutationQueueItem, LocalMemory, LocalChatMessage };
 
 // Database state
 let db: any = null;
@@ -29,7 +33,7 @@ export const initDatabase = async (): Promise<void> => {
 
   // Check if native module is available before trying to import
   if (!checkNativeModuleAvailable()) {
-    console.log('SQLite native module not available - offline support disabled');
+    logger.debug('SQLite native module not available - offline support disabled');
     isSupported = false;
     return;
   }
@@ -38,7 +42,7 @@ export const initDatabase = async (): Promise<void> => {
     const SQLite = await import('expo-sqlite');
 
     if (typeof SQLite?.openDatabaseAsync !== 'function') {
-      console.log('SQLite openDatabaseAsync not available - offline support disabled');
+      logger.debug('SQLite openDatabaseAsync not available - offline support disabled');
       isSupported = false;
       return;
     }
@@ -47,9 +51,9 @@ export const initDatabase = async (): Promise<void> => {
     await db.execAsync('PRAGMA journal_mode = WAL;');
     await runMigrations();
     isSupported = true;
-    console.log('Database initialized successfully');
+    logger.debug('Database initialized successfully');
   } catch (error) {
-    console.log('SQLite initialization failed - offline support disabled');
+    logger.debug('SQLite initialization failed - offline support disabled');
     isSupported = false;
     db = null;
   }
@@ -66,10 +70,10 @@ const runMigrations = async (): Promise<void> => {
 
   let currentVersion = 0;
   try {
-    const result = await db.getFirstAsync<{ value: string }>(
+    const result = await db.getFirstAsync(
       'SELECT value FROM sync_metadata WHERE key = ?',
       ['schema_version']
-    );
+    ) as { value: string } | null;
     if (result) {
       currentVersion = parseInt(result.value, 10);
     }
@@ -83,7 +87,7 @@ const runMigrations = async (): Promise<void> => {
       `INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, ?)`,
       ['schema_version', SCHEMA_VERSION.toString(), new Date().toISOString()]
     );
-    console.log('Database migrated from', currentVersion, 'to', SCHEMA_VERSION);
+    logger.debug('Database migrated from', currentVersion, 'to', SCHEMA_VERSION);
   }
 };
 
@@ -119,15 +123,15 @@ export const saveMemoryLocally = async (memory: LocalMemory): Promise<void> => {
 
 export const getLocalMemories = async (limit = 50, offset = 0): Promise<LocalMemory[]> => {
   if (!db) return [];
-  return db.getAllAsync<LocalMemory>(
+  return db.getAllAsync(
     `SELECT * FROM memories WHERE pending_delete = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     [limit, offset]
-  );
+  ) as Promise<LocalMemory[]>;
 };
 
 export const getLocalMemory = async (id: string): Promise<LocalMemory | null> => {
   if (!db) return null;
-  return db.getFirstAsync<LocalMemory>('SELECT * FROM memories WHERE id = ?', [id]);
+  return db.getFirstAsync('SELECT * FROM memories WHERE id = ?', [id]) as Promise<LocalMemory | null>;
 };
 
 export const markMemoryForDeletion = async (id: string): Promise<void> => {
@@ -142,7 +146,7 @@ export const deleteLocalMemory = async (id: string): Promise<void> => {
 
 export const getUnsyncedMemories = async (): Promise<LocalMemory[]> => {
   if (!db) return [];
-  return db.getAllAsync<LocalMemory>('SELECT * FROM memories WHERE synced = 0');
+  return db.getAllAsync('SELECT * FROM memories WHERE synced = 0') as Promise<LocalMemory[]>;
 };
 
 export const markMemorySynced = async (id: string): Promise<void> => {
@@ -173,15 +177,15 @@ export const saveChatMessageLocally = async (message: LocalChatMessage): Promise
 export const getChatMessages = async (conversationId?: string, limit = 50): Promise<LocalChatMessage[]> => {
   if (!db) return [];
   if (conversationId) {
-    return db.getAllAsync<LocalChatMessage>(
+    return db.getAllAsync(
       'SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT ?',
       [conversationId, limit]
-    );
+    ) as Promise<LocalChatMessage[]>;
   }
-  return db.getAllAsync<LocalChatMessage>(
+  return db.getAllAsync(
     'SELECT * FROM chat_messages ORDER BY created_at DESC LIMIT ?',
     [limit]
-  );
+  ) as Promise<LocalChatMessage[]>;
 };
 
 // ============ Mutation Queue Operations ============
@@ -207,9 +211,9 @@ export const addToMutationQueue = async (
 
 export const getPendingMutations = async (): Promise<MutationQueueItem[]> => {
   if (!db) return [];
-  return db.getAllAsync<MutationQueueItem>(
+  return db.getAllAsync(
     `SELECT * FROM mutation_queue WHERE status = 'pending' ORDER BY created_at ASC`
-  );
+  ) as Promise<MutationQueueItem[]>;
 };
 
 export const updateMutationStatus = async (
@@ -238,10 +242,10 @@ export const clearCompletedMutations = async (): Promise<void> => {
 
 export const getSyncMetadata = async (key: string): Promise<string | null> => {
   if (!db) return null;
-  const result = await db.getFirstAsync<{ value: string }>(
+  const result = await db.getFirstAsync(
     'SELECT value FROM sync_metadata WHERE key = ?',
     [key]
-  );
+  ) as { value: string } | null;
   return result?.value || null;
 };
 
@@ -263,7 +267,7 @@ export const clearAllData = async (): Promise<void> => {
     DELETE FROM mutation_queue;
     DELETE FROM sync_metadata WHERE key != 'schema_version';
   `);
-  console.log('All local data cleared');
+  logger.debug('All local data cleared');
 };
 
 export const getDatabaseStats = async (): Promise<{
@@ -274,9 +278,9 @@ export const getDatabaseStats = async (): Promise<{
   if (!db) return { memoriesCount: 0, unsyncedCount: 0, pendingMutations: 0 };
 
   const [memories, unsynced, mutations] = await Promise.all([
-    db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM memories'),
-    db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM memories WHERE synced = 0'),
-    db.getFirstAsync<{ count: number }>(`SELECT COUNT(*) as count FROM mutation_queue WHERE status = 'pending'`),
+    db.getFirstAsync('SELECT COUNT(*) as count FROM memories') as Promise<{ count: number } | null>,
+    db.getFirstAsync('SELECT COUNT(*) as count FROM memories WHERE synced = 0') as Promise<{ count: number } | null>,
+    db.getFirstAsync(`SELECT COUNT(*) as count FROM mutation_queue WHERE status = 'pending'`) as Promise<{ count: number } | null>,
   ]);
 
   return {

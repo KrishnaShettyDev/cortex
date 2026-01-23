@@ -606,13 +606,16 @@ export default function ChatScreen() {
             onPress={clearConversation}
             disabled={messages.length === 0}
             style={[styles.headerButton, { opacity: messages.length === 0 ? 0.3 : 1 }]}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            activeOpacity={0.7}
           >
             <Text style={styles.clearText}>Clear</Text>
           </TouchableOpacity>
         </View>
 
         {/* Messages */}
-        <FlashList
+        {/* @ts-ignore - FlashList types issue with estimatedItemSize prop */}
+        <FlashList<ChatMessage>
           ref={flashListRef}
           data={messages}
           renderItem={renderMessage}
@@ -628,7 +631,7 @@ export default function ChatScreen() {
               tintColor={colors.accent}
             />
           }
-          estimatedItemSize={100}
+          {...{ estimatedItemSize: 100 } as any}
           ListFooterComponent={
             <View style={styles.footerContainer}>
               {/* Real-time reasoning steps */}
@@ -700,24 +703,25 @@ export default function ChatScreen() {
                 placeholderTextColor={colors.textTertiary}
                 value={inputText}
                 onChangeText={setInputText}
-                onSubmitEditing={() => sendMessage()}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
-                returnKeyType="send"
                 multiline
                 maxLength={1000}
                 editable={!isRecording && !isTranscribing}
+                blurOnSubmit={false}
               />
               {/* Mic/Send button inside input */}
-              <Animated.View style={{ transform: [{ scale: isRecording ? pulseAnim : 1 }] }}>
-                <TouchableOpacity
-                  style={[
-                    styles.inlineButton,
-                    isRecording && styles.recordingButton,
-                  ]}
-                  onPress={handleSendPress}
-                  disabled={isLoading}
-                >
+              <TouchableOpacity
+                style={[
+                  styles.inlineButton,
+                  isRecording && styles.recordingButton,
+                ]}
+                onPress={handleSendPress}
+                disabled={isLoading}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                activeOpacity={0.7}
+              >
+                <Animated.View style={{ transform: [{ scale: isRecording ? pulseAnim : 1 }] }}>
                   {inputText.trim() ? (
                     <LinearGradient
                       colors={gradients.accent}
@@ -737,8 +741,8 @@ export default function ChatScreen() {
                       />
                     </View>
                   )}
-                </TouchableOpacity>
-              </Animated.View>
+                </Animated.View>
+              </TouchableOpacity>
             </View>
             {/* Add Context FAB */}
             <FloatingActionButton

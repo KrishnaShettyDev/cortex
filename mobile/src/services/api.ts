@@ -5,6 +5,7 @@ import { logger } from '../utils/logger';
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: any;
+  headers?: Record<string, string>;
   requiresAuth?: boolean;
 }
 

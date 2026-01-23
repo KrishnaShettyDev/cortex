@@ -397,7 +397,7 @@ export default function AddMemoryScreen() {
                     disabled={isLoading}
                   >
                     <LinearGradient
-                      colors={isRecording ? [colors.error, colors.error] : (gradients.primary as [string, string, ...string[]])}
+                      colors={isRecording ? [colors.error, colors.error] : gradients.primary}
                       style={styles.recordButton}
                     >
                       <Ionicons
@@ -494,7 +494,7 @@ export default function AddMemoryScreen() {
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={gradients.primary as [string, string, ...string[]]}
+                colors={gradients.primary}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={[

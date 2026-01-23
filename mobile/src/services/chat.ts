@@ -8,6 +8,7 @@ import {
   MemoryReference,
   PendingAction,
 } from '../types';
+import { logger } from '../utils/logger';
 
 // Re-export StatusUpdate for convenience
 export type { StatusUpdate } from './api';
@@ -64,7 +65,7 @@ class ChatService {
       },
       onStatus: (status) => {
         // Forward status updates for real-time reasoning display
-        console.log('[ChatService] Received status from API:', status);
+        logger.debug('[ChatService] Received status from API:', status);
         callbacks.onStatus?.(status);
       },
       onContent: (content) => {

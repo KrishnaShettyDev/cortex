@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { authService } from '../services/auth';
 import { storage } from '../services/storage';
 import { User } from '../types';
+import { logger } from '../utils/logger';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -28,24 +29,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const checkAuth = async () => {
-    console.log('AuthContext: checkAuth started');
+    logger.debug('AuthContext: checkAuth started');
     try {
       const token = await storage.getAccessToken();
-      console.log('AuthContext: token exists:', !!token);
+      logger.debug('AuthContext: token exists:', !!token);
       if (token) {
-        console.log('AuthContext: fetching current user...');
+        logger.debug('AuthContext: fetching current user...');
         const currentUser = await authService.getCurrentUser();
-        console.log('AuthContext: got user:', currentUser?.email);
+        logger.debug('AuthContext: got user:', currentUser?.email);
         setUser(currentUser);
         setIsAuthenticated(true);
       } else {
-        console.log('AuthContext: no token, skipping user fetch');
+        logger.debug('AuthContext: no token, skipping user fetch');
       }
     } catch (err) {
-      console.log('AuthContext: error during checkAuth:', err);
+      logger.error('AuthContext: error during checkAuth:', err);
       await storage.clearAll();
     } finally {
-      console.log('AuthContext: checkAuth complete, setting isLoading=false');
+      logger.debug('AuthContext: checkAuth complete, setting isLoading=false');
       setIsLoading(false);
     }
   };

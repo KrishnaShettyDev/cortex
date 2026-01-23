@@ -79,11 +79,11 @@ export default function SettingsScreen() {
     return () => subscription.remove();
   }, [loadIntegrationStatus]);
 
-  const handleConnectGoogle = async (service: 'gmail' | 'googlecalendar' = 'gmail') => {
+  const handleConnectGoogle = async () => {
     setIsConnecting(true);
     try {
       const returnUrl = Linking.createURL('oauth/success');
-      const oauthUrl = await integrationsService.getGoogleConnectUrl(returnUrl, service);
+      const oauthUrl = await integrationsService.getGoogleConnectUrl(returnUrl);
       const result = await WebBrowser.openAuthSessionAsync(oauthUrl, returnUrl);
 
       if (result.type === 'success') {
@@ -242,7 +242,7 @@ export default function SettingsScreen() {
                 /* No accounts connected */
                 <TouchableOpacity
                   style={styles.connectAccountRow}
-                  onPress={() => handleConnectGoogle('gmail')}
+                  onPress={() => handleConnectGoogle()}
                   disabled={isConnecting}
                   activeOpacity={0.7}
                 >

@@ -1,13 +1,14 @@
 import { QueryClient, QueryCache, MutationCache } from '@tanstack/react-query';
+import { logger } from '../utils/logger';
 
 // Global error handler for queries
 const handleQueryError = (error: Error) => {
-  console.error('[React Query] Query error:', error.message);
+  logger.error('[React Query] Query error:', error.message);
 };
 
 // Global error handler for mutations
 const handleMutationError = (error: Error) => {
-  console.error('[React Query] Mutation error:', error.message);
+  logger.error('[React Query] Mutation error:', error.message);
 };
 
 export const queryClient = new QueryClient({

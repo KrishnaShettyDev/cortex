@@ -87,11 +87,11 @@ export const useBiometric = () => {
       const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
       return types.map((type) => {
         switch (type) {
-          case LocalAuthentication.AuthenticationType.FINGERPRINT:
+          case LocalAuthentication!.AuthenticationType.FINGERPRINT:
             return 'fingerprint';
-          case LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION:
+          case LocalAuthentication!.AuthenticationType.FACIAL_RECOGNITION:
             return 'face';
-          case LocalAuthentication.AuthenticationType.IRIS:
+          case LocalAuthentication!.AuthenticationType.IRIS:
             return 'iris';
           default:
             return 'unknown';

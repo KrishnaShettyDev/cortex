@@ -104,7 +104,7 @@ export function useNotifications() {
   const handleNotificationResponse = useCallback(
     (response: Notifications.NotificationResponse) => {
       logger.log('Notification tapped:', response.notification.request.content);
-      const data = response.notification.request.content.data as NotificationData;
+      const data = response.notification.request.content.data as unknown as NotificationData;
       if (data) {
         handleNotificationNavigation(data);
       }
@@ -145,7 +145,7 @@ export function useNotifications() {
         // Check if app was opened via notification
         const lastResponse = await notificationService.getLastNotificationResponse();
         if (lastResponse) {
-          const data = lastResponse.notification.request.content.data as NotificationData;
+          const data = lastResponse.notification.request.content.data as unknown as NotificationData;
           if (data) {
             // Small delay to ensure navigation is ready
             setTimeout(() => {

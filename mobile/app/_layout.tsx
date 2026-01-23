@@ -113,7 +113,7 @@ function RootLayoutNav() {
       setUserContext({
         id: user.id,
         email: user.email,
-        name: user.name,
+        name: user.name ?? undefined,
       });
       // Initialize background sync when user is logged in
       backgroundSyncService.initialize();

@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import { STORAGE_KEYS } from './constants';
+import { logger } from '../utils/logger';
 
 class StorageService {
   async getAccessToken(): Promise<string | null> {
@@ -57,7 +58,7 @@ class StorageService {
     try {
       await SecureStore.setItemAsync(key, value);
     } catch (error) {
-      console.warn('Storage set failed:', error);
+      logger.warn('Storage set failed:', error);
     }
   }
 
@@ -73,7 +74,7 @@ class StorageService {
     try {
       await SecureStore.deleteItemAsync(key);
     } catch (error) {
-      console.warn('Storage remove failed:', error);
+      logger.warn('Storage remove failed:', error);
     }
   }
 }

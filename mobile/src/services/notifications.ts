@@ -69,6 +69,9 @@ const getNotifications = async (): Promise<typeof NotificationsType | null> => {
         shouldShowAlert: true,
         shouldPlaySound: true,
         shouldSetBadge: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
+        priority: module.AndroidNotificationPriority.HIGH,
       }),
     });
 

@@ -5,21 +5,40 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
   RefreshControl,
-  TextInput,
   Dimensions,
   Animated,
+  Linking,
+  Pressable,
+  Modal,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { integrationsService, CalendarEventItem } from '../../src/services';
+import { GestureDetector, Gesture, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Reanimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withRepeat,
+  withTiming,
+  runOnJS,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
+import { integrationsService, CalendarEventItem, MeetingType } from '../../src/services';
 import { colors, gradients, spacing, borderRadius } from '../../src/theme';
 import { GradientIcon } from '../../src/components/GradientIcon';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
+import { ConflictIndicator, ConflictBanner, CONFLICT_COLOR, CONFLICT_BORDER_COLOR } from '../../src/components/ConflictIndicator';
+import { detectConflicts, getConflictingEvents, ConflictInfo } from '../../src/utils/calendarConflicts';
+import { QuickAddInput } from '../../src/components/QuickAddInput';
+import { useCalendarStore } from '../../src/stores/calendarStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -112,22 +131,375 @@ function formatWeekRange(dates: Date[]): string {
 // Single letter day names for week view
 const DAYS_SINGLE = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
+// Calculate overlapping events and their positions
+interface EventWithLayout extends CalendarEventItem {
+  column: number;
+  totalColumns: number;
+}
+
+function calculateEventLayout(events: CalendarEventItem[]): EventWithLayout[] {
+  if (events.length === 0) return [];
+
+  // Sort events by start time, then by duration (longer first)
+  const sortedEvents = [...events].sort((a, b) => {
+    const aStart = new Date(a.start_time).getTime();
+    const bStart = new Date(b.start_time).getTime();
+    if (aStart !== bStart) return aStart - bStart;
+    // Longer events first
+    const aDuration = new Date(a.end_time).getTime() - aStart;
+    const bDuration = new Date(b.end_time).getTime() - bStart;
+    return bDuration - aDuration;
+  });
+
+  const columns: { endTime: number; events: CalendarEventItem[] }[] = [];
+  const eventLayouts: Map<string, { column: number; totalColumns: number }> = new Map();
+
+  for (const event of sortedEvents) {
+    const eventStart = new Date(event.start_time).getTime();
+    const eventEnd = new Date(event.end_time).getTime();
+
+    // Find a column where this event doesn't overlap
+    let columnIndex = -1;
+    for (let i = 0; i < columns.length; i++) {
+      if (columns[i].endTime <= eventStart) {
+        columnIndex = i;
+        break;
+      }
+    }
+
+    if (columnIndex === -1) {
+      // Need a new column
+      columnIndex = columns.length;
+      columns.push({ endTime: eventEnd, events: [event] });
+    } else {
+      columns[columnIndex].endTime = eventEnd;
+      columns[columnIndex].events.push(event);
+    }
+
+    eventLayouts.set(event.id, { column: columnIndex, totalColumns: 1 });
+  }
+
+  // Now calculate totalColumns for overlapping events
+  for (const event of sortedEvents) {
+    const eventStart = new Date(event.start_time).getTime();
+    const eventEnd = new Date(event.end_time).getTime();
+
+    // Find all events that overlap with this one
+    let maxColumn = 0;
+    for (const other of sortedEvents) {
+      const otherStart = new Date(other.start_time).getTime();
+      const otherEnd = new Date(other.end_time).getTime();
+
+      // Check if they overlap
+      if (eventStart < otherEnd && eventEnd > otherStart) {
+        const layout = eventLayouts.get(other.id)!;
+        maxColumn = Math.max(maxColumn, layout.column);
+      }
+    }
+
+    // Update totalColumns for all overlapping events
+    for (const other of sortedEvents) {
+      const otherStart = new Date(other.start_time).getTime();
+      const otherEnd = new Date(other.end_time).getTime();
+
+      if (eventStart < otherEnd && eventEnd > otherStart) {
+        const layout = eventLayouts.get(other.id)!;
+        layout.totalColumns = Math.max(layout.totalColumns, maxColumn + 1);
+      }
+    }
+  }
+
+  return sortedEvents.map(event => ({
+    ...event,
+    ...eventLayouts.get(event.id)!,
+  }));
+}
+
+// Format time range
+function formatTimeRange(start: Date, end: Date): string {
+  const formatTime = (date: Date) => {
+    const hours = date.getHours();
+    const minutes = date.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const displayHours = hours % 12 || 12;
+    if (minutes === 0) {
+      return `${displayHours}${ampm}`;
+    }
+    return `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+  };
+  return `${formatTime(start)} - ${formatTime(end)}`;
+}
+
+// Meeting type logo and color configuration
+// Using official Google logos (local assets)
+// IMPORTANT: Run `npx expo start --clear` to pick up new assets
+const GOOGLE_MEET_LOGO = require('../../assets/google-meet-logo.png');
+const GOOGLE_CALENDAR_LOGO = require('../../assets/google-calendar-logo.png');
+
+const MEETING_TYPE_CONFIG: Record<MeetingType, {
+  logo: any;
+  fallbackIcon: string;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  label: string;
+}> = {
+  google_meet: {
+    logo: GOOGLE_MEET_LOGO,
+    fallbackIcon: 'videocam',
+    color: '#00897B',
+    bgColor: 'rgba(0, 137, 123, 0.15)',
+    borderColor: '#00897B',
+    label: 'Google Meet'
+  },
+  zoom: {
+    logo: GOOGLE_MEET_LOGO,
+    fallbackIcon: 'videocam',
+    color: '#00897B',
+    bgColor: 'rgba(0, 137, 123, 0.15)',
+    borderColor: '#00897B',
+    label: 'Video Meeting'
+  },
+  teams: {
+    logo: GOOGLE_MEET_LOGO,
+    fallbackIcon: 'videocam',
+    color: '#00897B',
+    bgColor: 'rgba(0, 137, 123, 0.15)',
+    borderColor: '#00897B',
+    label: 'Video Meeting'
+  },
+  webex: {
+    logo: GOOGLE_MEET_LOGO,
+    fallbackIcon: 'videocam',
+    color: '#00897B',
+    bgColor: 'rgba(0, 137, 123, 0.15)',
+    borderColor: '#00897B',
+    label: 'Video Meeting'
+  },
+  video: {
+    logo: GOOGLE_MEET_LOGO,
+    fallbackIcon: 'videocam',
+    color: '#00897B',
+    bgColor: 'rgba(0, 137, 123, 0.15)',
+    borderColor: '#00897B',
+    label: 'Video Meeting'
+  },
+  offline: {
+    logo: GOOGLE_CALENDAR_LOGO,
+    fallbackIcon: 'calendar',
+    color: '#4285F4',
+    bgColor: 'rgba(66, 133, 244, 0.15)',
+    borderColor: '#4285F4',
+    label: 'Event'
+  },
+};
+
 type ViewMode = 'day' | 'week';
+
+// Animated skeleton component (defined outside to avoid recreation)
+const AnimatedSkeletonView = Reanimated.createAnimatedComponent(View);
+
+// Skeleton Loading Component
+const SkeletonLoader = () => {
+  const opacity = useSharedValue(0.3);
+
+  React.useEffect(() => {
+    // Use withRepeat for proper looping animation
+    opacity.value = withRepeat(
+      withTiming(0.7, { duration: 800 }),
+      -1, // Infinite repeat
+      true // Reverse on each iteration
+    );
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return (
+    <View style={skeletonStyles.container}>
+      {/* Skeleton hour rows with event placeholders */}
+      {Array.from({ length: 8 }).map((_, rowIndex) => (
+        <View key={rowIndex} style={skeletonStyles.hourRow}>
+          {/* Hour label skeleton */}
+          <AnimatedSkeletonView style={[skeletonStyles.hourLabel, animatedStyle]} />
+          {/* Event skeleton - varying sizes */}
+          {rowIndex % 2 === 0 && (
+            <AnimatedSkeletonView
+              style={[
+                skeletonStyles.eventBlock,
+                { width: 50 + (rowIndex * 5) },
+                animatedStyle
+              ]}
+            />
+          )}
+          {rowIndex === 1 && (
+            <AnimatedSkeletonView
+              style={[
+                skeletonStyles.eventBlock,
+                { width: 150, height: 80 },
+                animatedStyle
+              ]}
+            />
+          )}
+          {rowIndex === 3 && (
+            <AnimatedSkeletonView
+              style={[
+                skeletonStyles.eventBlock,
+                { width: 120, height: 60 },
+                animatedStyle
+              ]}
+            />
+          )}
+          {rowIndex === 5 && (
+            <AnimatedSkeletonView
+              style={[
+                skeletonStyles.eventBlock,
+                { width: 100, height: 45 },
+                animatedStyle
+              ]}
+            />
+          )}
+        </View>
+      ))}
+    </View>
+  );
+};
+
+const skeletonStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  hourRow: {
+    flexDirection: 'row',
+    height: HOUR_HEIGHT,
+    alignItems: 'flex-start',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.glassBorder,
+  },
+  hourLabel: {
+    width: 50,
+    height: 12,
+    backgroundColor: colors.bgTertiary,
+    borderRadius: 4,
+    marginRight: spacing.md,
+  },
+  eventBlock: {
+    height: 40,
+    backgroundColor: colors.bgTertiary,
+    borderRadius: borderRadius.sm,
+    marginLeft: spacing.sm,
+  },
+});
+
+// Meeting Type Logo Component
+const MeetingTypeLogo = ({
+  meetingType,
+  size = 16,
+}: {
+  meetingType: MeetingType;
+  size?: number;
+}) => {
+  const config = MEETING_TYPE_CONFIG[meetingType];
+
+  // Show local logo image
+  if (config.logo) {
+    return (
+      <Image
+        source={config.logo}
+        style={{ width: size, height: size }}
+        resizeMode="contain"
+      />
+    );
+  }
+
+  // Fallback to icon
+  return (
+    <Ionicons
+      name={config.fallbackIcon as any}
+      size={size}
+      color={config.color}
+    />
+  );
+};
+
+// Swipe threshold for navigation
+const SWIPE_THRESHOLD = 50;
+const SWIPE_VELOCITY_THRESHOLD = 500;
+
+// Animated view for swipe
+const AnimatedView = Reanimated.createAnimatedComponent(View);
 
 export default function CalendarScreen() {
   const posthog = usePostHog();
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [events, setEvents] = useState<CalendarEventItem[]>([]);
-  const [weekEvents, setWeekEvents] = useState<Map<string, CalendarEventItem[]>>(new Map());
-  const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('day');
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEventItem | null>(null);
+  const [showEventModal, setShowEventModal] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const hasScrolledToTime = useRef(false);
+
+  // Swipe gesture animation values
+  const translateX = useSharedValue(0);
+  const isGestureActive = useSharedValue(false);
+
+  // Use calendar store for caching events across navigation
+  const {
+    events: cachedEvents,
+    isLoading,
+    error,
+    isConnected,
+    cachedMonthKey,
+    setEvents,
+    setLoading,
+    setError,
+    setConnected,
+    isCacheValid,
+    invalidateCache,
+  } = useCalendarStore();
+
+  // Get current month key for cache invalidation
+  const currentMonthKey = useMemo(() => {
+    return `${selectedDate.getFullYear()}-${selectedDate.getMonth()}`;
+  }, [selectedDate]);
+
+  // Filter events for selected date from cache (INSTANT - no API call)
+  const events = useMemo(() => {
+    return cachedEvents.filter(event => {
+      const eventDate = new Date(event.start_time);
+      return isSameDay(eventDate, selectedDate);
+    });
+  }, [cachedEvents, selectedDate]);
+
+  // Group events by date for week view (INSTANT - from cache)
+  const weekEvents = useMemo(() => {
+    const eventsByDate = new Map<string, CalendarEventItem[]>();
+    cachedEvents.forEach(event => {
+      const eventDate = new Date(event.start_time);
+      const dateKey = `${eventDate.getFullYear()}-${eventDate.getMonth()}-${eventDate.getDate()}`;
+      if (!eventsByDate.has(dateKey)) {
+        eventsByDate.set(dateKey, []);
+      }
+      eventsByDate.get(dateKey)!.push(event);
+    });
+    return eventsByDate;
+  }, [cachedEvents]);
+
+  // Detect conflicts between events (client-side)
+  const eventConflicts = useMemo(() => {
+    return detectConflicts(cachedEvents);
+  }, [cachedEvents]);
+
+  // Get conflicts for selected event (for modal display)
+  const selectedEventConflicts = useMemo(() => {
+    if (!selectedEvent) return [];
+    return getConflictingEvents(selectedEvent, cachedEvents);
+  }, [selectedEvent, cachedEvents]);
 
   // Track calendar viewed
   useEffect(() => {
@@ -179,78 +551,68 @@ export default function CalendarScreen() {
     hasScrolledToTime.current = false;
   }, [selectedDate]);
 
-  // Load events when date or view mode changes
+  // Load events when MONTH changes (not every date change!)
   useEffect(() => {
-    loadEvents();
-  }, [selectedDate, viewMode]);
+    // Only fetch if cache is invalid for this month
+    if (!isCacheValid(currentMonthKey)) {
+      loadMonthEvents();
+    }
+  }, [currentMonthKey]);
 
-  const loadEvents = useCallback(async () => {
+  // Initial load - only if cache is not valid
+  useEffect(() => {
+    if (!isCacheValid(currentMonthKey)) {
+      loadMonthEvents();
+    }
+  }, []);
+
+  const loadMonthEvents = useCallback(async (forceRefresh = false) => {
+    // Skip if cache is valid and not forcing refresh
+    if (!forceRefresh && isCacheValid(currentMonthKey)) {
+      setLoading(false);
+      return;
+    }
+
     setError(null);
+    setLoading(true);
 
     try {
       // Check connection status first
       const status = await integrationsService.getStatus();
-      setIsConnected(status.google.calendar_connected);
+      setConnected(status.google.calendar_connected);
 
       if (!status.google.calendar_connected) {
-        setEvents([]);
-        setWeekEvents(new Map());
-        setIsLoading(false);
+        setEvents([], currentMonthKey);
+        setLoading(false);
         return;
       }
 
-      if (viewMode === 'day') {
-        // Get events for the selected date only
-        const startOfDay = new Date(selectedDate);
-        startOfDay.setHours(0, 0, 0, 0);
+      // Fetch events for the ENTIRE MONTH (plus a few days before/after for week view)
+      const year = selectedDate.getFullYear();
+      const month = selectedDate.getMonth();
 
-        const endOfDay = new Date(selectedDate);
-        endOfDay.setHours(23, 59, 59, 999);
+      // Start from a few days before month start (for week view)
+      const startOfMonth = new Date(year, month, 1);
+      startOfMonth.setDate(startOfMonth.getDate() - 7);
+      startOfMonth.setHours(0, 0, 0, 0);
 
-        const response = await integrationsService.getCalendarEvents(startOfDay, endOfDay);
+      // End a few days after month end (for week view)
+      const endOfMonth = new Date(year, month + 1, 0);
+      endOfMonth.setDate(endOfMonth.getDate() + 7);
+      endOfMonth.setHours(23, 59, 59, 999);
 
-        if (response.success) {
-          setEvents(response.events);
-          setError(null);
-        } else {
-          setEvents([]);
-          setError(response.message || 'Failed to load events');
-        }
+      const response = await integrationsService.getCalendarEvents(startOfMonth, endOfMonth);
+
+      if (response.success) {
+        setEvents(response.events, currentMonthKey);
+        setError(null);
       } else {
-        // Week view - get events for the displayed days
-        const weekStart = new Date(weekDates[0]);
-        weekStart.setHours(0, 0, 0, 0);
-
-        const weekEnd = new Date(weekDates[weekDates.length - 1]);
-        weekEnd.setHours(23, 59, 59, 999);
-
-        const response = await integrationsService.getCalendarEvents(weekStart, weekEnd);
-
-        if (response.success) {
-          // Group events by date
-          const eventsByDate = new Map<string, CalendarEventItem[]>();
-
-          response.events.forEach(event => {
-            const eventDate = new Date(event.start_time);
-            const dateKey = `${eventDate.getFullYear()}-${eventDate.getMonth()}-${eventDate.getDate()}`;
-
-            if (!eventsByDate.has(dateKey)) {
-              eventsByDate.set(dateKey, []);
-            }
-            eventsByDate.get(dateKey)!.push(event);
-          });
-
-          setWeekEvents(eventsByDate);
-          setError(null);
-        } else {
-          setWeekEvents(new Map());
-          setError(response.message || 'Failed to load events');
-        }
+        setEvents([], currentMonthKey);
+        setError(response.message || 'Failed to load events');
       }
     } catch (err: any) {
       console.error('Failed to load calendar events:', err);
-      setEvents([]);
-      setWeekEvents(new Map());
+      setEvents([], currentMonthKey);
       // Show user-friendly error message
       if (err.message?.includes('timed out')) {
         setError('Loading took too long. Please try again.');
@@ -260,45 +622,99 @@ export default function CalendarScreen() {
         setError('Could not load events. Pull down to retry.');
       }
     } finally {
-      setIsLoading(false);
+      setLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedDate, viewMode, weekDates]);
+  }, [selectedDate, currentMonthKey, isCacheValid, setEvents, setLoading, setError, setConnected]);
 
   const onRefresh = useCallback(() => {
     posthog?.capture(ANALYTICS_EVENTS.CALENDAR_REFRESHED);
     setIsRefreshing(true);
-    loadEvents();
-  }, [loadEvents]);
+    // Force refresh by clearing cache
+    invalidateCache();
+    loadMonthEvents(true);
+  }, [loadMonthEvents]);
 
-  const goToToday = () => {
+  const goToToday = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedDate(new Date());
-  };
+  }, []);
 
-  const goToPreviousDay = () => {
+  const goToPreviousDay = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newDate = new Date(selectedDate);
     newDate.setDate(newDate.getDate() - 1);
     setSelectedDate(newDate);
-  };
+  }, [selectedDate]);
 
-  const goToNextDay = () => {
+  const goToNextDay = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newDate = new Date(selectedDate);
     newDate.setDate(newDate.getDate() + 1);
     setSelectedDate(newDate);
-  };
+  }, [selectedDate]);
 
   // Week navigation (move by WEEK_VIEW_DAYS instead of 7)
-  const goToPreviousWeek = () => {
+  const goToPreviousWeek = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newDate = new Date(selectedDate);
     newDate.setDate(newDate.getDate() - WEEK_VIEW_DAYS);
     setSelectedDate(newDate);
-  };
+  }, [selectedDate]);
 
-  const goToNextWeek = () => {
+  const goToNextWeek = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newDate = new Date(selectedDate);
     newDate.setDate(newDate.getDate() + WEEK_VIEW_DAYS);
     setSelectedDate(newDate);
-  };
+  }, [selectedDate]);
+
+  // Swipe gesture for date navigation
+  const swipeGesture = useMemo(() => Gesture.Pan()
+    .activeOffsetX([-10, 10])
+    .failOffsetY([-5, 5])
+    .onStart(() => {
+      isGestureActive.value = true;
+    })
+    .onUpdate((event) => {
+      // Limit the translation for a subtle drag effect
+      translateX.value = event.translationX * 0.3;
+    })
+    .onEnd((event) => {
+      const shouldNavigate =
+        Math.abs(event.translationX) > SWIPE_THRESHOLD ||
+        Math.abs(event.velocityX) > SWIPE_VELOCITY_THRESHOLD;
+
+      if (shouldNavigate) {
+        if (event.translationX > 0 || event.velocityX > SWIPE_VELOCITY_THRESHOLD) {
+          // Swipe right - go to previous
+          runOnJS(viewMode === 'day' ? goToPreviousDay : goToPreviousWeek)();
+        } else {
+          // Swipe left - go to next
+          runOnJS(viewMode === 'day' ? goToNextDay : goToNextWeek)();
+        }
+      }
+
+      // Reset position with spring animation
+      translateX.value = withSpring(0, {
+        damping: 20,
+        stiffness: 200,
+      });
+      isGestureActive.value = false;
+    }), [viewMode, goToPreviousDay, goToNextDay, goToPreviousWeek, goToNextWeek]);
+
+  // Animated style for swipe feedback
+  const animatedContentStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ translateX: translateX.value }],
+      opacity: interpolate(
+        Math.abs(translateX.value),
+        [0, 50],
+        [1, 0.9],
+        Extrapolation.CLAMP
+      ),
+    };
+  });
 
   // Toggle view mode
   const toggleViewMode = () => {
@@ -334,6 +750,7 @@ export default function CalendarScreen() {
   };
 
   const selectDayFromPicker = (day: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const newDate = new Date(pickerYear, pickerMonth, day);
     posthog?.capture(ANALYTICS_EVENTS.CALENDAR_DATE_SELECTED, {
       date: newDate.toISOString().split('T')[0],
@@ -343,11 +760,43 @@ export default function CalendarScreen() {
   };
 
   // Open month picker with current selected date
-  const openMonthPicker = () => {
+  const openMonthPicker = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setPickerMonth(selectedDate.getMonth());
     setPickerYear(selectedDate.getFullYear());
     setShowMonthPicker(true);
-  };
+  }, [selectedDate]);
+
+  // Pull down gesture for month picker
+  const pullDownY = useSharedValue(0);
+  const PULL_DOWN_THRESHOLD = 60;
+
+  const pullDownGesture = useMemo(() => Gesture.Pan()
+    .activeOffsetY([10, 100])
+    .failOffsetX([-10, 10])
+    .onUpdate((event) => {
+      if (event.translationY > 0 && !showMonthPicker) {
+        pullDownY.value = Math.min(event.translationY * 0.5, 80);
+      }
+    })
+    .onEnd((event) => {
+      if (event.translationY > PULL_DOWN_THRESHOLD && !showMonthPicker) {
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+        runOnJS(openMonthPicker)();
+      }
+      pullDownY.value = withSpring(0, { damping: 20, stiffness: 200 });
+    }), [showMonthPicker, openMonthPicker]);
+
+  // Animated style for pull-down indicator
+  const pullDownIndicatorStyle = useAnimatedStyle(() => {
+    return {
+      opacity: interpolate(pullDownY.value, [0, 30, 60], [0, 0.5, 1], Extrapolation.CLAMP),
+      transform: [
+        { translateY: interpolate(pullDownY.value, [0, 60], [-20, 0], Extrapolation.CLAMP) },
+        { scale: interpolate(pullDownY.value, [0, 60], [0.5, 1], Extrapolation.CLAMP) },
+      ],
+    };
+  });
 
   // Generate calendar days for picker
   const calendarDays = useMemo(() => {
@@ -409,48 +858,143 @@ export default function CalendarScreen() {
     return hours;
   };
 
-  const renderEvents = () => {
-    return events.map((event) => {
-      const { top, height } = getEventStyle(event);
-      const eventColor = event.color || '#4285f4';
+  // Calculate event layout for overlapping events
+  const eventsWithLayout = useMemo(() => calculateEventLayout(events), [events]);
 
-      return (
-        <TouchableOpacity
-          key={event.id}
-          style={[
-            styles.eventBlock,
-            {
-              top,
-              height,
-              backgroundColor: eventColor + '20',
-              borderLeftColor: eventColor,
-            },
-          ]}
-          activeOpacity={0.7}
-          onPress={() => {
-            // Track event tap
-            posthog?.capture(ANALYTICS_EVENTS.CALENDAR_EVENT_TAPPED, {
-              event_title: event.title,
-            });
-            // Navigate to chat to ask about this event
-            router.push({
-              pathname: '/(main)/chat',
-              params: { query: `Tell me about my "${event.title}" event` },
-            });
-          }}
+  // Component for individual event - handles touch properly
+  const EventBlock = ({ event, top, height, leftPercent, eventWidth, hasConflict, conflictCount }: {
+    event: EventWithLayout;
+    top: number;
+    height: number;
+    leftPercent: number;
+    eventWidth: number;
+    hasConflict?: boolean;
+    conflictCount?: number;
+  }) => {
+    const meetingType = (event.meeting_type as MeetingType) || 'offline';
+    const typeConfig = MEETING_TYPE_CONFIG[meetingType];
+    const eventColor = event.color || typeConfig.color;
+    const startDate = new Date(event.start_time);
+    const endDate = new Date(event.end_time);
+    const hasMeetLink = !!event.meet_link;
+    const isVideoMeeting = meetingType !== 'offline';
+    // Use conflict color for border if there's a conflict
+    const borderColor = hasConflict ? CONFLICT_BORDER_COLOR : typeConfig.borderColor;
+
+    const handleEventPress = () => {
+      posthog?.capture(ANALYTICS_EVENTS.CALENDAR_EVENT_TAPPED, {
+        event_title: event.title,
+        meeting_type: meetingType,
+      });
+      // Show event details modal instead of navigating to chat
+      setSelectedEvent(event);
+      setShowEventModal(true);
+    };
+
+    const handleJoinMeet = () => {
+      if (event.meet_link) {
+        posthog?.capture(ANALYTICS_EVENTS.CALENDAR_MEET_JOINED, {
+          event_title: event.title,
+          meeting_type: meetingType,
+        });
+        Linking.openURL(event.meet_link);
+      }
+    };
+
+    return (
+      <View
+        style={[
+          styles.eventBlock,
+          {
+            top,
+            height,
+            left: `${leftPercent}%`,
+            width: `${eventWidth - 1}%`,
+            backgroundColor: hasConflict ? 'rgba(245, 158, 11, 0.1)' : typeConfig.bgColor,
+            borderLeftColor: borderColor,
+            borderLeftWidth: hasConflict ? 4 : 3,
+          },
+        ]}
+      >
+        {/* Conflict Indicator */}
+        {hasConflict && (
+          <View style={styles.conflictBadge}>
+            <ConflictIndicator size="small" />
+          </View>
+        )}
+        {/* Main content - tappable to show details */}
+        <Pressable
+          style={styles.eventContentPressable}
+          onPress={handleEventPress}
         >
-          <Text style={[styles.eventTitle, { color: eventColor }]} numberOfLines={1}>
-            {event.title}
-          </Text>
-          {height > 40 && (
-            <Text style={styles.eventTime}>{formatEventTime(event)}</Text>
-          )}
-          {height > 60 && event.location && (
-            <Text style={styles.eventLocation} numberOfLines={1}>
-              {event.location}
+          {/* Title Row with Meeting Type Logo */}
+          <View style={styles.eventTitleRow}>
+            <MeetingTypeLogo meetingType={meetingType} size={16} />
+            <Text style={[styles.eventTitle, { color: typeConfig.color }]} numberOfLines={1}>
+              {event.title}
+            </Text>
+          </View>
+
+          {/* Time Range */}
+          {height > 35 && (
+            <Text style={styles.eventTime}>
+              {formatTimeRange(startDate, endDate)}
             </Text>
           )}
-        </TouchableOpacity>
+
+          {/* Location */}
+          {height > 55 && event.location && (
+            <View style={styles.eventDetailRow}>
+              <Ionicons name="location-outline" size={11} color={colors.textTertiary} />
+              <Text style={styles.eventLocation} numberOfLines={1}>
+                {event.location}
+              </Text>
+            </View>
+          )}
+
+          {/* Attendees */}
+          {height > 75 && event.attendees && event.attendees.length > 0 && (
+            <View style={styles.eventDetailRow}>
+              <Ionicons name="people-outline" size={11} color={colors.textTertiary} />
+              <Text style={styles.eventAttendees} numberOfLines={1}>
+                {event.attendees.length} guest{event.attendees.length > 1 ? 's' : ''}
+              </Text>
+            </View>
+          )}
+        </Pressable>
+
+        {/* Join Button for video meetings */}
+        {hasMeetLink && (
+          <Pressable
+            style={[styles.meetJoinButton, { backgroundColor: typeConfig.color }]}
+            onPress={handleJoinMeet}
+          >
+            <MeetingTypeLogo meetingType={meetingType} size={14} />
+            {height > 45 && <Text style={styles.meetJoinText}>Join</Text>}
+          </Pressable>
+        )}
+      </View>
+    );
+  };
+
+  const renderEvents = () => {
+    return eventsWithLayout.map((event) => {
+      const { top, height } = getEventStyle(event);
+      const eventWidth = (100 / event.totalColumns);
+      const leftPercent = event.column * eventWidth;
+      const conflictInfo = eventConflicts.get(event.id);
+
+      return (
+        <EventBlock
+          key={event.id}
+          event={event}
+          top={top}
+          height={height}
+          leftPercent={leftPercent}
+          eventWidth={eventWidth}
+          hasConflict={!!conflictInfo}
+          conflictCount={conflictInfo?.conflictsWith.length}
+        />
       );
     });
   };
@@ -461,53 +1005,117 @@ export default function CalendarScreen() {
     return weekEvents.get(dateKey) || [];
   };
 
-  // Render events for a specific day column in week view
-  const renderWeekDayEvents = (date: Date) => {
-    const dayEvents = getEventsForDate(date);
+  // Week Event Block Component
+  const WeekEventBlock = ({ event, top, height, leftPercent, eventWidth, hasConflict, conflictCount }: {
+    event: EventWithLayout;
+    top: number;
+    height: number;
+    leftPercent: number;
+    eventWidth: number;
+    hasConflict?: boolean;
+    conflictCount?: number;
+  }) => {
+    const meetingType = (event.meeting_type as MeetingType) || 'offline';
+    const typeConfig = MEETING_TYPE_CONFIG[meetingType];
+    const eventColor = event.color || typeConfig.color;
+    const hasMeetLink = !!event.meet_link;
+    const borderColor = hasConflict ? CONFLICT_BORDER_COLOR : typeConfig.borderColor;
 
-    return dayEvents.map((event) => {
-      const { top, height } = getEventStyle(event);
-      const eventColor = event.color || '#4285f4';
+    const handleEventPress = () => {
+      posthog?.capture(ANALYTICS_EVENTS.CALENDAR_EVENT_TAPPED, {
+        event_title: event.title,
+        view_mode: 'week',
+        meeting_type: meetingType,
+      });
+      // Show event details modal
+      setSelectedEvent(event);
+      setShowEventModal(true);
+    };
 
-      return (
-        <TouchableOpacity
-          key={event.id}
-          style={[
-            styles.weekEventBlock,
-            {
-              top,
-              height: Math.max(height, 30),
-              backgroundColor: eventColor + '25',
-              borderLeftColor: eventColor,
-            },
-          ]}
-          activeOpacity={0.7}
-          onPress={() => {
-            posthog?.capture(ANALYTICS_EVENTS.CALENDAR_EVENT_TAPPED, {
-              event_title: event.title,
-              view_mode: 'week',
-            });
-            router.push({
-              pathname: '/(main)/chat',
-              params: { query: `Tell me about my "${event.title}" event` },
-            });
-          }}
-        >
-          <Text style={[styles.weekEventTitle, { color: eventColor }]} numberOfLines={2}>
-            {event.title}
-          </Text>
+    const handleJoinMeet = () => {
+      if (event.meet_link) {
+        posthog?.capture(ANALYTICS_EVENTS.CALENDAR_MEET_JOINED, {
+          event_title: event.title,
+          meeting_type: meetingType,
+        });
+        Linking.openURL(event.meet_link);
+      }
+    };
+
+    return (
+      <View
+        style={[
+          styles.weekEventBlock,
+          {
+            top,
+            height: Math.max(height, 30),
+            left: `${leftPercent}%`,
+            width: `${eventWidth - 1}%`,
+            backgroundColor: hasConflict ? 'rgba(245, 158, 11, 0.1)' : typeConfig.bgColor,
+            borderLeftColor: borderColor,
+            borderLeftWidth: hasConflict ? 3 : 2,
+          },
+        ]}
+      >
+        {hasConflict && (
+          <View style={styles.weekConflictBadge}>
+            <Ionicons name="warning" size={10} color={CONFLICT_COLOR} />
+          </View>
+        )}
+        <Pressable style={styles.weekEventContent} onPress={handleEventPress}>
+          <View style={styles.weekEventTitleRow}>
+            <MeetingTypeLogo meetingType={meetingType} size={12} />
+            <Text style={[styles.weekEventTitle, { color: typeConfig.color }]} numberOfLines={2}>
+              {event.title}
+            </Text>
+          </View>
           {height > 45 && (
             <Text style={styles.weekEventTime}>{formatEventTime(event)}</Text>
           )}
-        </TouchableOpacity>
+        </Pressable>
+        {hasMeetLink && (
+          <Pressable
+            style={[styles.weekMeetButton, { backgroundColor: typeConfig.color }]}
+            onPress={handleJoinMeet}
+          >
+            <MeetingTypeLogo meetingType={meetingType} size={12} />
+          </Pressable>
+        )}
+      </View>
+    );
+  };
+
+  // Render events for a specific day column in week view
+  const renderWeekDayEvents = (date: Date) => {
+    const dayEvents = getEventsForDate(date);
+    const eventsLayout = calculateEventLayout(dayEvents);
+
+    return eventsLayout.map((event) => {
+      const { top, height } = getEventStyle(event);
+      const eventWidth = (100 / event.totalColumns);
+      const leftPercent = event.column * eventWidth;
+      const conflictInfo = eventConflicts.get(event.id);
+
+      return (
+        <WeekEventBlock
+          key={event.id}
+          event={event}
+          top={top}
+          height={height}
+          leftPercent={leftPercent}
+          eventWidth={eventWidth}
+          hasConflict={!!conflictInfo}
+          conflictCount={conflictInfo?.conflictsWith.length}
+        />
       );
     });
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
-      <View style={styles.header}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.container} edges={['top']}>
+        {/* Header */}
+        <View style={styles.header}>
         <TouchableOpacity onPress={goBack} style={styles.headerButton}>
           <Ionicons name="menu" size={24} color={colors.textPrimary} />
         </TouchableOpacity>
@@ -526,6 +1134,16 @@ export default function CalendarScreen() {
 
         <GradientIcon size={28} />
       </View>
+
+      {/* Pull Down Indicator */}
+      {!showMonthPicker && (
+        <AnimatedView style={[styles.pullDownIndicator, pullDownIndicatorStyle]}>
+          <View style={styles.pullDownChevron}>
+            <Ionicons name="chevron-down" size={16} color={colors.textTertiary} />
+          </View>
+          <Text style={styles.pullDownText}>Release for calendar</Text>
+        </AnimatedView>
+      )}
 
       {/* Month Picker Overlay */}
       {showMonthPicker && (
@@ -630,61 +1248,60 @@ export default function CalendarScreen() {
         </View>
       )}
 
-      {/* Date Navigation */}
-      <View style={styles.dateNav}>
-        <TouchableOpacity
-          onPress={viewMode === 'day' ? goToPreviousDay : goToPreviousWeek}
-          style={styles.navButton}
-        >
-          <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
-        </TouchableOpacity>
-
-        {viewMode === 'day' ? (
-          <View style={styles.dateDisplay}>
-            <View style={[styles.dayCircle, dateDisplay.isToday && styles.dayCircleToday]}>
-              <Text style={[styles.dayNumber, dateDisplay.isToday && styles.dayNumberToday]}>
-                {dateDisplay.day}
-              </Text>
-            </View>
-            <Text style={styles.dayName}>{dateDisplay.dayName}</Text>
-          </View>
-        ) : (
-          <Text style={styles.weekRangeText}>{formatWeekRange(weekDates)}</Text>
-        )}
-
-        <TouchableOpacity
-          onPress={viewMode === 'day' ? goToNextDay : goToNextWeek}
-          style={styles.navButton}
-        >
-          <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-        </TouchableOpacity>
-
-        <View style={{ flex: 1 }} />
-
-        {!dateDisplay.isToday && (
-          <TouchableOpacity onPress={goToToday} style={styles.todayButton}>
-            <Text style={styles.todayText}>Today</Text>
+      {/* Date Navigation with Pull-Down Gesture */}
+      <GestureDetector gesture={pullDownGesture}>
+        <View style={styles.dateNav}>
+          <TouchableOpacity
+            onPress={viewMode === 'day' ? goToPreviousDay : goToPreviousWeek}
+            style={styles.navButton}
+          >
+            <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
-        )}
 
-        <TouchableOpacity
-          style={[styles.gridButton, viewMode === 'week' && styles.gridButtonActive]}
-          onPress={toggleViewMode}
-        >
-          <Ionicons
-            name={viewMode === 'day' ? 'calendar-outline' : 'today-outline'}
-            size={20}
-            color={viewMode === 'week' ? '#4285f4' : colors.textSecondary}
-          />
-        </TouchableOpacity>
-      </View>
+          {viewMode === 'day' ? (
+            <View style={styles.dateDisplay}>
+              <View style={[styles.dayCircle, dateDisplay.isToday && styles.dayCircleToday]}>
+                <Text style={[styles.dayNumber, dateDisplay.isToday && styles.dayNumberToday]}>
+                  {dateDisplay.day}
+                </Text>
+              </View>
+              <Text style={styles.dayName}>{dateDisplay.dayName}</Text>
+            </View>
+          ) : (
+            <Text style={styles.weekRangeText}>{formatWeekRange(weekDates)}</Text>
+          )}
+
+          <TouchableOpacity
+            onPress={viewMode === 'day' ? goToNextDay : goToNextWeek}
+            style={styles.navButton}
+          >
+            <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+
+          <View style={{ flex: 1 }} />
+
+          {!dateDisplay.isToday && (
+            <TouchableOpacity onPress={goToToday} style={styles.todayButton}>
+              <Text style={styles.todayText}>Today</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={[styles.gridButton, viewMode === 'week' && styles.gridButtonActive]}
+            onPress={toggleViewMode}
+          >
+            <Ionicons
+              name={viewMode === 'day' ? 'calendar-outline' : 'today-outline'}
+              size={20}
+              color={viewMode === 'week' ? '#4285f4' : colors.textSecondary}
+            />
+          </TouchableOpacity>
+        </View>
+      </GestureDetector>
 
       {/* Calendar Content */}
       {isLoading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.loadingText}>Loading calendar...</Text>
-        </View>
+        <SkeletonLoader />
       ) : !isConnected ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="calendar-outline" size={48} color={colors.textTertiary} />
@@ -707,184 +1324,361 @@ export default function CalendarScreen() {
           <TouchableOpacity
             style={styles.retryButton}
             onPress={() => {
-              setIsLoading(true);
-              loadEvents();
+              invalidateCache();
+              loadMonthEvents(true);
             }}
           >
             <Text style={styles.retryButtonText}>Try Again</Text>
           </TouchableOpacity>
         </View>
       ) : viewMode === 'day' ? (
-        // Day View
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          refreshControl={
-            <RefreshControl
-              refreshing={isRefreshing}
-              onRefresh={onRefresh}
-              tintColor={colors.accent}
-            />
-          }
-        >
-          <View style={styles.timelineContainer}>
-            {/* Hour labels and grid */}
-            <View style={styles.hoursColumn}>
-              {renderHourLabels()}
-            </View>
-
-            {/* Events area */}
-            <View style={styles.eventsColumn}>
-              {/* Hour grid lines */}
-              {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
-                <View
-                  key={i}
-                  style={[styles.gridLine, { top: i * HOUR_HEIGHT }]}
+        // Day View with Swipe Gesture
+        <GestureDetector gesture={swipeGesture}>
+          <AnimatedView style={[{ flex: 1 }, animatedContentStyle]}>
+            <ScrollView
+              ref={scrollViewRef}
+              style={styles.scrollView}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={onRefresh}
+                  tintColor={colors.accent}
                 />
-              ))}
-
-              {/* Current time indicator */}
-              {currentTimePosition !== null && (
-                <View style={[styles.currentTimeLine, { top: currentTimePosition }]}>
-                  <View style={styles.currentTimeDot} />
-                  <View style={styles.currentTimeBar} />
+              }
+            >
+              <View style={styles.timelineContainer}>
+                {/* Hour labels and grid */}
+                <View style={styles.hoursColumn}>
+                  {renderHourLabels()}
                 </View>
-              )}
 
-              {/* Events */}
-              {renderEvents()}
-            </View>
-          </View>
-        </ScrollView>
-      ) : (
-        // Week View
-        <>
-          {/* Week Day Headers */}
-          <View style={styles.weekDayHeaders}>
-            <View style={styles.weekHourSpacer} />
-            {weekDates.map((date, index) => {
-              const isToday = isSameDay(date, new Date());
-              const isSelected = isSameDay(date, selectedDate);
-              const dayOfWeek = date.getDay(); // 0-6 (Sun-Sat)
-              return (
-                <TouchableOpacity
-                  key={index}
-                  style={styles.weekDayHeader}
-                  onPress={() => {
-                    setSelectedDate(date);
-                    setViewMode('day');
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.weekDayLetter, isToday && styles.weekDayLetterToday]}>
-                    {DAYS_SINGLE[dayOfWeek]}
-                  </Text>
-                  <View style={[
-                    styles.weekDayNumberContainer,
-                    isToday && styles.weekDayNumberContainerToday,
-                  ]}>
-                    <Text style={[
-                      styles.weekDayNumber,
-                      isToday && styles.weekDayNumberToday,
-                    ]}>
-                      {date.getDate()}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Week Timeline */}
-          <ScrollView
-            ref={scrollViewRef}
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={isRefreshing}
-                onRefresh={onRefresh}
-                tintColor={colors.accent}
-              />
-            }
-          >
-            <View style={styles.weekTimelineContainer}>
-              {/* Hour labels */}
-              <View style={styles.weekHoursColumn}>
-                {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => {
-                  const hour = START_HOUR + i;
-                  const ampm = hour >= 12 ? 'PM' : 'AM';
-                  const displayHour = hour % 12 || 12;
-                  return (
-                    <View key={i} style={styles.weekHourRow}>
-                      <Text style={styles.weekHourLabel}>{displayHour} {ampm}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-
-              {/* Day columns */}
-              <View style={styles.weekDaysContainer}>
-                {weekDates.map((date, dayIndex) => {
-                  const isToday = isSameDay(date, new Date());
-                  return (
+                {/* Events area */}
+                <View style={styles.eventsColumn}>
+                  {/* Hour grid lines */}
+                  {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
                     <View
-                      key={dayIndex}
-                      style={[
-                        styles.weekDayColumn,
-                        dayIndex < weekDates.length - 1 && styles.weekDayColumnBorder,
-                      ]}
-                    >
-                      {/* Hour grid lines */}
-                      {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
-                        <View
-                          key={i}
-                          style={[styles.weekGridLine, { top: i * HOUR_HEIGHT }]}
-                        />
-                      ))}
+                      key={i}
+                      style={[styles.gridLine, { top: i * HOUR_HEIGHT }]}
+                    />
+                  ))}
 
-                      {/* Current time indicator for today */}
-                      {isToday && currentTimePosition !== null && (
-                        <View style={[styles.weekCurrentTimeLine, { top: currentTimePosition }]} />
-                      )}
-
-                      {/* Events for this day */}
-                      {renderWeekDayEvents(date)}
+                  {/* Current time indicator */}
+                  {currentTimePosition !== null && (
+                    <View style={[styles.currentTimeLine, { top: currentTimePosition }]}>
+                      <View style={styles.currentTimeDot} />
+                      <View style={styles.currentTimeBar} />
                     </View>
-                  );
-                })}
+                  )}
+
+                  {/* Events */}
+                  {renderEvents()}
+                </View>
               </View>
+            </ScrollView>
+          </AnimatedView>
+        </GestureDetector>
+      ) : (
+        // Week View with Swipe Gesture
+        <GestureDetector gesture={swipeGesture}>
+          <AnimatedView style={[{ flex: 1 }, animatedContentStyle]}>
+            {/* Week Day Headers */}
+            <View style={styles.weekDayHeaders}>
+              <View style={styles.weekHourSpacer} />
+              {weekDates.map((date, index) => {
+                const isToday = isSameDay(date, new Date());
+                const isSelected = isSameDay(date, selectedDate);
+                const dayOfWeek = date.getDay(); // 0-6 (Sun-Sat)
+                return (
+                  <TouchableOpacity
+                    key={index}
+                    style={styles.weekDayHeader}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setSelectedDate(date);
+                      setViewMode('day');
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.weekDayLetter, isToday && styles.weekDayLetterToday]}>
+                      {DAYS_SINGLE[dayOfWeek]}
+                    </Text>
+                    <View style={[
+                      styles.weekDayNumberContainer,
+                      isToday && styles.weekDayNumberContainerToday,
+                    ]}>
+                      <Text style={[
+                        styles.weekDayNumber,
+                        isToday && styles.weekDayNumberToday,
+                      ]}>
+                        {date.getDate()}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
-          </ScrollView>
-        </>
+
+            {/* Week Timeline */}
+            <ScrollView
+              ref={scrollViewRef}
+              style={styles.scrollView}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={onRefresh}
+                  tintColor={colors.accent}
+                />
+              }
+            >
+              <View style={styles.weekTimelineContainer}>
+                {/* Hour labels */}
+                <View style={styles.weekHoursColumn}>
+                  {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => {
+                    const hour = START_HOUR + i;
+                    const ampm = hour >= 12 ? 'PM' : 'AM';
+                    const displayHour = hour % 12 || 12;
+                    return (
+                      <View key={i} style={styles.weekHourRow}>
+                        <Text style={styles.weekHourLabel}>{displayHour} {ampm}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {/* Day columns */}
+                <View style={styles.weekDaysContainer}>
+                  {weekDates.map((date, dayIndex) => {
+                    const isToday = isSameDay(date, new Date());
+                    return (
+                      <View
+                        key={dayIndex}
+                        style={[
+                          styles.weekDayColumn,
+                          dayIndex < weekDates.length - 1 && styles.weekDayColumnBorder,
+                        ]}
+                      >
+                        {/* Hour grid lines */}
+                        {Array.from({ length: END_HOUR - START_HOUR + 1 }).map((_, i) => (
+                          <View
+                            key={i}
+                            style={[styles.weekGridLine, { top: i * HOUR_HEIGHT }]}
+                          />
+                        ))}
+
+                        {/* Current time indicator for today */}
+                        {isToday && currentTimePosition !== null && (
+                          <View style={[styles.weekCurrentTimeLine, { top: currentTimePosition }]} />
+                        )}
+
+                        {/* Events for this day */}
+                        {renderWeekDayEvents(date)}
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            </ScrollView>
+          </AnimatedView>
+        </GestureDetector>
       )}
 
-      {/* Bottom Input */}
-      <View style={styles.inputContainer}>
-        <View style={styles.inputWrapper}>
-          <TextInput
-            style={styles.input}
-            placeholder="Ask Cortex"
-            placeholderTextColor={colors.textTertiary}
-            onFocus={() => router.push('/(main)/chat')}
-          />
-          <TouchableOpacity
-            style={styles.sendButton}
-            onPress={() => router.push('/(main)/chat')}
-          >
-            <LinearGradient
-              colors={gradients.primary as [string, string, ...string[]]}
-              style={styles.sendButtonGradient}
-            >
-              <Ionicons name="send" size={18} color={colors.bgPrimary} />
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </SafeAreaView>
+      {/* Event Details Modal */}
+      <Modal
+        visible={showEventModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowEventModal(false)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowEventModal(false)}
+        >
+          <Pressable style={styles.modalContent} onPress={(e) => e.stopPropagation()}>
+            {selectedEvent && (() => {
+              const meetingType = (selectedEvent.meeting_type as MeetingType) || 'offline';
+              const typeConfig = MEETING_TYPE_CONFIG[meetingType];
+              const startDate = new Date(selectedEvent.start_time);
+              const endDate = new Date(selectedEvent.end_time);
+              const hasMeetLink = !!selectedEvent.meet_link;
+
+              return (
+                <>
+                  {/* Modal Header */}
+                  <View style={styles.modalHeader}>
+                    <MeetingTypeLogo meetingType={meetingType} size={40} />
+                    <TouchableOpacity
+                      style={styles.modalCloseButton}
+                      onPress={() => setShowEventModal(false)}
+                    >
+                      <Ionicons name="close" size={24} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Event Title */}
+                  <Text style={styles.modalTitle}>{selectedEvent.title}</Text>
+
+                  {/* Meeting Type Label */}
+                  <View style={styles.modalTypeLabel}>
+                    <Text style={[styles.modalTypeLabelText, { color: typeConfig.color }]}>
+                      {typeConfig.label}
+                    </Text>
+                  </View>
+
+                  {/* Conflict Warning */}
+                  {selectedEventConflicts.length > 0 && (
+                    <View style={styles.conflictWarningSection}>
+                      <ConflictBanner conflictCount={selectedEventConflicts.length} />
+                      <View style={styles.conflictEventsList}>
+                        {selectedEventConflicts.slice(0, 3).map((conflictEvent) => {
+                          const conflictStart = new Date(conflictEvent.start_time);
+                          const conflictEnd = new Date(conflictEvent.end_time);
+                          return (
+                            <View key={conflictEvent.id} style={styles.conflictEventItem}>
+                              <View style={styles.conflictEventDot} />
+                              <Text style={styles.conflictEventTitle} numberOfLines={1}>
+                                {conflictEvent.title}
+                              </Text>
+                              <Text style={styles.conflictEventTime}>
+                                {conflictStart.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                {' - '}
+                                {conflictEnd.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                              </Text>
+                            </View>
+                          );
+                        })}
+                        {selectedEventConflicts.length > 3 && (
+                          <Text style={styles.conflictMoreText}>
+                            +{selectedEventConflicts.length - 3} more conflicts
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Date & Time */}
+                  <View style={styles.modalSection}>
+                    <View style={styles.modalSectionIcon}>
+                      <Ionicons name="time-outline" size={20} color={colors.textSecondary} />
+                    </View>
+                    <View style={styles.modalSectionContent}>
+                      <Text style={styles.modalSectionTitle}>
+                        {startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+                      </Text>
+                      <Text style={styles.modalSectionSubtitle}>
+                        {formatTimeRange(startDate, endDate)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Location */}
+                  {selectedEvent.location && (
+                    <View style={styles.modalSection}>
+                      <View style={styles.modalSectionIcon}>
+                        <Ionicons name="location-outline" size={20} color={colors.textSecondary} />
+                      </View>
+                      <View style={styles.modalSectionContent}>
+                        <Text style={styles.modalSectionTitle}>{selectedEvent.location}</Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Guests/Attendees */}
+                  {selectedEvent.attendees && selectedEvent.attendees.length > 0 && (
+                    <View style={styles.modalSection}>
+                      <View style={styles.modalSectionIcon}>
+                        <Ionicons name="people-outline" size={20} color={colors.textSecondary} />
+                      </View>
+                      <View style={styles.modalSectionContent}>
+                        <Text style={styles.modalSectionTitle}>
+                          {selectedEvent.attendees.length} Guest{selectedEvent.attendees.length > 1 ? 's' : ''}
+                        </Text>
+                        <View style={styles.modalGuestList}>
+                          {selectedEvent.attendees.slice(0, 5).map((guest, index) => (
+                            <View key={index} style={styles.modalGuestItem}>
+                              <View style={styles.modalGuestAvatar}>
+                                <Text style={styles.modalGuestAvatarText}>
+                                  {guest.charAt(0).toUpperCase()}
+                                </Text>
+                              </View>
+                              <Text style={styles.modalGuestName} numberOfLines={1}>{guest}</Text>
+                            </View>
+                          ))}
+                          {selectedEvent.attendees.length > 5 && (
+                            <Text style={styles.modalMoreGuests}>
+                              +{selectedEvent.attendees.length - 5} more
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Description */}
+                  {selectedEvent.description && (
+                    <View style={styles.modalSection}>
+                      <View style={styles.modalSectionIcon}>
+                        <Ionicons name="document-text-outline" size={20} color={colors.textSecondary} />
+                      </View>
+                      <View style={styles.modalSectionContent}>
+                        <Text style={styles.modalDescription} numberOfLines={3}>
+                          {selectedEvent.description}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+
+                  {/* Action Buttons */}
+                  <View style={styles.modalActions}>
+                    {hasMeetLink && (
+                      <TouchableOpacity
+                        style={[styles.modalJoinButton, { backgroundColor: typeConfig.color }]}
+                        onPress={() => {
+                          if (selectedEvent.meet_link) {
+                            posthog?.capture(ANALYTICS_EVENTS.CALENDAR_MEET_JOINED, {
+                              event_title: selectedEvent.title,
+                              meeting_type: meetingType,
+                            });
+                            Linking.openURL(selectedEvent.meet_link);
+                            setShowEventModal(false);
+                          }
+                        }}
+                      >
+                        <MeetingTypeLogo meetingType={meetingType} size={20} />
+                        <Text style={styles.modalJoinButtonText}>Join {typeConfig.label}</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      style={styles.modalSecondaryButton}
+                      onPress={() => {
+                        setShowEventModal(false);
+                        router.push({
+                          pathname: '/(main)/chat',
+                          params: { query: `Tell me about my "${selectedEvent.title}" event` },
+                        });
+                      }}
+                    >
+                      <Ionicons name="chatbubble-outline" size={18} color={colors.textPrimary} />
+                      <Text style={styles.modalSecondaryButtonText}>Ask Cortex</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              );
+            })()}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Quick Add Input */}
+      <QuickAddInput
+        selectedDate={selectedDate}
+        onEventCreated={() => loadMonthEvents(true)}
+      />
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
@@ -1095,26 +1889,294 @@ const styles = StyleSheet.create({
   },
   eventBlock: {
     position: 'absolute',
-    left: 4,
-    right: 4,
     borderRadius: borderRadius.sm,
     borderLeftWidth: 3,
     padding: spacing.xs,
     overflow: 'hidden',
   },
+  eventContent: {
+    flex: 1,
+  },
+  eventContentPressable: {
+    flex: 1,
+    paddingRight: 50, // Space for meet button
+  },
+  eventTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
   eventTitle: {
     fontSize: 13,
     fontWeight: '600',
+    flex: 1,
+  },
+  meetIndicator: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 137, 123, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   eventTime: {
     fontSize: 11,
     color: colors.textSecondary,
     marginTop: 2,
   },
-  eventLocation: {
-    fontSize: 11,
-    color: colors.textTertiary,
+  eventDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     marginTop: 2,
+  },
+  eventLocation: {
+    fontSize: 10,
+    color: colors.textTertiary,
+    flex: 1,
+  },
+  eventAttendees: {
+    fontSize: 10,
+    color: colors.textTertiary,
+    flex: 1,
+  },
+  eventHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  meetJoinButton: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#00897B',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 4,
+    zIndex: 100,
+    elevation: 5,
+  },
+  meetJoinText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  conflictBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    zIndex: 50,
+  },
+  weekConflictBadge: {
+    position: 'absolute',
+    top: 1,
+    right: 1,
+    zIndex: 50,
+  },
+  conflictBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  meetingTypeIcon: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 6,
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.bgSecondary,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: spacing.lg,
+    paddingBottom: spacing.xl + 20,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  modalTypeIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.bgTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  modalTypeLabel: {
+    marginBottom: spacing.lg,
+  },
+  modalTypeLabelText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  // Conflict Warning Styles
+  conflictWarningSection: {
+    marginBottom: spacing.lg,
+  },
+  conflictEventsList: {
+    marginTop: spacing.sm,
+    paddingLeft: spacing.sm,
+  },
+  conflictEventItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 4,
+  },
+  conflictEventDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: CONFLICT_COLOR,
+  },
+  conflictEventTitle: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+  conflictEventTime: {
+    fontSize: 12,
+    color: colors.textTertiary,
+  },
+  conflictMoreText: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    marginTop: spacing.xs,
+    fontStyle: 'italic',
+  },
+  modalSection: {
+    flexDirection: 'row',
+    marginBottom: spacing.lg,
+  },
+  modalSectionIcon: {
+    width: 32,
+    marginRight: spacing.sm,
+    paddingTop: 2,
+  },
+  modalSectionContent: {
+    flex: 1,
+  },
+  modalSectionTitle: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: colors.textPrimary,
+  },
+  modalSectionSubtitle: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  modalDescription: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    lineHeight: 20,
+  },
+  modalGuestList: {
+    marginTop: spacing.sm,
+  },
+  modalGuestItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  modalGuestAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.bgTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.sm,
+  },
+  modalGuestAvatarText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  modalGuestName: {
+    fontSize: 14,
+    color: colors.textPrimary,
+    flex: 1,
+  },
+  modalMoreGuests: {
+    fontSize: 13,
+    color: colors.textTertiary,
+    marginTop: spacing.xs,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  modalJoinButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.lg,
+    gap: spacing.xs,
+  },
+  modalJoinButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  modalSecondaryButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.lg,
+    backgroundColor: colors.bgTertiary,
+    gap: spacing.xs,
+  },
+  modalSecondaryButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  weekMeetButton: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    backgroundColor: '#00897B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 2,
+    position: 'absolute',
+    right: 2,
+    top: 2,
+    zIndex: 10,
   },
   // Month Picker Styles
   monthPickerContainer: {
@@ -1320,55 +2382,52 @@ const styles = StyleSheet.create({
   },
   weekEventBlock: {
     position: 'absolute',
-    left: 2,
-    right: 2,
     borderRadius: borderRadius.sm,
-    borderLeftWidth: 3,
-    paddingHorizontal: spacing.xs,
+    borderLeftWidth: 2,
+    paddingHorizontal: 3,
     paddingVertical: 2,
+    paddingRight: 20, // Space for meet button
     overflow: 'hidden',
   },
-  weekEventTitle: {
-    fontSize: 12,
-    fontWeight: '600',
+  weekEventContent: {
+    flex: 1,
   },
-  weekEventTime: {
-    fontSize: 10,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  inputContainer: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    paddingBottom: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: colors.glassBorder,
-  },
-  inputWrapper: {
+  weekEventTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.bgSecondary,
-    borderRadius: borderRadius.full,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    paddingLeft: spacing.md,
-    paddingRight: spacing.xs,
-    paddingVertical: spacing.xs,
+    gap: 2,
   },
-  input: {
+  weekEventTitle: {
+    fontSize: 11,
+    fontWeight: '600',
     flex: 1,
-    fontSize: 16,
-    color: colors.textPrimary,
-    paddingVertical: spacing.sm,
   },
-  sendButton: {
-    marginLeft: spacing.sm,
+  weekEventTime: {
+    fontSize: 9,
+    color: colors.textSecondary,
+    marginTop: 1,
   },
-  sendButtonGradient: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  // Pull Down Indicator Styles
+  pullDownIndicator: {
+    position: 'absolute',
+    top: 100,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 50,
+  },
+  pullDownChevron: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.bgSecondary,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 4,
+  },
+  pullDownText: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    fontWeight: '500',
   },
 });

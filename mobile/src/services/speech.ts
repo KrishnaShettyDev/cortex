@@ -60,7 +60,7 @@ export async function startRecording(): Promise<boolean> {
     });
 
     // Create the recorder with Whisper-compatible preset
-    audioRecorder = new AudioModule.AudioRecorder(WHISPER_COMPATIBLE_PRESET);
+    audioRecorder = new AudioModule.AudioRecorder(WHISPER_COMPATIBLE_PRESET as any);
 
     // Prepare and start recording
     await audioRecorder.prepareToRecordAsync();

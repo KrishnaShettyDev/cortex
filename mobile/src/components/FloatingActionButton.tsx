@@ -22,7 +22,7 @@ export function FloatingActionButton({
       style={[styles.container, shadows.lg]}
     >
       <LinearGradient
-        colors={gradients.primary as [string, string, ...string[]]}
+        colors={gradients.primary}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[

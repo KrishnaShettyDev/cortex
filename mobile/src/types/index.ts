@@ -34,6 +34,14 @@ export interface MemoryCreateResponse {
   entities_extracted: string[];
 }
 
+export interface CreateMemoryInput {
+  content: string;
+  memory_type?: 'voice' | 'text' | 'photo';
+  memory_date?: string;
+  photo_url?: string;
+  audio_url?: string;
+}
+
 export interface MemoryListResponse {
   memories: Memory[];
   total: number;
@@ -93,6 +101,11 @@ export interface ActionTaken {
     event_url?: string;
     message_id?: string;
     thread_id?: string;
+    // Additional result properties for different tools
+    free_slots?: Array<{ start_time: string; end_time: string }>;
+    places?: Array<{ name: string; address: string }>;
+    emails?: Array<{ id: string; subject: string }>;
+    messages?: Array<{ id: string; content: string }>;
   };
 }
 
