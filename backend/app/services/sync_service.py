@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,12 +7,14 @@ from typing import Optional
 import json
 import base64
 import hashlib
+import httpx
 
 from composio import Composio, ComposioToolSet
 from app.models.integration import ConnectedAccount, SyncState
 from app.services.memory_service import MemoryService
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Simple in-memory cache for calendar events (shared across instances)
@@ -28,7 +31,7 @@ class SyncService:
 
         # Initialize Composio clients with error handling
         if not settings.composio_api_key:
-            print("WARNING: COMPOSIO_API_KEY not set - integrations will not work")
+            logger.warning("COMPOSIO_API_KEY not set - integrations will not work")
             self.composio = None
             self.toolset = None
         else:
@@ -36,9 +39,52 @@ class SyncService:
                 self.composio = Composio(api_key=settings.composio_api_key)
                 self.toolset = ComposioToolSet(api_key=settings.composio_api_key)
             except Exception as e:
-                print(f"ERROR initializing Composio: {e}")
+                logger.error(f"Error initializing Composio: {e}")
                 self.composio = None
                 self.toolset = None
+
+    async def _execute_composio_action(self, action: str, params: dict, connected_account_id: str) -> dict:
+        """
+        Execute a Composio action via REST API directly.
+
+        This bypasses the SDK's app-specific connection validation, allowing
+        us to use a 'googlesuper' connection with 'GOOGLECALENDAR' actions.
+        """
+        url = f"https://backend.composio.dev/api/v2/actions/{action}/execute"
+        headers = {
+            "X-API-Key": settings.composio_api_key,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "connectedAccountId": connected_account_id,
+            "input": params
+        }
+
+        logger.debug(f"Action: {action}")
+        logger.debug(f"Params: {json.dumps(params, indent=2, default=str)}")
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(url, headers=headers, json=data)
+            result = response.json()
+            logger.debug(f"Response status: {response.status_code}")
+            logger.debug(f"Response: {json.dumps(result, indent=2, default=str)}")
+
+            # Check for HTTP errors
+            if response.status_code >= 400:
+                error_msg = result.get("error") or result.get("message") or str(result)
+                raise Exception(f"Composio action failed: {error_msg}")
+
+            # Composio returns data in different formats, normalize it
+            if result.get("successful") or result.get("successfull"):
+                return result.get("data", result)
+            else:
+                error = result.get("error") or result.get("message") or "Unknown error"
+                raise Exception(f"Composio action failed: {error}")
+
+        except httpx.RequestError as e:
+            logger.debug(f"Request error: {e}")
+            raise Exception(f"Composio API request failed: {e}")
 
     # ==================== CONNECTION MANAGEMENT ====================
 
@@ -136,14 +182,14 @@ class SyncService:
             state = base64.b64encode(state_data.encode()).decode()
 
             # Initiate connection with googlesuper for unified Google access
-            print(f"Initiating Composio connection for user {user_id}, service: {service}")
+            logger.debug(f"Initiating Composio connection for user {user_id}, service: {service}")
             connection_request = entity.initiate_connection(
                 app_name=service,  # 'googlesuper' for unified Google services
                 redirect_url=redirect_url,
             )
 
             oauth_url = connection_request.redirectUrl
-            print(f"Got OAuth URL: {oauth_url[:100]}...")
+            logger.debug(f"Got OAuth URL: {oauth_url[:100]}...")
 
             # Add state parameter
             if "state=" not in oauth_url:
@@ -153,9 +199,7 @@ class SyncService:
             return oauth_url
 
         except Exception as e:
-            print(f"Error getting OAuth URL from Composio: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error getting OAuth URL from Composio: {type(e).__name__}: {e}", exc_info=True)
             raise ValueError(f"Failed to get OAuth URL: {str(e)}")
 
     async def handle_oauth_callback_by_connection_id(
@@ -169,14 +213,14 @@ class SyncService:
         This is the new Composio callback format.
         """
         if not self.composio:
-            print("Composio not initialized - cannot handle callback")
+            logger.debug("Composio not initialized - cannot handle callback")
             return None
 
         try:
             # Get connection details from Composio using connected_accounts.get()
             connection = self.composio.connected_accounts.get(connected_account_id)
-            print(f"Got Composio connection: {connection}")
-            print(f"  Connection attributes: {dir(connection)}")
+            logger.debug(f"Got Composio connection: {connection}")
+            logger.debug(f"  Connection attributes: {dir(connection)}")
 
             # The user_id is in clientUniqueUserId (entityId is 'default')
             entity_id = None
@@ -189,12 +233,12 @@ class SyncService:
                 entity_id = connection.entity_id
 
             if not entity_id:
-                print(f"No user_id found in Composio connection")
+                logger.debug(f"No user_id found in Composio connection")
                 return None
 
-            print(f"Using clientUniqueUserId as user_id: {entity_id}")
+            logger.debug(f"Using clientUniqueUserId as user_id: {entity_id}")
             user_id = UUID(entity_id)
-            print(f"Found user_id from Composio entity: {user_id}")
+            logger.debug(f"Found user_id from Composio entity: {user_id}")
 
             # Get email from connection params if available
             email = None
@@ -217,9 +261,7 @@ class SyncService:
             )
 
         except Exception as e:
-            print(f"Error handling Composio callback: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error handling Composio callback: {type(e).__name__}: {e}", exc_info=True)
             return None
 
     async def _save_connected_account(
@@ -249,7 +291,7 @@ class SyncService:
             existing.email = email
             existing.status = status
             await self.db.commit()
-            print(f"Updated existing connection for {service}")
+            logger.debug(f"Updated existing connection for {service}")
             return existing
 
         # Create new connection
@@ -264,7 +306,7 @@ class SyncService:
         self.db.add(account)
         await self.db.commit()
         await self.db.refresh(account)
-        print(f"Created new connection for {service}")
+        logger.debug(f"Created new connection for {service}")
         return account
 
     async def handle_oauth_callback(
@@ -277,7 +319,7 @@ class SyncService:
         Handle OAuth callback and store connection (legacy method).
         """
         if not self.composio:
-            print("Composio not initialized - cannot handle callback")
+            logger.debug("Composio not initialized - cannot handle callback")
             return None
 
         try:
@@ -285,9 +327,9 @@ class SyncService:
             entity = self.composio.get_entity(id=str(user_id))
             connections = entity.get_connections()
 
-            print(f"Found {len(connections)} connections for user {user_id}")
+            logger.debug(f"Found {len(connections)} connections for user {user_id}")
             for conn in connections:
-                print(f"  - Connection: app={conn.appName}, id={conn.id}, status={conn.status}")
+                logger.debug(f"  - Connection: app={conn.appName}, id={conn.id}, status={conn.status}")
 
             # Find the connection for this service
             composio_connection_id = None
@@ -306,7 +348,7 @@ class SyncService:
                     break
 
             if not composio_connection_id:
-                print(f"No Composio connection found for {service}")
+                logger.debug(f"No Composio connection found for {service}")
                 return None
 
             # Save to our database using helper
@@ -320,9 +362,7 @@ class SyncService:
             )
 
         except Exception as e:
-            print(f"Error getting Composio connection: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error getting Composio connection: {type(e).__name__}: {e}", exc_info=True)
             return None
 
     async def refresh_connection_status(self, user_id: UUID) -> None:
@@ -350,7 +390,7 @@ class SyncService:
                         await self.db.commit()
 
         except Exception as e:
-            print(f"Error refreshing connection status: {e}")
+            logger.error(f"Error refreshing connection status: {e}")
 
     async def disconnect_provider(self, user_id: UUID, provider: str) -> bool:
         """Disconnect all services for a provider."""
@@ -376,7 +416,7 @@ class SyncService:
                         conn.delete()
                         break
             except Exception as e:
-                print(f"Error revoking Composio connection: {e}")
+                logger.error(f"Error revoking Composio connection: {e}")
 
             await self.db.delete(account)
 
@@ -444,18 +484,18 @@ class SyncService:
 
             after_str = after_date.strftime("%Y/%m/%d")
 
-            print(f"Syncing Gmail for user {user_id}, connection_id: {connection_id}")
+            logger.debug(f"Syncing Gmail for user {user_id}, connection_id: {connection_id}")
 
             # Fetch emails via Composio - use entity_id (user's UUID)
-            response = self.toolset.execute_action(
+            response = await self._execute_composio_action(
                 action="GMAIL_FETCH_EMAILS",
                 params={
                     "max_results": 50,
                     "query": f"after:{after_str}",
                 },
-                entity_id=str(user_id),  # Use entity_id instead of connected_account_id
+                connected_account_id=connection_id,
             )
-            print(f"Gmail fetch response: {str(response)[:500]}")
+            logger.debug(f"Gmail fetch response: {str(response)[:500]}")
 
             # Parse response - Composio response can have different formats
             data = response if isinstance(response, dict) else {}
@@ -472,9 +512,9 @@ class SyncService:
             if isinstance(data.get("data"), list):
                 messages = data["data"]
 
-            print(f"Found {len(messages)} messages to process")
+            logger.debug(f"Found {len(messages)} messages to process")
             if messages:
-                print(f"First message structure: {messages[0] if messages else 'N/A'}")
+                logger.debug(f"First message structure: {messages[0] if messages else 'N/A'}")
 
             for msg in messages:
                 try:
@@ -487,7 +527,7 @@ class SyncService:
                     )
 
                     if not msg_id:
-                        print(f"No ID found in message: {msg}")
+                        logger.debug(f"No ID found in message: {msg}")
                         continue
 
                     # Check if already synced
@@ -503,10 +543,10 @@ class SyncService:
 
                     # If we don't have content, fetch the full email
                     if not body:
-                        email_resp = self.toolset.execute_action(
+                        email_resp = await self._execute_composio_action(
                             action="GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
                             params={"message_id": msg_id},
-                            entity_id=str(user_id),
+                            connected_account_id=connection_id,
                         )
                         email_data = email_resp if isinstance(email_resp, dict) else {}
                         email = email_data.get("data", email_data)
@@ -527,7 +567,7 @@ class SyncService:
                                 )
                         else:
                             email_date = datetime.utcnow()
-                    except:
+                    except Exception:
                         email_date = datetime.utcnow()
 
                     content = f"Email from {sender}\nSubject: {subject}\n\n{body}"
@@ -541,7 +581,7 @@ class SyncService:
                         source_url=f"https://mail.google.com/mail/u/0/#inbox/{msg_id}",
                     )
                     memories_added += 1
-                    print(f"Saved email: {subject[:50]}")
+                    logger.debug(f"Saved email: {subject[:50]}")
 
                 except Exception as e:
                     errors.append(f"Failed to sync email: {str(e)[:100]}")
@@ -571,14 +611,15 @@ class SyncService:
 
             time_max = datetime.utcnow() + timedelta(days=30)
 
-            response = self.toolset.execute_action(
+            # Format dates without microseconds - Composio expects clean ISO format
+            response = await self._execute_composio_action(
                 action="GOOGLECALENDAR_FIND_EVENT",
                 params={
-                    "time_min": time_min.isoformat() + "Z",
-                    "time_max": time_max.isoformat() + "Z",
+                    "time_min": time_min.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "time_max": time_max.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "max_results": 100,
                 },
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
             data = response if isinstance(response, dict) else {}
@@ -612,7 +653,7 @@ class SyncService:
                             )
                         else:
                             event_date = datetime.strptime(start_time, "%Y-%m-%d")
-                    except:
+                    except Exception:
                         event_date = datetime.utcnow()
 
                     content_parts = [f"Calendar Event: {title}"]
@@ -680,22 +721,30 @@ class SyncService:
                 return cached_result
 
         try:
-            response = self.toolset.execute_action(
+            # Use REST API directly to bypass SDK's app-specific validation
+            # Format dates without microseconds - Composio expects clean ISO format
+            time_min = start_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+            time_max = end_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            response = await self._execute_composio_action(
                 action="GOOGLECALENDAR_FIND_EVENT",
                 params={
-                    "time_min": start_date.isoformat() + "Z",
-                    "time_max": end_date.isoformat() + "Z",
+                    "time_min": time_min,
+                    "time_max": time_max,
                     "max_results": 250,
                     "single_events": True,
                     "order_by": "startTime",
                 },
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
             data = response if isinstance(response, dict) else {}
 
             # Try different response structures from Composio
+            event_data = data.get("event_data", data)
             items = (
+                event_data.get("event_data") or
+                event_data.get("items") or
                 data.get("items") or
                 data.get("data", {}).get("items") or
                 data.get("response_data", {}).get("items") or
@@ -718,6 +767,58 @@ class SyncService:
                     location = event.get("location", "")
                     html_link = event.get("htmlLink", "")
                     color_id = event.get("colorId", "")
+
+                    # Extract Google Meet link from hangoutLink or conferenceData
+                    meet_link = event.get("hangoutLink", "")
+                    if not meet_link:
+                        # Check conferenceData for video conference links
+                        conference_data = event.get("conferenceData", {})
+                        entry_points = conference_data.get("entryPoints", [])
+                        for entry in entry_points:
+                            if entry.get("entryPointType") == "video":
+                                meet_link = entry.get("uri", "")
+                                break
+
+                    # Also check description and location for Meet/Zoom links
+                    if not meet_link:
+                        import re
+                        # Regex to find video conference links
+                        video_link_pattern = r'(https?://(?:meet\.google\.com|zoom\.us|teams\.microsoft\.com)/[^\s<>"\']+)'
+
+                        # Check description
+                        if description:
+                            match = re.search(video_link_pattern, description)
+                            if match:
+                                meet_link = match.group(1)
+
+                        # Check location
+                        if not meet_link and location:
+                            match = re.search(video_link_pattern, location)
+                            if match:
+                                meet_link = match.group(1)
+
+                    # Detect meeting type based on video link
+                    meeting_type = "offline"  # Default
+                    if meet_link:
+                        if "meet.google.com" in meet_link:
+                            meeting_type = "google_meet"
+                        elif "zoom.us" in meet_link or "zoom.com" in meet_link:
+                            meeting_type = "zoom"
+                        elif "teams.microsoft.com" in meet_link:
+                            meeting_type = "teams"
+                        elif "webex" in meet_link:
+                            meeting_type = "webex"
+                        else:
+                            meeting_type = "video"  # Generic video call
+                    elif location and ("http" in location.lower() or "meet" in location.lower() or "zoom" in location.lower()):
+                        # Check location for video links
+                        if "meet.google.com" in location:
+                            meeting_type = "google_meet"
+                            meet_link = location
+                        elif "zoom" in location.lower():
+                            meeting_type = "zoom"
+                        elif "teams" in location.lower():
+                            meeting_type = "teams"
 
                     # Parse start time
                     start = event.get("start", {})
@@ -783,10 +884,12 @@ class SyncService:
                         "attendees": attendee_names,
                         "color": color,
                         "html_link": html_link if html_link else None,
+                        "meet_link": meet_link if meet_link else None,
+                        "meeting_type": meeting_type,  # google_meet, zoom, teams, webex, video, offline
                     })
 
                 except Exception as e:
-                    print(f"Error parsing event: {e}")
+                    logger.error(f"Error parsing event: {e}")
                     continue
 
             result = {
@@ -801,9 +904,7 @@ class SyncService:
             return result
 
         except Exception as e:
-            print(f"Error fetching calendar events: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error fetching calendar events: {e}", exc_info=True)
             return {
                 "success": False,
                 "events": [],
@@ -820,6 +921,7 @@ class SyncService:
         location: str | None = None,
         attendees: list[dict] | None = None,
         send_notifications: bool = True,
+        add_google_meet: bool = True,  # Automatically add Google Meet
     ) -> dict:
         """Create a new calendar event."""
         connection_id = await self._get_connection_id(user_id, "googlecalendar")
@@ -832,11 +934,19 @@ class SyncService:
             }
 
         try:
+            import uuid as uuid_lib
+
+            # Format datetime for Composio (ISO format without microseconds)
+            start_dt_str = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            end_dt_str = end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            # Use Composio's expected parameter names
             event_params = {
                 "summary": title,
-                "start": {"dateTime": start_time.isoformat(), "timeZone": "UTC"},
-                "end": {"dateTime": end_time.isoformat(), "timeZone": "UTC"},
-                "sendUpdates": "all" if send_notifications else "none",
+                "start_datetime": start_dt_str,
+                "end_datetime": end_dt_str,
+                "timezone": "UTC",
+                "send_updates": send_notifications,  # Boolean
             }
 
             if description:
@@ -844,28 +954,50 @@ class SyncService:
             if location:
                 event_params["location"] = location
             if attendees:
-                event_params["attendees"] = [
-                    {"email": a["email"], "displayName": a.get("name", "")}
-                    for a in attendees
-                ]
+                event_params["attendees"] = [a["email"] for a in attendees]
 
-            response = self.toolset.execute_action(
+            # Add Google Meet conferencing by default
+            # Composio uses 'create_meeting_room' parameter (defaults to True)
+            if add_google_meet:
+                event_params["create_meeting_room"] = True
+
+            logger.debug(f"Attempting to create event with params: {json.dumps(event_params, indent=2, default=str)}")
+
+            response = await self._execute_composio_action(
                 action="GOOGLECALENDAR_CREATE_EVENT",
                 params=event_params,
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
+            logger.debug(f"Response: {json.dumps(response, indent=2, default=str)[:2000]}")
+
+            # Parse response - Composio nests data under response_data
             data = response if isinstance(response, dict) else {}
-            event_data = data.get("data", data)
+            event_data = data.get("response_data") or data.get("data", {}).get("response_data") or data
 
             if event_data and event_data.get("id"):
                 event_id = event_data["id"]
                 event_url = event_data.get("htmlLink", "")
 
+                # Extract Google Meet link from response
+                meet_link = event_data.get("hangoutLink", "")
+                if not meet_link:
+                    conference_data = event_data.get("conferenceData", {})
+                    entry_points = conference_data.get("entryPoints", [])
+                    for entry in entry_points:
+                        if entry.get("entryPointType") == "video":
+                            meet_link = entry.get("uri", "")
+                            break
+
+                if meet_link:
+                    logger.debug(f"Created event '{title}' with meet_link: {meet_link}")
+
                 # Create memory
                 content = f"Calendar Event Created: {title}\nWhen: {start_time} - {end_time}"
                 if location:
                     content += f"\nLocation: {location}"
+                if meet_link:
+                    content += f"\nGoogle Meet: {meet_link}"
 
                 await self.memory_service.create_memory(
                     user_id=user_id,
@@ -880,13 +1012,15 @@ class SyncService:
                     "success": True,
                     "event_id": event_id,
                     "event_url": event_url,
-                    "message": f"Event '{title}' created",
+                    "meet_link": meet_link if meet_link else None,
+                    "message": f"Event '{title}' created" + (" with Google Meet" if meet_link else ""),
                 }
             else:
                 return {
                     "success": False,
                     "event_id": None,
                     "event_url": None,
+                    "meet_link": None,
                     "message": str(data.get("error", "Failed to create event")),
                 }
 
@@ -895,6 +1029,7 @@ class SyncService:
                 "success": False,
                 "event_id": None,
                 "event_url": None,
+                "meet_link": None,
                 "message": f"Error: {str(e)}",
             }
 
@@ -921,9 +1056,10 @@ class SyncService:
             }
 
         try:
+            # Use Composio's expected parameter names
             update_params = {
-                "eventId": event_id,
-                "sendUpdates": "all" if send_notifications else "none",
+                "event_id": event_id,
+                "send_updates": send_notifications,  # Boolean
             }
 
             if title is not None:
@@ -933,23 +1069,21 @@ class SyncService:
             if location is not None:
                 update_params["location"] = location
             if start_time is not None:
-                update_params["start"] = {"dateTime": start_time.isoformat(), "timeZone": "UTC"}
+                update_params["start_datetime"] = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
             if end_time is not None:
-                update_params["end"] = {"dateTime": end_time.isoformat(), "timeZone": "UTC"}
+                update_params["end_datetime"] = end_time.strftime("%Y-%m-%dT%H:%M:%SZ")
             if attendees is not None:
-                update_params["attendees"] = [
-                    {"email": a["email"], "displayName": a.get("name", "")}
-                    for a in attendees
-                ]
+                update_params["attendees"] = [a["email"] for a in attendees]
 
-            response = self.toolset.execute_action(
+            response = await self._execute_composio_action(
                 action="GOOGLECALENDAR_UPDATE_EVENT",
                 params=update_params,
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
+            # Parse response - Composio nests data under response_data
             data = response if isinstance(response, dict) else {}
-            event_data = data.get("data", data)
+            event_data = data.get("response_data") or data.get("data", {}).get("response_data") or data
 
             return {
                 "success": True,
@@ -983,13 +1117,13 @@ class SyncService:
             }
 
         try:
-            self.toolset.execute_action(
+            await self._execute_composio_action(
                 action="GOOGLECALENDAR_DELETE_EVENT",
                 params={
-                    "eventId": event_id,
-                    "sendUpdates": "all" if send_notifications else "none",
+                    "event_id": event_id,
+                    "send_updates": send_notifications,  # Boolean
                 },
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
             return {
@@ -1031,29 +1165,33 @@ class SyncService:
             }
 
         try:
+            # Use Composio's expected parameter names
+            recipient_emails = [r["email"] for r in to]
             email_params = {
-                "to": [r["email"] for r in to],
+                "recipient_email": recipient_emails[0] if len(recipient_emails) == 1 else recipient_emails[0],
                 "subject": subject,
                 "body": body,
             }
 
+            # Add CC recipients if provided
             if cc:
-                email_params["cc"] = [r["email"] for r in cc]
+                email_params["cc"] = ",".join([r["email"] for r in cc])
             if bcc:
-                email_params["bcc"] = [r["email"] for r in bcc]
+                email_params["bcc"] = ",".join([r["email"] for r in bcc])
             if is_html:
-                email_params["isHtml"] = True
+                email_params["is_html"] = True
             if reply_to_message_id:
-                email_params["threadId"] = reply_to_message_id
+                email_params["thread_id"] = reply_to_message_id
 
-            response = self.toolset.execute_action(
+            response = await self._execute_composio_action(
                 action="GMAIL_SEND_EMAIL",
                 params=email_params,
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
+            # Parse response - Composio nests data under response_data
             data = response if isinstance(response, dict) else {}
-            email_data = data.get("data", data)
+            email_data = data.get("response_data") or data.get("data", {}).get("response_data") or data
 
             if email_data and email_data.get("id"):
                 message_id = email_data["id"]
@@ -1115,6 +1253,12 @@ class SyncService:
         Returns:
             Dict with free_slots list and busy_slots list
         """
+        # Normalize time_min and time_max to naive datetimes (strip timezone if present)
+        if time_min.tzinfo is not None:
+            time_min = time_min.replace(tzinfo=None)
+        if time_max.tzinfo is not None:
+            time_max = time_max.replace(tzinfo=None)
+
         connection_id = await self._get_connection_id(user_id, "googlecalendar")
         if not connection_id:
             return {
@@ -1126,14 +1270,15 @@ class SyncService:
 
         try:
             # Use GOOGLECALENDAR_FIND_FREE_SLOTS action
-            response = self.toolset.execute_action(
+            # Format dates without microseconds - Composio expects clean ISO format
+            response = await self._execute_composio_action(
                 action="GOOGLECALENDAR_FIND_FREE_SLOTS",
                 params={
-                    "time_min": time_min.isoformat() + "Z",
-                    "time_max": time_max.isoformat() + "Z",
+                    "time_min": time_min.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "time_max": time_max.strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "items": [{"id": "primary"}],
                 },
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
             data = response if isinstance(response, dict) else {}
@@ -1143,11 +1288,14 @@ class SyncService:
             primary_cal = calendars.get("primary", {})
             busy_periods = primary_cal.get("busy", [])
 
-            # Convert busy periods to datetime objects
+            # Convert busy periods to datetime objects (naive UTC for comparison)
             busy_slots = []
             for period in busy_periods:
                 start = datetime.fromisoformat(period["start"].replace("Z", "+00:00"))
                 end = datetime.fromisoformat(period["end"].replace("Z", "+00:00"))
+                # Convert to naive datetime for comparison with time_min/time_max
+                start = start.replace(tzinfo=None)
+                end = end.replace(tzinfo=None)
                 busy_slots.append({"start": start, "end": end})
 
             # Calculate free slots
@@ -1178,15 +1326,31 @@ class SyncService:
                         "duration_minutes": int(gap_minutes),
                     })
 
+            # Convert datetime objects to ISO strings for JSON serialization
+            serialized_free_slots = []
+            for slot in free_slots:
+                serialized_free_slots.append({
+                    "start": slot["start"].isoformat() if isinstance(slot["start"], datetime) else slot["start"],
+                    "end": slot["end"].isoformat() if isinstance(slot["end"], datetime) else slot["end"],
+                    "duration_minutes": slot["duration_minutes"],
+                })
+
+            serialized_busy_slots = []
+            for slot in busy_slots:
+                serialized_busy_slots.append({
+                    "start": slot["start"].isoformat() if isinstance(slot["start"], datetime) else slot["start"],
+                    "end": slot["end"].isoformat() if isinstance(slot["end"], datetime) else slot["end"],
+                })
+
             return {
                 "success": True,
-                "free_slots": free_slots,
-                "busy_slots": busy_slots,
+                "free_slots": serialized_free_slots,
+                "busy_slots": serialized_busy_slots,
                 "message": f"Found {len(free_slots)} free slots",
             }
 
         except Exception as e:
-            print(f"Error finding free slots: {e}")
+            logger.error(f"Error finding free slots: {e}", exc_info=True)
             # Fallback: Get events and calculate manually
             events_result = await self.get_calendar_events(user_id, time_min, time_max)
             if not events_result["success"]:
@@ -1200,9 +1364,20 @@ class SyncService:
             # Calculate from events
             busy_slots = []
             for event in events_result["events"]:
+                start = event["start_time"]
+                end = event["end_time"]
+                # Convert to naive datetime for comparison
+                if isinstance(start, str):
+                    start = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=None)
+                elif isinstance(start, datetime) and start.tzinfo is not None:
+                    start = start.replace(tzinfo=None)
+                if isinstance(end, str):
+                    end = datetime.fromisoformat(end.replace("Z", "+00:00")).replace(tzinfo=None)
+                elif isinstance(end, datetime) and end.tzinfo is not None:
+                    end = end.replace(tzinfo=None)
                 busy_slots.append({
-                    "start": event["start_time"],
-                    "end": event["end_time"],
+                    "start": start,
+                    "end": end,
                 })
 
             busy_slots.sort(key=lambda x: x["start"])
@@ -1230,10 +1405,26 @@ class SyncService:
                         "duration_minutes": int(gap_minutes),
                     })
 
+            # Convert datetime objects to ISO strings for JSON serialization
+            serialized_free_slots = []
+            for slot in free_slots:
+                serialized_free_slots.append({
+                    "start": slot["start"].isoformat() if isinstance(slot["start"], datetime) else slot["start"],
+                    "end": slot["end"].isoformat() if isinstance(slot["end"], datetime) else slot["end"],
+                    "duration_minutes": slot["duration_minutes"],
+                })
+
+            serialized_busy_slots = []
+            for slot in busy_slots:
+                serialized_busy_slots.append({
+                    "start": slot["start"].isoformat() if isinstance(slot["start"], datetime) else slot["start"],
+                    "end": slot["end"].isoformat() if isinstance(slot["end"], datetime) else slot["end"],
+                })
+
             return {
                 "success": True,
-                "free_slots": free_slots,
-                "busy_slots": busy_slots,
+                "free_slots": serialized_free_slots,
+                "busy_slots": serialized_busy_slots,
                 "message": f"Found {len(free_slots)} free slots",
             }
 
@@ -1289,10 +1480,10 @@ class SyncService:
                 if new_end:
                     params["end_time"] = new_end.isoformat() if isinstance(new_end, datetime) else new_end
 
-                response = self.toolset.execute_action(
+                response = await self._execute_composio_action(
                     action="GOOGLECALENDAR_PATCH_EVENT",
                     params=params,
-                    entity_id=str(user_id),
+                    connected_account_id=connection_id,
                 )
 
                 data = response if isinstance(response, dict) else {}
@@ -1367,10 +1558,10 @@ class SyncService:
             }
 
         try:
-            response = self.toolset.execute_action(
+            response = await self._execute_composio_action(
                 action="GMAIL_FETCH_MESSAGE_BY_THREAD_ID",
                 params={"thread_id": thread_id},
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
             data = response if isinstance(response, dict) else {}
@@ -1449,10 +1640,10 @@ class SyncService:
             if cc:
                 params["cc"] = cc
 
-            response = self.toolset.execute_action(
+            response = await self._execute_composio_action(
                 action="GMAIL_REPLY_TO_THREAD",
                 params=params,
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
             data = response if isinstance(response, dict) else {}
@@ -1520,13 +1711,13 @@ class SyncService:
             }
 
         try:
-            response = self.toolset.execute_action(
+            response = await self._execute_composio_action(
                 action="GMAIL_FETCH_EMAILS",
                 params={
                     "query": query,
                     "max_results": max_results,
                 },
-                entity_id=str(user_id),
+                connected_account_id=connection_id,
             )
 
             data = response if isinstance(response, dict) else {}
@@ -1537,12 +1728,17 @@ class SyncService:
 
             emails = []
             for msg in messages:
+                # Check for sender in multiple fields - Composio returns it differently
+                sender = msg.get("from") or msg.get("sender") or msg.get("preview", {}).get("from") or "Unknown"
+                if isinstance(sender, dict):
+                    sender = sender.get("email") or sender.get("name") or "Unknown"
+
                 emails.append({
                     "id": msg.get("id"),
                     "thread_id": msg.get("threadId"),
-                    "from": msg.get("from", "Unknown"),
-                    "subject": msg.get("subject", "No Subject"),
-                    "snippet": msg.get("snippet", msg.get("body", "")[:200]),
+                    "from": sender,
+                    "subject": msg.get("subject") or msg.get("preview", {}).get("subject") or "No Subject",
+                    "snippet": msg.get("snippet") or msg.get("body", "")[:200] or msg.get("preview", {}).get("body", "")[:200],
                     "date": msg.get("date", msg.get("receivedAt")),
                 })
 
@@ -1599,15 +1795,15 @@ class SyncService:
                         age = datetime.utcnow() - user.location_updated_at.replace(tzinfo=None)
                         if age < timedelta(hours=1):
                             location = (user.location_lat, user.location_lng)
-                            print(f"Using stored location for user {user_id}: {location}")
+                            logger.debug(f"Using stored location for user {user_id}: {location}")
                         else:
-                            print(f"User location is stale ({age}), searching without location bias")
+                            logger.debug(f"User location is stale ({age}), searching without location bias")
                     else:
                         # No timestamp, use location anyway
                         location = (user.location_lat, user.location_lng)
-                        print(f"Using stored location (no timestamp) for user {user_id}: {location}")
+                        logger.debug(f"Using stored location (no timestamp) for user {user_id}: {location}")
             except Exception as e:
-                print(f"Error fetching user location: {e}")
+                logger.error(f"Error fetching user location: {e}")
 
         # Use Google Places API directly if API key is available
         if settings.google_maps_api_key:
@@ -1658,7 +1854,7 @@ class SyncService:
                     }
 
             except Exception as e:
-                print(f"Google Places API error: {e}")
+                logger.error(f"Google Places API error: {e}")
                 # Fall through to Composio attempt
 
         # Fallback to Composio if available
@@ -1677,10 +1873,10 @@ class SyncService:
                         }
                     }
 
-                response = self.toolset.execute_action(
+                response = await self._execute_composio_action(
                     action="GOOGLE_MAPS_TEXT_SEARCH",
                     params=params,
-                    entity_id=str(user_id),
+                    connected_account_id=connection_id,
                 )
 
                 data = response if isinstance(response, dict) else {}
@@ -1705,7 +1901,7 @@ class SyncService:
                 }
 
             except Exception as e:
-                print(f"Composio Google Maps error: {e}")
+                logger.error(f"Composio Google Maps error: {e}")
 
         return {
             "success": False,

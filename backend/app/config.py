@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from functools import lru_cache
 
 
@@ -10,6 +11,45 @@ class Settings(BaseSettings):
 
     # Auth
     jwt_secret: str
+
+    @field_validator('database_url')
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        """Validate database URL is set and not a placeholder."""
+        if not v or v == "your_database_url_here":
+            raise ValueError(
+                "DATABASE_URL is required. Set it in .env or environment variables. "
+                "Example: postgresql+asyncpg://user:pass@localhost:5432/cortex"
+            )
+        # Check for common mistakes
+        if v.startswith('psql '):
+            raise ValueError(
+                "DATABASE_URL should be a connection string, not a psql command. "
+                "Remove 'psql' prefix. Example: postgresql+asyncpg://user:pass@localhost:5432/cortex"
+            )
+        # Allow any URL that contains postgresql (handles various formats)
+        if 'postgresql' not in v.lower() and 'postgres' not in v.lower():
+            raise ValueError(
+                "DATABASE_URL must be a PostgreSQL connection string. "
+                "Example: postgresql+asyncpg://user:pass@localhost:5432/cortex"
+            )
+        return v
+
+    @field_validator('jwt_secret')
+    @classmethod
+    def validate_jwt_secret(cls, v: str) -> str:
+        """Validate JWT secret is set and secure."""
+        if not v or v == "your_jwt_secret_here":
+            raise ValueError(
+                "JWT_SECRET is required. Set a strong random string in .env or environment variables. "
+                "Generate one with: openssl rand -hex 32"
+            )
+        if len(v) < 32:
+            raise ValueError(
+                "JWT_SECRET should be at least 32 characters for security. "
+                "Generate one with: openssl rand -hex 32"
+            )
+        return v
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7

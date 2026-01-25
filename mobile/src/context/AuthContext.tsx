@@ -87,6 +87,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const devSignIn = async (email: string, name?: string) => {
+    // SECURITY: Only allow devSignIn in development builds
+    if (!__DEV__) {
+      logger.error('AuthContext: devSignIn attempted in production build');
+      setError('Development sign-in is not available in production');
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     try {
