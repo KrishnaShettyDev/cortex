@@ -1,9 +1,20 @@
+/**
+ * LoadingBubble - Animated typing indicator
+ *
+ * Shows three animated dots while assistant is responding.
+ * Matches the glassmorphic style of chat bubbles.
+ */
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { colors, borderRadius, spacing } from '../theme';
 
 export function LoadingBubble() {
-  const dots = [useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current, useRef(new Animated.Value(0.3)).current];
+  const dots = [
+    useRef(new Animated.Value(0.3)).current,
+    useRef(new Animated.Value(0.3)).current,
+    useRef(new Animated.Value(0.3)).current,
+  ];
 
   useEffect(() => {
     const animations = dots.map((dot, index) =>
@@ -12,12 +23,12 @@ export function LoadingBubble() {
           Animated.delay(index * 200),
           Animated.timing(dot, {
             toValue: 1,
-            duration: 300,
+            duration: 400,
             useNativeDriver: true,
           }),
           Animated.timing(dot, {
             toValue: 0.3,
-            duration: 300,
+            duration: 400,
             useNativeDriver: true,
           }),
         ])
@@ -33,19 +44,27 @@ export function LoadingBubble() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.bubble}>
-        {dots.map((dot, index) => (
-          <Animated.View
-            key={index}
-            style={[
-              styles.dot,
-              {
-                opacity: dot,
-              },
-            ]}
-          />
-        ))}
-      </View>
+      <BlurView intensity={15} tint="dark" style={styles.blurContainer}>
+        <View style={styles.bubble}>
+          {dots.map((dot, index) => (
+            <Animated.View
+              key={index}
+              style={[
+                styles.dot,
+                {
+                  opacity: dot,
+                  transform: [{
+                    scale: dot.interpolate({
+                      inputRange: [0.3, 1],
+                      outputRange: [0.8, 1.1],
+                    }),
+                  }],
+                },
+              ]}
+            />
+          ))}
+        </View>
+      </BlurView>
     </View>
   );
 }
@@ -53,20 +72,31 @@ export function LoadingBubble() {
 const styles = StyleSheet.create({
   container: {
     alignSelf: 'flex-start',
+    borderRadius: borderRadius.xl,
+    overflow: 'hidden',
+  },
+  blurContainer: {
+    borderRadius: borderRadius.xl,
+    overflow: 'hidden',
   },
   bubble: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    backgroundColor: colors.bgTertiary,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
     borderRadius: borderRadius.xl,
+    borderBottomLeftRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.glassBorder,
+    minWidth: 72,
   },
   dot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.textTertiary,
+    backgroundColor: colors.accent,
   },
 });
