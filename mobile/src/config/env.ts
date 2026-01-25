@@ -15,7 +15,7 @@ import Constants from 'expo-constants';
 // Use your machine's IP for physical devices
 // localhost only works for iOS Simulator
 const DEV_CONFIG = {
-  API_URL: 'http://localhost:8000', // localhost works for iOS Simulator
+  API_URL: 'https://askcortex.plutas.in', // Using production API for testing
   GOOGLE_CLIENT_ID: {
     // These must match exactly what's in Google Cloud Console
     ios: '266293132252-ks0f0m30egbekl2jhtqnqv8r8olfub4q.apps.googleusercontent.com',
