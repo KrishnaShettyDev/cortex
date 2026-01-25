@@ -32,7 +32,7 @@ import Reanimated, {
 import * as Haptics from 'expo-haptics';
 import { integrationsService, CalendarEventItem, MeetingType, TimeSlot, CreateCalendarEventRequest } from '../../src/services';
 import { colors, gradients, spacing, borderRadius } from '../../src/theme';
-import { GradientIcon } from '../../src/components/GradientIcon';
+import { GradientIcon, CalendarSkeletonLoader } from '../../src/components';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
 import { ConflictIndicator, ConflictBanner, CONFLICT_COLOR, CONFLICT_BORDER_COLOR } from '../../src/components/ConflictIndicator';
@@ -41,23 +41,33 @@ import { QuickAddInput } from '../../src/components/QuickAddInput';
 import { FindTimeSheet } from '../../src/components/FindTimeSheet';
 import { EventConfirmationModal, ParsedEvent } from '../../src/components/EventConfirmationModal';
 import { useCalendarStore } from '../../src/stores/calendarStore';
+import {
+  START_HOUR,
+  END_HOUR,
+  HOUR_HEIGHT,
+  MONTHS,
+  MONTHS_SHORT,
+  DAYS,
+  DAYS_SHORT,
+  DAYS_SINGLE,
+  WEEK_VIEW_DAYS,
+  DATE_STRIP_ITEM_WIDTH,
+  DATE_STRIP_DAYS_VISIBLE,
+  SWIPE_THRESHOLD,
+  SWIPE_VELOCITY_THRESHOLD,
+  ViewMode,
+  EventWithLayout,
+  getDaysInMonth,
+  getFirstDayOfMonth,
+  generateCalendarDays,
+  getWeekViewDates,
+  formatWeekRange,
+  calculateEventLayout,
+  formatTimeRange,
+  isSameDay,
+} from '../../src/utils/calendarHelpers';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-// Hours to display (full 24 hours: 12 AM to 11 PM)
-const START_HOUR = 0;
-const END_HOUR = 23;
-const HOUR_HEIGHT = 60;
-
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
-];
-
-const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DAYS_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
 const goBack = () => {
   if (router.canGoBack()) {
@@ -66,171 +76,6 @@ const goBack = () => {
     router.replace('/(main)/chat');
   }
 };
-
-// Helper to get days in a month
-function getDaysInMonth(year: number, month: number): number {
-  return new Date(year, month + 1, 0).getDate();
-}
-
-// Helper to get first day of month (0 = Sunday)
-function getFirstDayOfMonth(year: number, month: number): number {
-  return new Date(year, month, 1).getDay();
-}
-
-// Generate calendar grid for a month - always 6 rows (42 cells) for consistent height
-function generateCalendarDays(year: number, month: number): (number | null)[] {
-  const daysInMonth = getDaysInMonth(year, month);
-  const firstDay = getFirstDayOfMonth(year, month);
-  const days: (number | null)[] = [];
-
-  // Add empty cells for days before the 1st
-  for (let i = 0; i < firstDay; i++) {
-    days.push(null);
-  }
-
-  // Add days of the month
-  for (let i = 1; i <= daysInMonth; i++) {
-    days.push(i);
-  }
-
-  // Always pad to exactly 42 cells (6 rows) for consistent height
-  while (days.length < 42) {
-    days.push(null);
-  }
-
-  return days;
-}
-
-// Number of days to show in week view (3 days like the design)
-const WEEK_VIEW_DAYS = 3;
-
-// Get dates for week view (3 days centered around selected date)
-function getWeekViewDates(date: Date): Date[] {
-  const dates: Date[] = [];
-
-  // Start 1 day before selected date (so selected is in middle for 3-day view)
-  const startDate = new Date(date);
-  startDate.setDate(date.getDate() - 1);
-
-  for (let i = 0; i < WEEK_VIEW_DAYS; i++) {
-    const d = new Date(startDate);
-    d.setDate(startDate.getDate() + i);
-    dates.push(d);
-  }
-
-  return dates;
-}
-
-// Format date range for week view header
-function formatWeekRange(dates: Date[]): string {
-  if (dates.length === 0) return '';
-  const first = dates[0];
-  const last = dates[dates.length - 1];
-  const monthShort = MONTHS_SHORT[first.getMonth()];
-  return `${monthShort} ${first.getDate()} - ${last.getDate()}`;
-}
-
-// Single letter day names for week view
-const DAYS_SINGLE = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-// Calculate overlapping events and their positions
-interface EventWithLayout extends CalendarEventItem {
-  column: number;
-  totalColumns: number;
-}
-
-function calculateEventLayout(events: CalendarEventItem[]): EventWithLayout[] {
-  if (events.length === 0) return [];
-
-  // Sort events by start time, then by duration (longer first)
-  const sortedEvents = [...events].sort((a, b) => {
-    const aStart = new Date(a.start_time).getTime();
-    const bStart = new Date(b.start_time).getTime();
-    if (aStart !== bStart) return aStart - bStart;
-    // Longer events first
-    const aDuration = new Date(a.end_time).getTime() - aStart;
-    const bDuration = new Date(b.end_time).getTime() - bStart;
-    return bDuration - aDuration;
-  });
-
-  const columns: { endTime: number; events: CalendarEventItem[] }[] = [];
-  const eventLayouts: Map<string, { column: number; totalColumns: number }> = new Map();
-
-  for (const event of sortedEvents) {
-    const eventStart = new Date(event.start_time).getTime();
-    const eventEnd = new Date(event.end_time).getTime();
-
-    // Find a column where this event doesn't overlap
-    let columnIndex = -1;
-    for (let i = 0; i < columns.length; i++) {
-      if (columns[i].endTime <= eventStart) {
-        columnIndex = i;
-        break;
-      }
-    }
-
-    if (columnIndex === -1) {
-      // Need a new column
-      columnIndex = columns.length;
-      columns.push({ endTime: eventEnd, events: [event] });
-    } else {
-      columns[columnIndex].endTime = eventEnd;
-      columns[columnIndex].events.push(event);
-    }
-
-    eventLayouts.set(event.id, { column: columnIndex, totalColumns: 1 });
-  }
-
-  // Now calculate totalColumns for overlapping events
-  for (const event of sortedEvents) {
-    const eventStart = new Date(event.start_time).getTime();
-    const eventEnd = new Date(event.end_time).getTime();
-
-    // Find all events that overlap with this one
-    let maxColumn = 0;
-    for (const other of sortedEvents) {
-      const otherStart = new Date(other.start_time).getTime();
-      const otherEnd = new Date(other.end_time).getTime();
-
-      // Check if they overlap
-      if (eventStart < otherEnd && eventEnd > otherStart) {
-        const layout = eventLayouts.get(other.id)!;
-        maxColumn = Math.max(maxColumn, layout.column);
-      }
-    }
-
-    // Update totalColumns for all overlapping events
-    for (const other of sortedEvents) {
-      const otherStart = new Date(other.start_time).getTime();
-      const otherEnd = new Date(other.end_time).getTime();
-
-      if (eventStart < otherEnd && eventEnd > otherStart) {
-        const layout = eventLayouts.get(other.id)!;
-        layout.totalColumns = Math.max(layout.totalColumns, maxColumn + 1);
-      }
-    }
-  }
-
-  return sortedEvents.map(event => ({
-    ...event,
-    ...eventLayouts.get(event.id)!,
-  }));
-}
-
-// Format time range
-function formatTimeRange(start: Date, end: Date): string {
-  const formatTime = (date: Date) => {
-    const hours = date.getHours();
-    const minutes = date.getMinutes();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    const displayHours = hours % 12 || 12;
-    if (minutes === 0) {
-      return `${displayHours}${ampm}`;
-    }
-    return `${displayHours}:${minutes.toString().padStart(2, '0')}${ampm}`;
-  };
-  return `${formatTime(start)} - ${formatTime(end)}`;
-}
 
 // Meeting type logo and color configuration
 // Using official Google logos (local assets)
@@ -296,109 +141,7 @@ const MEETING_TYPE_CONFIG: Record<MeetingType, {
   },
 };
 
-type ViewMode = 'day' | 'week' | 'agenda';
-
-// Animated skeleton component (defined outside to avoid recreation)
-const AnimatedSkeletonView = Reanimated.createAnimatedComponent(View);
-
-// Skeleton Loading Component
-const SkeletonLoader = () => {
-  const opacity = useSharedValue(0.3);
-
-  React.useEffect(() => {
-    // Use withRepeat for proper looping animation
-    opacity.value = withRepeat(
-      withTiming(0.7, { duration: 800 }),
-      -1, // Infinite repeat
-      true // Reverse on each iteration
-    );
-  }, []);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
-
-  return (
-    <View style={skeletonStyles.container}>
-      {/* Skeleton hour rows with event placeholders */}
-      {Array.from({ length: 8 }).map((_, rowIndex) => (
-        <View key={rowIndex} style={skeletonStyles.hourRow}>
-          {/* Hour label skeleton */}
-          <AnimatedSkeletonView style={[skeletonStyles.hourLabel, animatedStyle]} />
-          {/* Event skeleton - varying sizes */}
-          {rowIndex % 2 === 0 && (
-            <AnimatedSkeletonView
-              style={[
-                skeletonStyles.eventBlock,
-                { width: 50 + (rowIndex * 5) },
-                animatedStyle
-              ]}
-            />
-          )}
-          {rowIndex === 1 && (
-            <AnimatedSkeletonView
-              style={[
-                skeletonStyles.eventBlock,
-                { width: 150, height: 80 },
-                animatedStyle
-              ]}
-            />
-          )}
-          {rowIndex === 3 && (
-            <AnimatedSkeletonView
-              style={[
-                skeletonStyles.eventBlock,
-                { width: 120, height: 60 },
-                animatedStyle
-              ]}
-            />
-          )}
-          {rowIndex === 5 && (
-            <AnimatedSkeletonView
-              style={[
-                skeletonStyles.eventBlock,
-                { width: 100, height: 45 },
-                animatedStyle
-              ]}
-            />
-          )}
-        </View>
-      ))}
-    </View>
-  );
-};
-
-const skeletonStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-  },
-  hourRow: {
-    flexDirection: 'row',
-    height: HOUR_HEIGHT,
-    alignItems: 'flex-start',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.glassBorder,
-  },
-  hourLabel: {
-    width: 50,
-    height: 12,
-    backgroundColor: colors.bgTertiary,
-    borderRadius: 4,
-    marginRight: spacing.md,
-  },
-  eventBlock: {
-    height: 40,
-    backgroundColor: colors.bgTertiary,
-    borderRadius: borderRadius.sm,
-    marginLeft: spacing.sm,
-  },
-});
-
 // Date Strip Scroller Component - horizontal scrollable week with tappable dates
-const DATE_STRIP_ITEM_WIDTH = 48;
-const DATE_STRIP_DAYS_VISIBLE = 7;
 
 interface DateStripProps {
   selectedDate: Date;
@@ -597,10 +340,6 @@ const MeetingTypeLogo = ({
     />
   );
 };
-
-// Swipe threshold for navigation
-const SWIPE_THRESHOLD = 50;
-const SWIPE_VELOCITY_THRESHOLD = 500;
 
 // Animated view for swipe
 const AnimatedView = Reanimated.createAnimatedComponent(View);
@@ -1705,7 +1444,7 @@ export default function CalendarScreen() {
 
       {/* Calendar Content */}
       {isLoading ? (
-        <SkeletonLoader />
+        <CalendarSkeletonLoader />
       ) : !isConnected ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="calendar-outline" size={48} color={colors.textTertiary} />
@@ -2110,14 +1849,6 @@ export default function CalendarScreen() {
       />
       </SafeAreaView>
     </GestureHandlerRootView>
-  );
-}
-
-function isSameDay(date1: Date, date2: Date): boolean {
-  return (
-    date1.getFullYear() === date2.getFullYear() &&
-    date1.getMonth() === date2.getMonth() &&
-    date1.getDate() === date2.getDate()
   );
 }
 

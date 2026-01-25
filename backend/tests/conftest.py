@@ -1,14 +1,17 @@
 import pytest
 import pytest_asyncio
+from datetime import datetime, timezone
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import Column, String, DateTime, Float, Integer, Boolean, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from unittest.mock import MagicMock
 import uuid
 
 from app.main import app
 from app.database import get_db
+from app.api.deps import get_current_user
 from app.config import get_settings
 
 settings = get_settings()
@@ -123,6 +126,46 @@ async def client(test_session):
         yield test_session
 
     app.dependency_overrides[get_db] = override_get_db
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.clear()
+
+
+class MockUser:
+    """Mock user for authenticated API tests."""
+    def __init__(self, user_id: str = None, email: str = "test@example.com", name: str = "Test User"):
+        self.id = uuid.UUID(user_id) if user_id else uuid.uuid4()
+        self.oauth_id = f"oauth_{self.id}"
+        self.email = email
+        self.name = name
+        self.location_lat = None
+        self.location_lng = None
+        self.location_updated_at = None
+        self.created_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
+
+
+@pytest_asyncio.fixture
+async def mock_user():
+    """Create a mock user for tests."""
+    return MockUser()
+
+
+@pytest_asyncio.fixture
+async def auth_client(test_session, mock_user):
+    """Create authenticated test client with mocked auth."""
+
+    async def override_get_db():
+        yield test_session
+
+    async def override_get_current_user():
+        return mock_user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

@@ -81,10 +81,22 @@ class HybridRetrievalService:
 
         # Extract temporal range (simplified - no longer uses temporal parser)
         temporal_start, temporal_end = None, None
+        query_lower = query.lower()
+
+        # Detect temporal queries by keywords
+        temporal_keywords = [
+            "last week", "last month", "last year", "yesterday", "today",
+            "this week", "this month", "this year", "tomorrow",
+            "last night", "last time", "recently", "before", "after",
+            "when did", "when was", "in january", "in february", "in march",
+            "in april", "in may", "in june", "in july", "in august",
+            "in september", "in october", "in november", "in december",
+            "ago", "past", "previous"
+        ]
+        has_temporal_reference = any(kw in query_lower for kw in temporal_keywords)
 
         # Detect fact types from query
         fact_types = []
-        query_lower = query.lower()
 
         type_keywords = {
             "person": ["who", "person", "friend", "family", "colleague"],
@@ -105,7 +117,7 @@ class HybridRetrievalService:
             temporal_start=temporal_start,
             temporal_end=temporal_end,
             fact_types=fact_types,
-            is_temporal_query=temporal_start is not None,
+            is_temporal_query=has_temporal_reference or temporal_start is not None,
             is_entity_query=len(entities) > 0,
         )
 

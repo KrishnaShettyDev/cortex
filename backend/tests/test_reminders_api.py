@@ -2,49 +2,12 @@
 
 import pytest
 import pytest_asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
-import jwt
-
-from tests.conftest import TestUser
-from app.config import get_settings
-
-settings = get_settings()
 
 
 # ==================== FIXTURES ====================
-
-
-@pytest_asyncio.fixture
-async def test_user(test_session: AsyncSession):
-    """Create a test user."""
-    user = TestUser(
-        id=str(uuid4()),
-        oauth_id="test_oauth_id_api",
-        email="testapi@example.com",
-        name="Test API User",
-    )
-    test_session.add(user)
-    await test_session.commit()
-    await test_session.refresh(user)
-    return user
-
-
-@pytest.fixture
-def auth_headers(test_user: TestUser):
-    """Generate auth headers with JWT token."""
-    token = jwt.encode(
-        {
-            "sub": str(test_user.id),
-            "email": test_user.email,
-            "exp": datetime.utcnow() + timedelta(hours=1),
-        },
-        settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
-    )
-    return {"Authorization": f"Bearer {token}"}
 
 
 @pytest.fixture
@@ -53,7 +16,7 @@ def sample_reminder_request():
     return {
         "title": "Call the bank",
         "body": "Ask about loan rates",
-        "remind_at": (datetime.utcnow() + timedelta(hours=2)).isoformat(),
+        "remind_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
         "reminder_type": "time",
     }
 
@@ -64,7 +27,7 @@ def sample_task_request():
     return {
         "title": "Review code changes",
         "description": "Check the new API endpoints",
-        "due_date": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+        "due_date": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
         "priority": 2,
     }
 
@@ -74,15 +37,13 @@ def sample_task_request():
 
 @pytest.mark.asyncio
 async def test_create_reminder_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_reminder_request: dict,
 ):
     """Test POST /reminders endpoint."""
-    response = await client.post(
+    response = await auth_client.post(
         "/reminders",
         json=sample_reminder_request,
-        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -110,19 +71,17 @@ async def test_create_reminder_unauthorized(
 
 @pytest.mark.asyncio
 async def test_list_reminders_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_reminder_request: dict,
 ):
     """Test GET /reminders endpoint."""
     # Create a reminder first
-    await client.post(
+    await auth_client.post(
         "/reminders",
         json=sample_reminder_request,
-        headers=auth_headers,
     )
 
-    response = await client.get("/reminders", headers=auth_headers)
+    response = await auth_client.get("/reminders")
 
     assert response.status_code == 200
     data = response.json()
@@ -133,24 +92,19 @@ async def test_list_reminders_endpoint(
 
 @pytest.mark.asyncio
 async def test_get_reminder_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_reminder_request: dict,
 ):
     """Test GET /reminders/{id} endpoint."""
     # Create a reminder
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/reminders",
         json=sample_reminder_request,
-        headers=auth_headers,
     )
     reminder_id = create_response.json()["id"]
 
     # Get the reminder
-    response = await client.get(
-        f"/reminders/{reminder_id}",
-        headers=auth_headers,
-    )
+    response = await auth_client.get(f"/reminders/{reminder_id}")
 
     assert response.status_code == 200
     data = response.json()
@@ -160,40 +114,33 @@ async def test_get_reminder_endpoint(
 
 @pytest.mark.asyncio
 async def test_get_reminder_not_found(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
 ):
     """Test GET /reminders/{id} with non-existent ID."""
     fake_id = str(uuid4())
-    response = await client.get(
-        f"/reminders/{fake_id}",
-        headers=auth_headers,
-    )
+    response = await auth_client.get(f"/reminders/{fake_id}")
 
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_update_reminder_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_reminder_request: dict,
 ):
     """Test PATCH /reminders/{id} endpoint."""
     # Create a reminder
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/reminders",
         json=sample_reminder_request,
-        headers=auth_headers,
     )
     reminder_id = create_response.json()["id"]
 
     # Update the reminder
     update_data = {"title": "Updated title"}
-    response = await client.patch(
+    response = await auth_client.patch(
         f"/reminders/{reminder_id}",
         json=update_data,
-        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -203,24 +150,19 @@ async def test_update_reminder_endpoint(
 
 @pytest.mark.asyncio
 async def test_complete_reminder_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_reminder_request: dict,
 ):
     """Test POST /reminders/{id}/complete endpoint."""
     # Create a reminder
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/reminders",
         json=sample_reminder_request,
-        headers=auth_headers,
     )
     reminder_id = create_response.json()["id"]
 
     # Complete the reminder
-    response = await client.post(
-        f"/reminders/{reminder_id}/complete",
-        headers=auth_headers,
-    )
+    response = await auth_client.post(f"/reminders/{reminder_id}/complete")
 
     assert response.status_code == 200
     data = response.json()
@@ -229,24 +171,19 @@ async def test_complete_reminder_endpoint(
 
 @pytest.mark.asyncio
 async def test_snooze_reminder_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_reminder_request: dict,
 ):
     """Test POST /reminders/{id}/snooze endpoint."""
     # Create a reminder
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/reminders",
         json=sample_reminder_request,
-        headers=auth_headers,
     )
     reminder_id = create_response.json()["id"]
 
     # Snooze the reminder
-    response = await client.post(
-        f"/reminders/{reminder_id}/snooze?minutes=30",
-        headers=auth_headers,
-    )
+    response = await auth_client.post(f"/reminders/{reminder_id}/snooze?minutes=30")
 
     assert response.status_code == 200
     data = response.json()
@@ -255,34 +192,26 @@ async def test_snooze_reminder_endpoint(
 
 @pytest.mark.asyncio
 async def test_delete_reminder_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_reminder_request: dict,
 ):
     """Test DELETE /reminders/{id} endpoint."""
     # Create a reminder
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/reminders",
         json=sample_reminder_request,
-        headers=auth_headers,
     )
     reminder_id = create_response.json()["id"]
 
     # Delete the reminder
-    response = await client.delete(
-        f"/reminders/{reminder_id}",
-        headers=auth_headers,
-    )
+    response = await auth_client.delete(f"/reminders/{reminder_id}")
 
     assert response.status_code == 200
     data = response.json()
     assert data["success"] is True
 
     # Verify it's gone
-    get_response = await client.get(
-        f"/reminders/{reminder_id}",
-        headers=auth_headers,
-    )
+    get_response = await auth_client.get(f"/reminders/{reminder_id}")
     assert get_response.status_code == 404
 
 
@@ -291,15 +220,13 @@ async def test_delete_reminder_endpoint(
 
 @pytest.mark.asyncio
 async def test_create_task_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_task_request: dict,
 ):
     """Test POST /reminders/tasks endpoint."""
-    response = await client.post(
+    response = await auth_client.post(
         "/reminders/tasks",
         json=sample_task_request,
-        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -312,19 +239,17 @@ async def test_create_task_endpoint(
 
 @pytest.mark.asyncio
 async def test_list_tasks_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_task_request: dict,
 ):
     """Test GET /reminders/tasks endpoint."""
     # Create a task first
-    await client.post(
+    await auth_client.post(
         "/reminders/tasks",
         json=sample_task_request,
-        headers=auth_headers,
     )
 
-    response = await client.get("/reminders/tasks", headers=auth_headers)
+    response = await auth_client.get("/reminders/tasks")
 
     assert response.status_code == 200
     data = response.json()
@@ -335,24 +260,19 @@ async def test_list_tasks_endpoint(
 
 @pytest.mark.asyncio
 async def test_complete_task_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
     sample_task_request: dict,
 ):
     """Test POST /reminders/tasks/{id}/complete endpoint."""
     # Create a task
-    create_response = await client.post(
+    create_response = await auth_client.post(
         "/reminders/tasks",
         json=sample_task_request,
-        headers=auth_headers,
     )
     task_id = create_response.json()["id"]
 
     # Complete the task
-    response = await client.post(
-        f"/reminders/tasks/{task_id}/complete",
-        headers=auth_headers,
-    )
+    response = await auth_client.post(f"/reminders/tasks/{task_id}/complete")
 
     assert response.status_code == 200
     data = response.json()
@@ -364,8 +284,7 @@ async def test_complete_task_endpoint(
 
 @pytest.mark.asyncio
 async def test_check_location_reminders_endpoint(
-    client: AsyncClient,
-    auth_headers: dict,
+    auth_client: AsyncClient,
 ):
     """Test POST /reminders/check-location endpoint."""
     # Create a location-based reminder
@@ -377,16 +296,14 @@ async def test_check_location_reminders_endpoint(
         "location_longitude": -122.4194,
         "location_radius_meters": 100,
     }
-    await client.post(
+    await auth_client.post(
         "/reminders",
         json=location_reminder,
-        headers=auth_headers,
     )
 
     # Check for triggered reminders at that location
-    response = await client.post(
+    response = await auth_client.post(
         "/reminders/check-location?latitude=37.7749&longitude=-122.4194",
-        headers=auth_headers,
     )
 
     assert response.status_code == 200
