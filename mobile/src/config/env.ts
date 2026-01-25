@@ -27,7 +27,7 @@ const DEV_CONFIG = {
 
 // Production configuration - values come from EAS build env or secrets
 const PROD_CONFIG = {
-  API_URL: process.env.EXPO_PUBLIC_API_URL || 'https://api.cortex.app',
+  API_URL: process.env.EXPO_PUBLIC_API_URL || 'https://askcortex.plutas.in',
   GOOGLE_CLIENT_ID: {
     ios: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || DEV_CONFIG.GOOGLE_CLIENT_ID.ios,
     android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || DEV_CONFIG.GOOGLE_CLIENT_ID.android,

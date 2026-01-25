@@ -19,7 +19,7 @@
         "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.cortex.app"
+        "EXPO_PUBLIC_API_URL": "https://askcortex.plutas.in"
       }
     },
     "production": {
@@ -31,7 +31,7 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.cortex.app",
+        "EXPO_PUBLIC_API_URL": "https://askcortex.plutas.in",
         "SENTRY_DISABLE_AUTO_UPLOAD": "true"
       }
     }
