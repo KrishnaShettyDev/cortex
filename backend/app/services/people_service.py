@@ -61,28 +61,37 @@ Keep it brief and actionable. No headers, just bullet points."""
         sort_by: str = "recent",  # 'recent', 'frequent', 'alphabetical'
         entity_type: str = "person",
         limit: int = 50,
-    ) -> list[dict]:
-        """List all people (entities) with stats."""
-        query = (
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """List all people (entities) with stats and pagination."""
+        # Base query for filtering
+        base_query = (
             select(Entity)
             .where(Entity.user_id == user_id)
             .where(Entity.entity_type == entity_type)
         )
 
-        if sort_by == "recent":
-            query = query.order_by(Entity.last_seen.desc())
-        elif sort_by == "frequent":
-            query = query.order_by(Entity.mention_count.desc())
-        elif sort_by == "alphabetical":
-            query = query.order_by(Entity.name.asc())
-        else:
-            query = query.order_by(Entity.last_seen.desc())
+        # Get total count
+        count_query = select(func.count()).select_from(base_query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
 
-        query = query.limit(limit)
+        # Apply sorting
+        if sort_by == "recent":
+            base_query = base_query.order_by(Entity.last_seen.desc())
+        elif sort_by == "frequent":
+            base_query = base_query.order_by(Entity.mention_count.desc())
+        elif sort_by == "alphabetical":
+            base_query = base_query.order_by(Entity.name.asc())
+        else:
+            base_query = base_query.order_by(Entity.last_seen.desc())
+
+        # Apply pagination
+        query = base_query.offset(offset).limit(limit)
         result = await self.db.execute(query)
         entities = list(result.scalars().all())
 
-        return [
+        people = [
             {
                 "id": str(e.id),
                 "name": e.name,
@@ -94,6 +103,7 @@ Keep it brief and actionable. No headers, just bullet points."""
             }
             for e in entities
         ]
+        return people, total
 
     async def search_contacts(
         self,

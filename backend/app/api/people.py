@@ -109,9 +109,10 @@ async def list_people(
     db: Database,
     sort_by: str = Query("recent", enum=["recent", "frequent", "alphabetical"]),
     limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
     """
-    List all people the user knows about.
+    List all people the user knows about with pagination.
 
     Sort options:
     - recent: Most recently mentioned first
@@ -119,15 +120,16 @@ async def list_people(
     - alphabetical: Alphabetically by name
     """
     people_service = PeopleService(db)
-    people = await people_service.list_people(
+    people, total = await people_service.list_people(
         user_id=current_user.id,
         sort_by=sort_by,
         limit=limit,
+        offset=offset,
     )
 
     return PeopleListResponse(
         people=[PersonSummary(**p) for p in people],
-        total=len(people),
+        total=total,
     )
 
 

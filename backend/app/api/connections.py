@@ -48,18 +48,20 @@ async def list_connections(
     current_user: CurrentUser,
     db: Database,
     limit: int = Query(20, ge=1, le=50),
+    offset: int = Query(0, ge=0),
     unnotified_only: bool = Query(False),
 ):
     """
-    List discovered memory connections.
+    List discovered memory connections with pagination.
 
     Connections show related memories that were discovered automatically.
     Use unnotified_only=true to get only new connections.
     """
     connection_service = ConnectionService(db)
-    connections = await connection_service.get_connections(
+    connections, total = await connection_service.get_connections(
         user_id=current_user.id,
         limit=limit,
+        offset=offset,
         unnotified_only=unnotified_only,
     )
 
@@ -100,7 +102,7 @@ async def list_connections(
 
     return ConnectionListResponse(
         connections=results,
-        total=len(results),
+        total=total,
     )
 
 

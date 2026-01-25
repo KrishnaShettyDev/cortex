@@ -3,7 +3,7 @@
 import logging
 from uuid import UUID
 from datetime import datetime, timedelta
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from openai import AsyncOpenAI
@@ -222,25 +222,32 @@ Response:"""
         self,
         user_id: UUID,
         limit: int = 20,
+        offset: int = 0,
         unnotified_only: bool = False,
         undismissed_only: bool = True,
-    ) -> list[MemoryConnection]:
-        """Get connections for a user."""
-        query = (
+    ) -> tuple[list[MemoryConnection], int]:
+        """Get connections for a user with pagination."""
+        # Base query for filtering
+        base_query = (
             select(MemoryConnection)
             .where(MemoryConnection.user_id == user_id)
-            .order_by(MemoryConnection.created_at.desc())
         )
 
         if unnotified_only:
-            query = query.where(MemoryConnection.notified_at.is_(None))
+            base_query = base_query.where(MemoryConnection.notified_at.is_(None))
 
         if undismissed_only:
-            query = query.where(MemoryConnection.dismissed_at.is_(None))
+            base_query = base_query.where(MemoryConnection.dismissed_at.is_(None))
 
-        query = query.limit(limit)
+        # Get total count
+        count_query = select(func.count()).select_from(base_query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Apply ordering and pagination
+        query = base_query.order_by(MemoryConnection.created_at.desc()).offset(offset).limit(limit)
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        return list(result.scalars().all()), total
 
     async def get_connection_with_memories(
         self, connection_id: UUID, user_id: UUID
