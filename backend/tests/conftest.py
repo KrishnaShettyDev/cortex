@@ -85,6 +85,24 @@ class TestTask(TestBase):
     updated_at = Column(DateTime, default=lambda: __import__('datetime').datetime.utcnow())
 
 
+class TestMemory(TestBase):
+    """Memory model for testing (simplified without pgvector)."""
+    __tablename__ = "cortex_memories"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("cortex_users.id", ondelete="CASCADE"), nullable=False)
+    content = Column(Text, nullable=False)
+    summary = Column(Text, nullable=True)
+    memory_type = Column(String(20), nullable=False)
+    memory_date = Column(DateTime, nullable=True)
+    audio_url = Column(String(500), nullable=True)
+    photo_url = Column(String(500), nullable=True)
+    source_id = Column(String(255), nullable=True)
+    source_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=lambda: __import__('datetime').datetime.utcnow())
+    updated_at = Column(DateTime, default=lambda: __import__('datetime').datetime.utcnow())
+
+
 @pytest_asyncio.fixture
 async def test_engine():
     """Create test database engine using SQLite."""
