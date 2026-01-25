@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from dateutil import parser as date_parser
 
@@ -88,24 +88,37 @@ class ReminderService:
         status: Optional[str] = None,
         include_completed: bool = False,
         limit: int = 50,
-    ) -> list[Reminder]:
-        """List reminders for a user."""
-        query = select(Reminder).where(Reminder.user_id == user_id)
+        offset: int = 0,
+    ) -> tuple[list[Reminder], int]:
+        """List reminders for a user with pagination."""
+        base_filter = Reminder.user_id == user_id
 
         if status:
-            query = query.where(Reminder.status == status)
+            status_filter = Reminder.status == status
         elif not include_completed:
-            query = query.where(
-                Reminder.status.in_([
-                    ReminderStatus.PENDING.value,
-                    ReminderStatus.SNOOZED.value,
-                ])
-            )
+            status_filter = Reminder.status.in_([
+                ReminderStatus.PENDING.value,
+                ReminderStatus.SNOOZED.value,
+            ])
+        else:
+            status_filter = True
 
-        query = query.order_by(Reminder.remind_at.asc().nullsfirst()).limit(limit)
+        # Get total count
+        count_query = select(func.count(Reminder.id)).where(and_(base_filter, status_filter))
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Get paginated results
+        query = (
+            select(Reminder)
+            .where(and_(base_filter, status_filter))
+            .order_by(Reminder.remind_at.asc().nullsfirst())
+            .offset(offset)
+            .limit(limit)
+        )
 
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        return list(result.scalars().all()), total
 
     async def update_reminder(
         self,
@@ -214,20 +227,28 @@ class ReminderService:
         user_id: uuid.UUID,
         include_completed: bool = False,
         limit: int = 50,
-    ) -> list[Task]:
-        """List tasks for a user."""
-        query = select(Task).where(Task.user_id == user_id)
+        offset: int = 0,
+    ) -> tuple[list[Task], int]:
+        """List tasks for a user with pagination."""
+        base_filter = Task.user_id == user_id
+        completed_filter = True if include_completed else Task.is_completed == False
 
-        if not include_completed:
-            query = query.where(Task.is_completed == False)
+        # Get total count
+        count_query = select(func.count(Task.id)).where(and_(base_filter, completed_filter))
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
 
-        query = query.order_by(
-            Task.priority.asc(),
-            Task.due_date.asc().nullsfirst(),
-        ).limit(limit)
+        # Get paginated results
+        query = (
+            select(Task)
+            .where(and_(base_filter, completed_filter))
+            .order_by(Task.priority.asc(), Task.due_date.asc().nullsfirst())
+            .offset(offset)
+            .limit(limit)
+        )
 
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        return list(result.scalars().all()), total
 
     async def complete_task(
         self, task_id: uuid.UUID, user_id: uuid.UUID

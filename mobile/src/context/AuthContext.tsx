@@ -64,8 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = await authService.getCurrentUser();
       setUser(currentUser);
       setIsAuthenticated(true);
-    } catch (err: any) {
-      setError(err.message || 'Sign in failed');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Sign in failed';
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -79,8 +80,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = await authService.getCurrentUser();
       setUser(currentUser);
       setIsAuthenticated(true);
-    } catch (err: any) {
-      setError(err.message || 'Sign in failed');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Sign in failed';
+      setError(message);
     } finally {
       setIsLoading(false);
     }
@@ -101,8 +103,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const currentUser = await authService.getCurrentUser();
       setUser(currentUser);
       setIsAuthenticated(true);
-    } catch (err: any) {
-      setError(err.message || 'Sign in failed');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Sign in failed';
+      setError(message);
     } finally {
       setIsLoading(false);
     }

@@ -7,8 +7,11 @@ import {
   GreetingResponse,
   MemoryReference,
   PendingAction,
+  ProactiveInsightsResponse,
+  DailyBriefingResponse,
 } from '../types';
 import { logger } from '../utils/logger';
+import { contextCaptureService, CurrentContext } from './contextCapture';
 
 // Re-export StatusUpdate for convenience
 export type { StatusUpdate } from './api';
@@ -36,6 +39,11 @@ class ChatService {
   /**
    * Send a chat message with streaming for real-time updates.
    * Shows real-time status as AI searches memories and generates response.
+   *
+   * Context Reinstatement (Phase 2.2):
+   * Automatically captures current context (location, time, etc.) and sends
+   * it with the request. This enables encoding specificity principle where
+   * memories matching current context are prioritized.
    */
   async chatStream(
     message: string,
@@ -51,16 +59,18 @@ class ChatService {
     // Signal that we're starting to search
     callbacks.onSearchingMemories?.();
 
+    // Capture current context for context reinstatement
+    let context: CurrentContext | undefined;
+    try {
+      context = await contextCaptureService.captureContext();
+      logger.debug('[ChatService] Captured context for reinstatement:', context);
+    } catch (error) {
+      logger.warn('[ChatService] Failed to capture context:', error);
+    }
+
     const streamCallbacks: StreamCallbacks = {
       onMemories: (memories) => {
-        memoriesUsed = memories.map((m: any) => ({
-          id: m.id,
-          content: m.content,
-          memory_type: m.memory_type,
-          memory_date: m.memory_date,
-          photo_url: m.photo_url,
-          audio_url: m.audio_url,
-        }));
+        memoriesUsed = memories;
         callbacks.onMemoriesFound?.(memoriesUsed);
       },
       onStatus: (status) => {
@@ -73,11 +83,7 @@ class ChatService {
         callbacks.onContent?.(content, fullContent);
       },
       onPendingActions: (actions) => {
-        pendingActions = actions.map((a: any) => ({
-          action_id: a.action_id,
-          tool: a.tool,
-          arguments: a.arguments,
-        }));
+        pendingActions = actions;
         callbacks.onPendingActions?.(pendingActions);
       },
       onDone: (data) => {
@@ -97,6 +103,7 @@ class ChatService {
       {
         message,
         conversation_id: conversationId,
+        context, // Send context for reinstatement
       },
       streamCallbacks
     );
@@ -104,16 +111,26 @@ class ChatService {
 
   /**
    * Regular non-streaming chat (fallback).
+   * Also captures context for context reinstatement.
    */
   async chat(
     message: string,
     conversationId?: string
   ): Promise<ChatResponse> {
+    // Capture current context for context reinstatement
+    let context: CurrentContext | undefined;
+    try {
+      context = await contextCaptureService.captureContext();
+    } catch (error) {
+      logger.warn('[ChatService] Failed to capture context:', error);
+    }
+
     const response = await api.request<ChatResponse>('/chat', {
       method: 'POST',
       body: {
         message,
         conversation_id: conversationId,
+        context, // Send context for reinstatement
       },
     });
 
@@ -162,6 +179,43 @@ class ChatService {
    */
   async getGreeting(): Promise<GreetingResponse> {
     return api.request<GreetingResponse>('/chat/greeting', {
+      method: 'GET',
+    });
+  }
+
+  /**
+   * Get proactive insights for the chat UI.
+   *
+   * Returns structured data for:
+   * - Relationships needing attention
+   * - Upcoming important dates (birthdays, anniversaries)
+   * - Pending intentions/commitments
+   * - Promises to keep
+   * - Active pattern warnings
+   * - Emotional state trends
+   *
+   * This data is shown as special UI cards in the chat interface.
+   */
+  async getInsights(): Promise<ProactiveInsightsResponse> {
+    return api.request<ProactiveInsightsResponse>('/chat/insights', {
+      method: 'GET',
+    });
+  }
+
+  /**
+   * Get actionable daily briefing for the chat UI.
+   *
+   * Returns structured data for:
+   * - Calendar events needing attention
+   * - Emails requiring response
+   * - Upcoming reminders and deadlines
+   * - Pattern-based insights
+   * - Memory-based items (tests, assignments, meetings)
+   *
+   * Each item has an action_prompt for starting a new chat.
+   */
+  async getBriefing(): Promise<DailyBriefingResponse> {
+    return api.request<DailyBriefingResponse>('/chat/briefing', {
       method: 'GET',
     });
   }

@@ -8,6 +8,9 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str
+    db_pool_size: int = 5  # Number of connections to keep in pool
+    db_max_overflow: int = 10  # Max additional connections beyond pool_size
+    db_pool_recycle: int = 1800  # Recycle connections after 30 minutes
 
     # Auth
     jwt_secret: str
@@ -69,6 +72,9 @@ class Settings(BaseSettings):
     # Integrations
     composio_api_key: str = ""
     google_maps_api_key: str = ""  # For Google Places search
+
+    # Redis (for rate limiting and caching in production)
+    redis_url: str = ""  # e.g., redis://localhost:6379/0 or redis://user:pass@host:6379/0
 
     # Environment
     environment: str = "development"

@@ -187,6 +187,48 @@ export interface ApiError {
   detail: string;
 }
 
+// Raw API Response Types (for mapping to local types)
+export interface RawEmailResponse {
+  id: string;
+  thread_id?: string;
+  subject?: string;
+  from?: string;
+  date?: string;
+  snippet?: string;
+  body?: string;
+  is_unread?: boolean;
+  content?: string;
+}
+
+export interface RawCalendarEventResponse {
+  id: string;
+  title?: string;
+  summary?: string;
+  start_time?: string;
+  start?: string;
+  end_time?: string;
+  end?: string;
+  location?: string;
+  attendees?: string[];
+  event_url?: string;
+  htmlLink?: string;
+}
+
+export interface RawTimeSlotResponse {
+  start: string;
+  end: string;
+  duration_minutes?: number;
+}
+
+export interface RawPlaceResponse {
+  name: string;
+  address?: string;
+  formatted_address?: string;
+  rating?: number;
+  price_level?: number;
+  types?: string[];
+}
+
 // People Intelligence Types
 export interface PersonSummary {
   id: string;
@@ -256,4 +298,104 @@ export interface ConnectionListResponse {
 export interface DismissResponse {
   success: boolean;
   message: string;
+}
+
+// ==================== PROACTIVE INSIGHTS ====================
+
+export interface RelationshipInsight {
+  entity_id: string;
+  name: string;
+  days_since_contact: number;
+  health_score: number;
+  tier: string;
+  reason: string;
+  suggested_action: string | null;
+}
+
+export interface IntentionInsight {
+  id: string;
+  description: string;
+  target_person: string | null;
+  due_date: string | null;
+  days_overdue: number | null;
+  is_overdue: boolean;
+  priority_score: number;
+}
+
+export interface PatternInsight {
+  id: string;
+  name: string;
+  description: string;
+  trigger: string;
+  consequence: string | null;
+  valence: 'positive' | 'negative' | 'neutral';
+  confidence: number;
+  warning_message: string | null;
+  is_active: boolean;
+}
+
+export interface PromiseInsight {
+  id: string;
+  person_name: string;
+  entity_id: string;
+  description: string;
+  made_on: string;
+  due_date: string | null;
+  days_until_due: number | null;
+  is_overdue: boolean;
+  importance: number;
+}
+
+export interface ImportantDateInsight {
+  id: string;
+  person_name: string;
+  entity_id: string;
+  date_type: string;
+  date_label: string;
+  date: string;
+  days_until: number;
+  years: number | null;
+  notes: string | null;
+}
+
+export interface EmotionalInsight {
+  avg_valence: number | null;
+  avg_arousal: number | null;
+  top_emotion: string | null;
+  trend: 'positive' | 'stable' | 'declining' | null;
+  flashbulb_count: number;
+}
+
+export interface ProactiveInsightsResponse {
+  neglected_relationships: RelationshipInsight[];
+  upcoming_dates: ImportantDateInsight[];
+  pending_intentions: IntentionInsight[];
+  pending_promises: PromiseInsight[];
+  pattern_warnings: PatternInsight[];
+  emotional_state: EmotionalInsight | null;
+  total_attention_needed: number;
+  has_urgent: boolean;
+}
+
+// ==================== DAILY BRIEFING ====================
+
+export interface BriefingItem {
+  id: string;
+  type: 'calendar' | 'email' | 'reminder' | 'pattern' | 'deadline' | 'memory' | 'meeting' | 'test';
+  title: string;
+  subtitle: string;
+  urgency_score: number;
+  action_prompt: string;
+  icon: string;
+  urgency?: 'high' | 'medium' | 'low';
+  action_label?: string;
+  source_id?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface DailyBriefingResponse {
+  items: BriefingItem[];
+  total_count: number;
+  has_urgent: boolean;
+  generated_at: string;
 }

@@ -128,14 +128,16 @@ async def list_reminders(
     db: Database,
     include_completed: bool = Query(False, description="Include completed reminders"),
     limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
 ):
-    """List all reminders for the current user."""
+    """List all reminders for the current user with pagination."""
     service = ReminderService(db)
 
-    reminders = await service.list_reminders(
+    reminders, total = await service.list_reminders(
         user_id=current_user.id,
         include_completed=include_completed,
         limit=limit,
+        offset=offset,
     )
 
     return ReminderListResponse(
@@ -152,8 +154,143 @@ async def list_reminders(
             )
             for r in reminders
         ],
-        total=len(reminders),
+        total=total,
     )
+
+
+# ==================== TASK ENDPOINTS (must be before /{reminder_id}) ====================
+
+
+@router.post("/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
+async def create_task(
+    request: CreateTaskRequest,
+    current_user: CurrentUser,
+    db: Database,
+):
+    """Create a new task."""
+    service = ReminderService(db)
+
+    task = await service.create_task(
+        user_id=current_user.id,
+        title=request.title,
+        description=request.description,
+        due_date=request.due_date,
+        priority=request.priority,
+        related_person=request.related_person,
+    )
+
+    return TaskResponse(
+        id=str(task.id),
+        title=task.title,
+        description=task.description,
+        due_date=task.due_date,
+        priority=task.priority,
+        is_completed=task.is_completed,
+        completed_at=task.completed_at,
+        created_at=task.created_at,
+    )
+
+
+@router.get("/tasks", response_model=TaskListResponse)
+async def list_tasks(
+    current_user: CurrentUser,
+    db: Database,
+    include_completed: bool = Query(False, description="Include completed tasks"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """List all tasks for the current user with pagination."""
+    service = ReminderService(db)
+
+    tasks, total = await service.list_tasks(
+        user_id=current_user.id,
+        include_completed=include_completed,
+        limit=limit,
+        offset=offset,
+    )
+
+    return TaskListResponse(
+        tasks=[
+            TaskResponse(
+                id=str(t.id),
+                title=t.title,
+                description=t.description,
+                due_date=t.due_date,
+                priority=t.priority,
+                is_completed=t.is_completed,
+                completed_at=t.completed_at,
+                created_at=t.created_at,
+            )
+            for t in tasks
+        ],
+        total=total,
+    )
+
+
+@router.post("/tasks/{task_id}/complete", response_model=SuccessResponse)
+async def complete_task(
+    task_id: UUID,
+    current_user: CurrentUser,
+    db: Database,
+):
+    """Mark a task as completed."""
+    service = ReminderService(db)
+
+    task = await service.complete_task(task_id, current_user.id)
+    if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    return SuccessResponse(success=True, message="Task completed")
+
+
+# ==================== LOCATION CHECK ENDPOINT (must be before /{reminder_id}) ====================
+
+
+@router.post("/check-location", response_model=ReminderListResponse)
+async def check_location_reminders(
+    current_user: CurrentUser,
+    db: Database,
+    latitude: float = Query(..., description="Current latitude"),
+    longitude: float = Query(..., description="Current longitude"),
+):
+    """
+    Check if any location-based reminders should be triggered.
+    Call this when user's location updates significantly.
+    """
+    service = ReminderService(db)
+
+    triggered = await service.check_location_reminders(
+        user_id=current_user.id,
+        latitude=latitude,
+        longitude=longitude,
+    )
+
+    # Send notifications for triggered reminders
+    for reminder in triggered:
+        await service.send_reminder_notification(reminder)
+
+    return ReminderListResponse(
+        reminders=[
+            ReminderResponse(
+                id=str(r.id),
+                title=r.title,
+                body=r.body,
+                remind_at=r.remind_at,
+                reminder_type=r.reminder_type,
+                location_name=r.location_name,
+                status=r.status,
+                created_at=r.created_at,
+            )
+            for r in triggered
+        ],
+        total=len(triggered),
+    )
+
+
+# ==================== DYNAMIC REMINDER ROUTES (must be after static routes) ====================
 
 
 @router.get("/{reminder_id}", response_model=ReminderResponse)
@@ -289,133 +426,3 @@ async def delete_reminder(
         )
 
     return SuccessResponse(success=True, message="Reminder deleted")
-
-
-# ==================== TASK ENDPOINTS ====================
-
-
-@router.post("/tasks", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
-async def create_task(
-    request: CreateTaskRequest,
-    current_user: CurrentUser,
-    db: Database,
-):
-    """Create a new task."""
-    service = ReminderService(db)
-
-    task = await service.create_task(
-        user_id=current_user.id,
-        title=request.title,
-        description=request.description,
-        due_date=request.due_date,
-        priority=request.priority,
-        related_person=request.related_person,
-    )
-
-    return TaskResponse(
-        id=str(task.id),
-        title=task.title,
-        description=task.description,
-        due_date=task.due_date,
-        priority=task.priority,
-        is_completed=task.is_completed,
-        completed_at=task.completed_at,
-        created_at=task.created_at,
-    )
-
-
-@router.get("/tasks", response_model=TaskListResponse)
-async def list_tasks(
-    current_user: CurrentUser,
-    db: Database,
-    include_completed: bool = Query(False, description="Include completed tasks"),
-    limit: int = Query(50, ge=1, le=100),
-):
-    """List all tasks for the current user."""
-    service = ReminderService(db)
-
-    tasks = await service.list_tasks(
-        user_id=current_user.id,
-        include_completed=include_completed,
-        limit=limit,
-    )
-
-    return TaskListResponse(
-        tasks=[
-            TaskResponse(
-                id=str(t.id),
-                title=t.title,
-                description=t.description,
-                due_date=t.due_date,
-                priority=t.priority,
-                is_completed=t.is_completed,
-                completed_at=t.completed_at,
-                created_at=t.created_at,
-            )
-            for t in tasks
-        ],
-        total=len(tasks),
-    )
-
-
-@router.post("/tasks/{task_id}/complete", response_model=SuccessResponse)
-async def complete_task(
-    task_id: UUID,
-    current_user: CurrentUser,
-    db: Database,
-):
-    """Mark a task as completed."""
-    service = ReminderService(db)
-
-    task = await service.complete_task(task_id, current_user.id)
-    if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
-        )
-
-    return SuccessResponse(success=True, message="Task completed")
-
-
-# ==================== LOCATION CHECK ENDPOINT ====================
-
-
-@router.post("/check-location", response_model=ReminderListResponse)
-async def check_location_reminders(
-    current_user: CurrentUser,
-    db: Database,
-    latitude: float = Query(..., description="Current latitude"),
-    longitude: float = Query(..., description="Current longitude"),
-):
-    """
-    Check if any location-based reminders should be triggered.
-    Call this when user's location updates significantly.
-    """
-    service = ReminderService(db)
-
-    triggered = await service.check_location_reminders(
-        user_id=current_user.id,
-        latitude=latitude,
-        longitude=longitude,
-    )
-
-    # Send notifications for triggered reminders
-    for reminder in triggered:
-        await service.send_reminder_notification(reminder)
-
-    return ReminderListResponse(
-        reminders=[
-            ReminderResponse(
-                id=str(r.id),
-                title=r.title,
-                body=r.body,
-                remind_at=r.remind_at,
-                reminder_type=r.reminder_type,
-                location_name=r.location_name,
-                status=r.status,
-                created_at=r.created_at,
-            )
-            for r in triggered
-        ],
-        total=len(triggered),
-    )

@@ -1,19 +1,26 @@
 import { API_BASE_URL } from './constants';
 import { storage } from './storage';
 import { logger } from '../utils/logger';
+import { MemoryReference, PendingAction } from '../types';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
-  body?: any;
+  body?: unknown;
   headers?: Record<string, string>;
   requiresAuth?: boolean;
+}
+
+// Pydantic validation error detail item
+interface ValidationErrorDetail {
+  loc: (string | number)[];
+  msg: string;
+  type: string;
 }
 
 // Streaming event types matching backend SSE format
 export interface StreamEvent {
   type: 'memories' | 'content' | 'pending_actions' | 'status' | 'done' | 'error';
-  data: any;
-}
+  data: MemoryReference[] | string | PendingAction[] | StatusUpdate | { conversation_id: string };
 
 // Status update for real-time reasoning display
 export interface StatusUpdate {
@@ -24,9 +31,9 @@ export interface StatusUpdate {
 }
 
 export interface StreamCallbacks {
-  onMemories?: (memories: any[]) => void;
+  onMemories?: (memories: MemoryReference[]) => void;
   onContent?: (content: string) => void;
-  onPendingActions?: (actions: any[]) => void;
+  onPendingActions?: (actions: PendingAction[]) => void;
   onStatus?: (status: StatusUpdate) => void;
   onDone?: (data: { conversation_id: string }) => void;
   onError?: (error: string) => void;
@@ -241,12 +248,13 @@ class ApiService {
       const data = await response.json();
       logger.log(`API: Success ${method} ${endpoint}`);
       return data;
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error: unknown) {
+      const err = error as Error;
+      if (err.name === 'AbortError') {
         logger.warn('API: Request timed out');
         throw new Error('Request timed out. Please check your connection and try again.');
       }
-      if (error.message?.includes('Network request failed')) {
+      if (err.message?.includes('Network request failed')) {
         logger.warn('API: Network request failed');
         throw new Error('Cannot connect to server. Please check your connection.');
       }
@@ -256,11 +264,11 @@ class ApiService {
 
   private parseError(errorText: string): string {
     try {
-      const parsed = JSON.parse(errorText);
+      const parsed = JSON.parse(errorText) as { detail?: string | ValidationErrorDetail[] };
       if (parsed.detail) {
         if (Array.isArray(parsed.detail)) {
           // Pydantic validation error
-          return parsed.detail.map((d: any) => d.msg).join(', ');
+          return parsed.detail.map((d: ValidationErrorDetail) => d.msg).join(', ');
         }
         return parsed.detail;
       }
@@ -297,7 +305,7 @@ class ApiService {
    */
   async streamRequest(
     endpoint: string,
-    body: any,
+    body: unknown,
     callbacks: StreamCallbacks
   ): Promise<void> {
     let token = await storage.getAccessToken();
@@ -388,16 +396,17 @@ class ApiService {
       }
 
       logger.log('API: Stream processing complete');
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
+    } catch (error: unknown) {
+      const err = error as Error;
+      if (err.name === 'AbortError') {
         logger.warn('API: Stream request timed out');
         callbacks.onError?.('Request timed out. The server may be busy, please try again.');
-      } else if (error.message?.includes('Network request failed')) {
+      } else if (err.message?.includes('Network request failed')) {
         logger.warn('API: Network request failed');
         callbacks.onError?.('Cannot connect to server. Please check your connection.');
       } else {
         logger.error('API: Stream request failed:', error);
-        callbacks.onError?.(error.message || 'Stream request failed');
+        callbacks.onError?.(err.message || 'Stream request failed');
       }
     }
   }
@@ -431,9 +440,10 @@ class ApiService {
           }
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as Error;
       logger.error('API: SSE text fallback error:', error);
-      callbacks.onError?.(error.message);
+      callbacks.onError?.(err.message);
     }
   }
 
@@ -481,9 +491,10 @@ class ApiService {
           }
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as Error;
       logger.error('API: SSE stream error:', error);
-      callbacks.onError?.(error.message);
+      callbacks.onError?.(err.message);
     } finally {
       reader.releaseLock();
     }

@@ -20,13 +20,14 @@ if "sslmode=require" in database_url:
     ssl_context.verify_mode = ssl.CERT_NONE
     connect_args["ssl"] = ssl_context
 
-# Create async engine
+# Create async engine with configurable pooling
 engine = create_async_engine(
     database_url,
     echo=settings.debug,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_pre_ping=True,  # Verify connections before use
+    pool_size=settings.db_pool_size,  # Base pool size
+    max_overflow=settings.db_max_overflow,  # Additional connections allowed
+    pool_recycle=settings.db_pool_recycle,  # Recycle connections to avoid stale connections
     connect_args=connect_args,
 )
 
