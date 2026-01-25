@@ -25,10 +25,12 @@ class TestUser(TestBase):
     __tablename__ = "cortex_users"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    apple_id = Column(String(255), unique=True, nullable=True)
-    google_id = Column(String(255), unique=True, nullable=True)
+    oauth_id = Column(String(255), unique=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     name = Column(String(255), nullable=True)
+    location_lat = Column(Float, nullable=True)
+    location_lng = Column(Float, nullable=True)
+    location_updated_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: __import__('datetime').datetime.utcnow())
     updated_at = Column(DateTime, default=lambda: __import__('datetime').datetime.utcnow())
 
@@ -133,7 +135,7 @@ async def client(test_session):
 def sample_user_data():
     """Sample user data for testing."""
     return {
-        "apple_id": "test_apple_id_123",
+        "oauth_id": "test_oauth_id_123",
         "email": "test@example.com",
         "name": "Test User",
     }

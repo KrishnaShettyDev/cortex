@@ -30,7 +30,7 @@ import Reanimated, {
   Extrapolation,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { integrationsService, CalendarEventItem, MeetingType } from '../../src/services';
+import { integrationsService, CalendarEventItem, MeetingType, TimeSlot, CreateCalendarEventRequest } from '../../src/services';
 import { colors, gradients, spacing, borderRadius } from '../../src/theme';
 import { GradientIcon } from '../../src/components/GradientIcon';
 import { usePostHog } from 'posthog-react-native';
@@ -38,6 +38,8 @@ import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
 import { ConflictIndicator, ConflictBanner, CONFLICT_COLOR, CONFLICT_BORDER_COLOR } from '../../src/components/ConflictIndicator';
 import { detectConflicts, getConflictingEvents, ConflictInfo } from '../../src/utils/calendarConflicts';
 import { QuickAddInput } from '../../src/components/QuickAddInput';
+import { FindTimeSheet } from '../../src/components/FindTimeSheet';
+import { EventConfirmationModal, ParsedEvent } from '../../src/components/EventConfirmationModal';
 import { useCalendarStore } from '../../src/stores/calendarStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -294,7 +296,7 @@ const MEETING_TYPE_CONFIG: Record<MeetingType, {
   },
 };
 
-type ViewMode = 'day' | 'week';
+type ViewMode = 'day' | 'week' | 'agenda';
 
 // Animated skeleton component (defined outside to avoid recreation)
 const AnimatedSkeletonView = Reanimated.createAnimatedComponent(View);
@@ -394,6 +396,177 @@ const skeletonStyles = StyleSheet.create({
   },
 });
 
+// Date Strip Scroller Component - horizontal scrollable week with tappable dates
+const DATE_STRIP_ITEM_WIDTH = 48;
+const DATE_STRIP_DAYS_VISIBLE = 7;
+
+interface DateStripProps {
+  selectedDate: Date;
+  onDateSelect: (date: Date) => void;
+  cachedEvents: CalendarEventItem[];
+}
+
+const DateStripScroller: React.FC<DateStripProps> = ({ selectedDate, onDateSelect, cachedEvents }) => {
+  const scrollViewRef = useRef<ScrollView>(null);
+  const [centerDate, setCenterDate] = useState(new Date());
+
+  // Generate 21 days (3 weeks) centered around center date
+  const dates = useMemo(() => {
+    const result: Date[] = [];
+    const start = new Date(centerDate);
+    start.setDate(start.getDate() - 10);
+
+    for (let i = 0; i < 21; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      result.push(d);
+    }
+    return result;
+  }, [centerDate]);
+
+  // Check if a date has events
+  const dateHasEvents = useCallback((date: Date): boolean => {
+    return cachedEvents.some(event => {
+      const eventDate = new Date(event.start_time);
+      return eventDate.getFullYear() === date.getFullYear() &&
+             eventDate.getMonth() === date.getMonth() &&
+             eventDate.getDate() === date.getDate();
+    });
+  }, [cachedEvents]);
+
+  // Scroll to center when date changes
+  useEffect(() => {
+    const index = dates.findIndex(d => isSameDay(d, selectedDate));
+    if (index !== -1 && scrollViewRef.current) {
+      const scrollX = (index - 3) * DATE_STRIP_ITEM_WIDTH;
+      scrollViewRef.current.scrollTo({ x: Math.max(0, scrollX), animated: true });
+    }
+  }, [selectedDate, dates]);
+
+  return (
+    <View style={dateStripStyles.container}>
+      <ScrollView
+        ref={scrollViewRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={dateStripStyles.scrollContent}
+        decelerationRate="fast"
+        snapToInterval={DATE_STRIP_ITEM_WIDTH}
+      >
+        {dates.map((date, index) => {
+          const isToday = isSameDay(date, new Date());
+          const isSelected = isSameDay(date, selectedDate);
+          const hasEvents = dateHasEvents(date);
+          const dayOfWeek = date.getDay();
+
+          return (
+            <TouchableOpacity
+              key={index}
+              style={[
+                dateStripStyles.dateItem,
+                isSelected && dateStripStyles.dateItemSelected,
+              ]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onDateSelect(date);
+              }}
+              activeOpacity={0.7}
+            >
+              <Text style={[
+                dateStripStyles.dayLetter,
+                isToday && dateStripStyles.dayLetterToday,
+                isSelected && dateStripStyles.dayLetterSelected,
+              ]}>
+                {DAYS_SINGLE[dayOfWeek]}
+              </Text>
+              <View style={[
+                dateStripStyles.dateCircle,
+                isToday && !isSelected && dateStripStyles.dateCircleToday,
+                isSelected && dateStripStyles.dateCircleSelected,
+              ]}>
+                <Text style={[
+                  dateStripStyles.dateNumber,
+                  isToday && dateStripStyles.dateNumberToday,
+                  isSelected && dateStripStyles.dateNumberSelected,
+                ]}>
+                  {date.getDate()}
+                </Text>
+              </View>
+              {hasEvents && !isSelected && (
+                <View style={dateStripStyles.eventDot} />
+              )}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+};
+
+const dateStripStyles = StyleSheet.create({
+  container: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.glassBorder,
+  },
+  scrollContent: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  dateItem: {
+    width: DATE_STRIP_ITEM_WIDTH,
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+  },
+  dateItemSelected: {
+    backgroundColor: colors.bgSecondary,
+    borderRadius: borderRadius.lg,
+  },
+  dayLetter: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: colors.textTertiary,
+    marginBottom: 4,
+  },
+  dayLetterToday: {
+    color: '#4285f4',
+  },
+  dayLetterSelected: {
+    color: colors.textPrimary,
+  },
+  dateCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dateCircleToday: {
+    borderWidth: 2,
+    borderColor: '#4285f4',
+  },
+  dateCircleSelected: {
+    backgroundColor: '#4285f4',
+  },
+  dateNumber: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  dateNumberToday: {
+    color: '#4285f4',
+  },
+  dateNumberSelected: {
+    color: '#fff',
+  },
+  eventDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
+    marginTop: 4,
+  },
+});
+
 // Meeting Type Logo Component
 const MeetingTypeLogo = ({
   meetingType,
@@ -443,6 +616,15 @@ export default function CalendarScreen() {
   const [showEventModal, setShowEventModal] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const hasScrolledToTime = useRef(false);
+
+  // Find Time Sheet state
+  const [showFindTimeSheet, setShowFindTimeSheet] = useState(false);
+  const [showNewEventModal, setShowNewEventModal] = useState(false);
+  const [newEventData, setNewEventData] = useState<ParsedEvent | null>(null);
+  const [isCreatingEvent, setIsCreatingEvent] = useState(false);
+
+  // Mini calendar expanded state
+  const [isMiniCalendarExpanded, setIsMiniCalendarExpanded] = useState(false);
 
   // Swipe gesture animation values
   const translateX = useSharedValue(0);
@@ -716,6 +898,76 @@ export default function CalendarScreen() {
     };
   });
 
+  // Handle slot selection from Find Time Sheet
+  const handleSlotSelected = useCallback((slot: TimeSlot) => {
+    // Pre-fill event data with the selected time slot
+    setNewEventData({
+      title: '',
+      start_time: slot.start,
+      end_time: slot.end,
+    });
+    setShowNewEventModal(true);
+  }, []);
+
+  // Handle tap-to-create event on empty time slot
+  const handleTapToCreate = useCallback((hour: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    posthog?.capture(ANALYTICS_EVENTS.CALENDAR_EVENT_TAPPED, {
+      action: 'tap_to_create',
+      hour,
+    });
+
+    const startTime = new Date(selectedDate);
+    startTime.setHours(hour, 0, 0, 0);
+
+    const endTime = new Date(selectedDate);
+    endTime.setHours(hour + 1, 0, 0, 0);
+
+    setNewEventData({
+      title: '',
+      start_time: startTime.toISOString(),
+      end_time: endTime.toISOString(),
+    });
+    setShowNewEventModal(true);
+  }, [selectedDate, posthog]);
+
+  // Toggle mini calendar
+  const toggleMiniCalendar = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsMiniCalendarExpanded(!isMiniCalendarExpanded);
+  }, [isMiniCalendarExpanded]);
+
+  // Handle event creation from Find Time Sheet
+  const handleCreateNewEvent = useCallback(async (event: ParsedEvent) => {
+    setIsCreatingEvent(true);
+    try {
+      const request: CreateCalendarEventRequest = {
+        title: event.title || 'New Event',
+        start_time: event.start_time,
+        end_time: event.end_time,
+        location: event.location,
+        description: event.description,
+        send_notifications: true,
+      };
+
+      const response = await integrationsService.createCalendarEvent(request);
+
+      if (response.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setShowNewEventModal(false);
+        setNewEventData(null);
+        // Refresh calendar
+        invalidateCache();
+        loadMonthEvents(true);
+      }
+    } catch (error) {
+      console.error('Error creating event:', error);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsCreatingEvent(false);
+    }
+  }, [invalidateCache, loadMonthEvents]);
+
   // Toggle view mode
   const toggleViewMode = () => {
     const newMode = viewMode === 'day' ? 'week' : 'day';
@@ -856,6 +1108,180 @@ export default function CalendarScreen() {
       );
     }
     return hours;
+  };
+
+  // Render tappable hour slots for creating events
+  const renderTappableHourSlots = () => {
+    const slots = [];
+    for (let i = START_HOUR; i <= END_HOUR; i++) {
+      // Check if this hour has any events
+      const hourHasEvent = events.some(event => {
+        const start = new Date(event.start_time);
+        const end = new Date(event.end_time);
+        const hourStart = i;
+        const hourEnd = i + 1;
+        return start.getHours() < hourEnd && end.getHours() >= hourStart;
+      });
+
+      slots.push(
+        <TouchableOpacity
+          key={`slot-${i}`}
+          style={[
+            styles.tappableHourSlot,
+            { top: (i - START_HOUR) * HOUR_HEIGHT },
+          ]}
+          onPress={() => handleTapToCreate(i)}
+          activeOpacity={0.3}
+        >
+          {!hourHasEvent && (
+            <View style={styles.tapToCreateHint}>
+              <Ionicons name="add" size={14} color={colors.textTertiary} />
+            </View>
+          )}
+        </TouchableOpacity>
+      );
+    }
+    return slots;
+  };
+
+  // Render Agenda View
+  const renderAgendaView = () => {
+    // Get events for the next 14 days
+    const agendaDays: { date: Date; events: CalendarEventItem[] }[] = [];
+    const startDate = new Date(selectedDate);
+
+    for (let i = 0; i < 14; i++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + i);
+
+      const dayEvents = cachedEvents.filter(event => {
+        const eventDate = new Date(event.start_time);
+        return isSameDay(eventDate, date);
+      }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+      agendaDays.push({ date, events: dayEvents });
+    }
+
+    return (
+      <ScrollView
+        style={styles.agendaScrollView}
+        contentContainerStyle={styles.agendaContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.accent}
+          />
+        }
+      >
+        {agendaDays.map(({ date, events: dayEvents }, dayIndex) => {
+          const isToday = isSameDay(date, new Date());
+          const dayName = DAYS[date.getDay()];
+          const monthDay = `${MONTHS_SHORT[date.getMonth()]} ${date.getDate()}`;
+
+          return (
+            <View key={dayIndex} style={styles.agendaDaySection}>
+              {/* Day Header */}
+              <View style={styles.agendaDayHeader}>
+                <View style={styles.agendaDayHeaderLeft}>
+                  <Text style={[
+                    styles.agendaDayName,
+                    isToday && styles.agendaDayNameToday,
+                  ]}>
+                    {isToday ? 'Today' : dayName}
+                  </Text>
+                  <Text style={styles.agendaMonthDay}>{monthDay}</Text>
+                </View>
+                {isToday && (
+                  <View style={styles.todayIndicator}>
+                    <View style={styles.todayDot} />
+                  </View>
+                )}
+              </View>
+
+              {/* Events or Empty State */}
+              {dayEvents.length > 0 ? (
+                <View style={styles.agendaEventsList}>
+                  {dayEvents.map((event) => {
+                    const meetingType = (event.meeting_type as MeetingType) || 'offline';
+                    const typeConfig = MEETING_TYPE_CONFIG[meetingType];
+                    const startTime = new Date(event.start_time);
+                    const endTime = new Date(event.end_time);
+                    const conflictInfo = eventConflicts.get(event.id);
+
+                    return (
+                      <TouchableOpacity
+                        key={event.id}
+                        style={[
+                          styles.agendaEventCard,
+                          conflictInfo && styles.agendaEventCardConflict,
+                        ]}
+                        onPress={() => {
+                          setSelectedEvent(event);
+                          setShowEventModal(true);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[
+                          styles.agendaEventColorBar,
+                          { backgroundColor: conflictInfo ? CONFLICT_COLOR : typeConfig.color },
+                        ]} />
+                        <View style={styles.agendaEventContent}>
+                          <View style={styles.agendaEventHeader}>
+                            <MeetingTypeLogo meetingType={meetingType} size={16} />
+                            <Text style={styles.agendaEventTitle} numberOfLines={1}>
+                              {event.title}
+                            </Text>
+                            {conflictInfo && (
+                              <ConflictIndicator size="small" />
+                            )}
+                          </View>
+                          <Text style={styles.agendaEventTime}>
+                            {formatTimeRange(startTime, endTime)}
+                          </Text>
+                          {event.location && (
+                            <View style={styles.agendaEventLocation}>
+                              <Ionicons name="location-outline" size={12} color={colors.textTertiary} />
+                              <Text style={styles.agendaEventLocationText} numberOfLines={1}>
+                                {event.location}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        {event.meet_link && (
+                          <TouchableOpacity
+                            style={[styles.agendaJoinButton, { backgroundColor: typeConfig.color }]}
+                            onPress={() => event.meet_link && Linking.openURL(event.meet_link)}
+                          >
+                            <Text style={styles.agendaJoinText}>Join</Text>
+                          </TouchableOpacity>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.agendaEmptyDay}
+                  onPress={() => {
+                    setSelectedDate(date);
+                    setViewMode('day');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.agendaEmptyText}>No events</Text>
+                  <View style={styles.agendaAddHint}>
+                    <Ionicons name="add-circle-outline" size={16} color={colors.accent} />
+                    <Text style={styles.agendaAddText}>Tap to add</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })}
+      </ScrollView>
+    );
   };
 
   // Calculate event layout for overlapping events
@@ -1116,188 +1542,166 @@ export default function CalendarScreen() {
       <SafeAreaView style={styles.container} edges={['top']}>
         {/* Header */}
         <View style={styles.header}>
-        <TouchableOpacity onPress={goBack} style={styles.headerButton}>
-          <Ionicons name="menu" size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.monthSelector}
-          onPress={openMonthPicker}
-        >
-          <Text style={styles.monthText}>{dateDisplay.month}</Text>
-          <Ionicons
-            name={showMonthPicker ? 'chevron-up' : 'chevron-down'}
-            size={18}
-            color={colors.textPrimary}
-          />
-        </TouchableOpacity>
-
-        <GradientIcon size={28} />
-      </View>
-
-      {/* Pull Down Indicator */}
-      {!showMonthPicker && (
-        <AnimatedView style={[styles.pullDownIndicator, pullDownIndicatorStyle]}>
-          <View style={styles.pullDownChevron}>
-            <Ionicons name="chevron-down" size={16} color={colors.textTertiary} />
-          </View>
-          <Text style={styles.pullDownText}>Release for calendar</Text>
-        </AnimatedView>
-      )}
-
-      {/* Month Picker Overlay */}
-      {showMonthPicker && (
-        <View style={styles.monthPickerContainer}>
-          {/* Month/Year Header with Navigation */}
-          <View style={styles.pickerHeader}>
-            <Text style={styles.pickerTitle}>{MONTHS[pickerMonth]} {pickerYear}</Text>
-            <View style={styles.pickerNavButtons}>
-              <TouchableOpacity onPress={goToPreviousMonth} style={styles.pickerNavButton}>
-                <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={goToNextMonth} style={styles.pickerNavButton}>
-                <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Day Headers */}
-          <View style={styles.dayHeaderRow}>
-            {DAYS_SHORT.map((day) => (
-              <View key={day} style={styles.dayHeaderCell}>
-                <Text style={styles.dayHeaderText}>{day}</Text>
-              </View>
-            ))}
-          </View>
-
-          {/* Calendar Grid */}
-          <View style={styles.calendarGrid}>
-            {calendarDays.map((day, index) => {
-              const isToday = day !== null &&
-                pickerYear === new Date().getFullYear() &&
-                pickerMonth === new Date().getMonth() &&
-                day === new Date().getDate();
-              const isSelected = day !== null &&
-                pickerYear === selectedDate.getFullYear() &&
-                pickerMonth === selectedDate.getMonth() &&
-                day === selectedDate.getDate();
-              const isPastMonth = day !== null &&
-                (pickerYear < new Date().getFullYear() ||
-                  (pickerYear === new Date().getFullYear() && pickerMonth < new Date().getMonth()));
-
-              return (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.calendarDayCell,
-                    isSelected && styles.calendarDayCellSelected,
-                  ]}
-                  onPress={() => day !== null && selectDayFromPicker(day)}
-                  disabled={day === null}
-                  activeOpacity={0.7}
-                >
-                  {day !== null && (
-                    <Text
-                      style={[
-                        styles.calendarDayText,
-                        isToday && styles.calendarDayTextToday,
-                        isSelected && styles.calendarDayTextSelected,
-                        isPastMonth && styles.calendarDayTextPast,
-                      ]}
-                    >
-                      {day}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {/* Month Selector Chips */}
-          <ScrollView
-            ref={monthScrollRef}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.monthChipsScroll}
-            contentContainerStyle={styles.monthChipsContent}
-          >
-            {MONTHS_SHORT.map((month, index) => {
-              const isSelected = index === pickerMonth;
-              return (
-                <TouchableOpacity
-                  key={month}
-                  style={[
-                    styles.monthChip,
-                    isSelected && styles.monthChipSelected,
-                  ]}
-                  onPress={() => selectMonthFromPicker(index)}
-                  activeOpacity={0.7}
-                >
-                  <Text
-                    style={[
-                      styles.monthChipText,
-                      isSelected && styles.monthChipTextSelected,
-                    ]}
-                  >
-                    {month}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      )}
-
-      {/* Date Navigation with Pull-Down Gesture */}
-      <GestureDetector gesture={pullDownGesture}>
-        <View style={styles.dateNav}>
-          <TouchableOpacity
-            onPress={viewMode === 'day' ? goToPreviousDay : goToPreviousWeek}
-            style={styles.navButton}
-          >
-            <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
+          <TouchableOpacity onPress={goBack} style={styles.headerButton}>
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
 
-          {viewMode === 'day' ? (
-            <View style={styles.dateDisplay}>
-              <View style={[styles.dayCircle, dateDisplay.isToday && styles.dayCircleToday]}>
-                <Text style={[styles.dayNumber, dateDisplay.isToday && styles.dayNumberToday]}>
-                  {dateDisplay.day}
-                </Text>
-              </View>
-              <Text style={styles.dayName}>{dateDisplay.dayName}</Text>
-            </View>
-          ) : (
-            <Text style={styles.weekRangeText}>{formatWeekRange(weekDates)}</Text>
-          )}
-
           <TouchableOpacity
-            onPress={viewMode === 'day' ? goToNextDay : goToNextWeek}
-            style={styles.navButton}
+            style={styles.monthSelector}
+            onPress={toggleMiniCalendar}
           >
-            <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
-          </TouchableOpacity>
-
-          <View style={{ flex: 1 }} />
-
-          {!dateDisplay.isToday && (
-            <TouchableOpacity onPress={goToToday} style={styles.todayButton}>
-              <Text style={styles.todayText}>Today</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[styles.gridButton, viewMode === 'week' && styles.gridButtonActive]}
-            onPress={toggleViewMode}
-          >
+            <Text style={styles.monthText}>{dateDisplay.month} {selectedDate.getFullYear()}</Text>
             <Ionicons
-              name={viewMode === 'day' ? 'calendar-outline' : 'today-outline'}
-              size={20}
-              color={viewMode === 'week' ? '#4285f4' : colors.textSecondary}
+              name={isMiniCalendarExpanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={colors.textPrimary}
             />
           </TouchableOpacity>
+
+          <GradientIcon size={28} />
         </View>
-      </GestureDetector>
+
+        {/* Mini Calendar (Collapsible) */}
+        {isMiniCalendarExpanded && (
+          <View style={styles.miniCalendarContainer}>
+            {/* Month/Year Header with Navigation */}
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>{MONTHS[pickerMonth]} {pickerYear}</Text>
+              <View style={styles.pickerNavButtons}>
+                <TouchableOpacity onPress={goToPreviousMonth} style={styles.pickerNavButton}>
+                  <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={goToNextMonth} style={styles.pickerNavButton}>
+                  <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Day Headers */}
+            <View style={styles.dayHeaderRow}>
+              {DAYS_SHORT.map((day) => (
+                <View key={day} style={styles.dayHeaderCell}>
+                  <Text style={styles.dayHeaderText}>{day}</Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Calendar Grid */}
+            <View style={styles.calendarGrid}>
+              {calendarDays.map((day, index) => {
+                const isToday = day !== null &&
+                  pickerYear === new Date().getFullYear() &&
+                  pickerMonth === new Date().getMonth() &&
+                  day === new Date().getDate();
+                const isSelected = day !== null &&
+                  pickerYear === selectedDate.getFullYear() &&
+                  pickerMonth === selectedDate.getMonth() &&
+                  day === selectedDate.getDate();
+
+                return (
+                  <TouchableOpacity
+                    key={index}
+                    style={[
+                      styles.calendarDayCell,
+                      isSelected && styles.calendarDayCellSelected,
+                    ]}
+                    onPress={() => {
+                      if (day !== null) {
+                        selectDayFromPicker(day);
+                        setIsMiniCalendarExpanded(false);
+                      }
+                    }}
+                    disabled={day === null}
+                    activeOpacity={0.7}
+                  >
+                    {day !== null && (
+                      <Text
+                        style={[
+                          styles.calendarDayText,
+                          isToday && styles.calendarDayTextToday,
+                          isSelected && styles.calendarDayTextSelected,
+                        ]}
+                      >
+                        {day}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+      {/* Date Strip Scroller */}
+      {!isMiniCalendarExpanded && (
+        <DateStripScroller
+          selectedDate={selectedDate}
+          onDateSelect={setSelectedDate}
+          cachedEvents={cachedEvents}
+        />
+      )}
+
+      {/* View Mode Controls */}
+      <View style={styles.viewModeBar}>
+        {/* View Mode Segmented Control */}
+        <View style={styles.segmentedControl}>
+          <TouchableOpacity
+            style={[
+              styles.segmentButton,
+              viewMode === 'day' && styles.segmentButtonActive,
+            ]}
+            onPress={() => setViewMode('day')}
+          >
+            <Text style={[
+              styles.segmentText,
+              viewMode === 'day' && styles.segmentTextActive,
+            ]}>Day</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.segmentButton,
+              viewMode === 'week' && styles.segmentButtonActive,
+            ]}
+            onPress={() => setViewMode('week')}
+          >
+            <Text style={[
+              styles.segmentText,
+              viewMode === 'week' && styles.segmentTextActive,
+            ]}>3 Day</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.segmentButton,
+              viewMode === 'agenda' && styles.segmentButtonActive,
+            ]}
+            onPress={() => setViewMode('agenda')}
+          >
+            <Text style={[
+              styles.segmentText,
+              viewMode === 'agenda' && styles.segmentTextActive,
+            ]}>Agenda</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ flex: 1 }} />
+
+        {!dateDisplay.isToday && (
+          <TouchableOpacity onPress={goToToday} style={styles.todayButton}>
+            <Text style={styles.todayText}>Today</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Find Time Button */}
+        <TouchableOpacity
+          style={styles.findTimeButton}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setShowFindTimeSheet(true);
+          }}
+        >
+          <Ionicons name="time-outline" size={16} color="#4285f4" />
+        </TouchableOpacity>
+      </View>
 
       {/* Calendar Content */}
       {isLoading ? (
@@ -1331,6 +1735,9 @@ export default function CalendarScreen() {
             <Text style={styles.retryButtonText}>Try Again</Text>
           </TouchableOpacity>
         </View>
+      ) : viewMode === 'agenda' ? (
+        // Agenda List View
+        renderAgendaView()
       ) : viewMode === 'day' ? (
         // Day View with Swipe Gesture
         <GestureDetector gesture={swipeGesture}>
@@ -1363,6 +1770,9 @@ export default function CalendarScreen() {
                       style={[styles.gridLine, { top: i * HOUR_HEIGHT }]}
                     />
                   ))}
+
+                  {/* Tappable hour slots for creating events */}
+                  {renderTappableHourSlots()}
 
                   {/* Current time indicator */}
                   {currentTimePosition !== null && (
@@ -1677,6 +2087,27 @@ export default function CalendarScreen() {
         selectedDate={selectedDate}
         onEventCreated={() => loadMonthEvents(true)}
       />
+
+      {/* Find Time Sheet */}
+      <FindTimeSheet
+        visible={showFindTimeSheet}
+        onClose={() => setShowFindTimeSheet(false)}
+        selectedDate={selectedDate}
+        onSlotSelected={handleSlotSelected}
+      />
+
+      {/* New Event Modal (from Find Time) */}
+      <EventConfirmationModal
+        visible={showNewEventModal}
+        event={newEventData}
+        isLoading={false}
+        isCreating={isCreatingEvent}
+        onConfirm={handleCreateNewEvent}
+        onCancel={() => {
+          setShowNewEventModal(false);
+          setNewEventData(null);
+        }}
+      />
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -1763,6 +2194,21 @@ const styles = StyleSheet.create({
   },
   todayText: {
     fontSize: 14,
+    color: '#4285f4',
+    fontWeight: '500',
+  },
+  findTimeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginRight: spacing.sm,
+    backgroundColor: 'rgba(66, 133, 244, 0.1)',
+    borderRadius: borderRadius.full,
+  },
+  findTimeText: {
+    fontSize: 13,
     color: '#4285f4',
     fontWeight: '500',
   },
@@ -2428,6 +2874,192 @@ const styles = StyleSheet.create({
   pullDownText: {
     fontSize: 12,
     color: colors.textTertiary,
+    fontWeight: '500',
+  },
+
+  // Mini Calendar Container
+  miniCalendarContainer: {
+    backgroundColor: colors.bgSecondary,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.glassBorder,
+    paddingBottom: spacing.md,
+  },
+
+  // View Mode Bar
+  viewModeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.glassBorder,
+  },
+
+  // Segmented Control
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: colors.bgSecondary,
+    borderRadius: borderRadius.sm,
+    padding: 2,
+  },
+  segmentButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm - 2,
+  },
+  segmentButtonActive: {
+    backgroundColor: colors.bgTertiary,
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textTertiary,
+  },
+  segmentTextActive: {
+    color: colors.textPrimary,
+  },
+
+  // Tappable Hour Slots
+  tappableHourSlot: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: HOUR_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  tapToCreateHint: {
+    opacity: 0,
+    backgroundColor: colors.bgSecondary,
+    borderRadius: borderRadius.sm,
+    padding: 4,
+  },
+
+  // Agenda View Styles
+  agendaScrollView: {
+    flex: 1,
+  },
+  agendaContent: {
+    paddingBottom: spacing.xl,
+  },
+  agendaDaySection: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.glassBorder,
+  },
+  agendaDayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.bgSecondary,
+  },
+  agendaDayHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: spacing.sm,
+  },
+  agendaDayName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  agendaDayNameToday: {
+    color: '#4285f4',
+  },
+  agendaMonthDay: {
+    fontSize: 14,
+    color: colors.textSecondary,
+  },
+  todayIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  todayDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#4285f4',
+  },
+  agendaEventsList: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  agendaEventCard: {
+    flexDirection: 'row',
+    backgroundColor: colors.bgTertiary,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+  },
+  agendaEventCardConflict: {
+    borderWidth: 1,
+    borderColor: CONFLICT_BORDER_COLOR,
+  },
+  agendaEventColorBar: {
+    width: 4,
+  },
+  agendaEventContent: {
+    flex: 1,
+    padding: spacing.md,
+  },
+  agendaEventHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: 4,
+  },
+  agendaEventTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  agendaEventTime: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  agendaEventLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  agendaEventLocationText: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    flex: 1,
+  },
+  agendaJoinButton: {
+    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  agendaJoinText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  agendaEmptyDay: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  agendaEmptyText: {
+    fontSize: 14,
+    color: colors.textTertiary,
+  },
+  agendaAddHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  agendaAddText: {
+    fontSize: 13,
+    color: colors.accent,
     fontWeight: '500',
   },
 });

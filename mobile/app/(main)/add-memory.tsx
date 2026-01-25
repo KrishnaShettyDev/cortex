@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,22 +6,37 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
-  ActivityIndicator,
-  Animated,
   Image,
-  ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
+import Reanimated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withRepeat,
+  withTiming,
+  withSequence,
+  interpolate,
+  Extrapolation,
+  FadeIn,
+  FadeOut,
+  SlideInDown,
+  SlideOutDown,
+} from 'react-native-reanimated';
 import { memoryService, speechService, api } from '../../src/services';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
 import { colors, gradients, spacing, borderRadius } from '../../src/theme';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 const goBack = () => {
   if (router.canGoBack()) {
@@ -31,49 +46,144 @@ const goBack = () => {
   }
 };
 
-type MemoryMode = 'voice' | 'photo' | 'text';
+// Animated components
+const AnimatedView = Reanimated.createAnimatedComponent(View);
+const AnimatedTouchable = Reanimated.createAnimatedComponent(TouchableOpacity);
+
+// Attachment button component
+const AttachmentButton: React.FC<{
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  isActive?: boolean;
+  activeColor?: string;
+}> = ({ icon, label, onPress, disabled, isActive, activeColor }) => {
+  const scale = useSharedValue(1);
+
+  const handlePressIn = () => {
+    scale.value = withSpring(0.92, { damping: 15, stiffness: 400 });
+  };
+
+  const handlePressOut = () => {
+    scale.value = withSpring(1, { damping: 15, stiffness: 400 });
+  };
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  return (
+    <AnimatedTouchable
+      style={[
+        styles.attachmentButton,
+        isActive && { backgroundColor: activeColor ? `${activeColor}20` : colors.accent + '20' },
+        disabled && styles.attachmentButtonDisabled,
+        animatedStyle,
+      ]}
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      disabled={disabled}
+      activeOpacity={0.8}
+    >
+      <View style={[
+        styles.attachmentIconContainer,
+        isActive && { backgroundColor: activeColor || colors.accent },
+      ]}>
+        <Ionicons
+          name={icon}
+          size={20}
+          color={isActive ? '#fff' : colors.textSecondary}
+        />
+      </View>
+      <Text style={[
+        styles.attachmentLabel,
+        isActive && { color: activeColor || colors.accent },
+      ]}>
+        {label}
+      </Text>
+    </AnimatedTouchable>
+  );
+};
+
+// Recording waveform visualization
+const RecordingWaveform: React.FC<{ isRecording: boolean }> = ({ isRecording }) => {
+  const bars = [
+    useSharedValue(0.3),
+    useSharedValue(0.5),
+    useSharedValue(0.4),
+    useSharedValue(0.6),
+    useSharedValue(0.3),
+  ];
+
+  useEffect(() => {
+    if (isRecording) {
+      bars.forEach((bar, index) => {
+        bar.value = withRepeat(
+          withSequence(
+            withTiming(0.2 + Math.random() * 0.6, { duration: 200 + index * 50 }),
+            withTiming(0.4 + Math.random() * 0.4, { duration: 200 + index * 50 })
+          ),
+          -1,
+          true
+        );
+      });
+    } else {
+      bars.forEach((bar) => {
+        bar.value = withTiming(0.3, { duration: 200 });
+      });
+    }
+  }, [isRecording]);
+
+  return (
+    <View style={styles.waveformContainer}>
+      {bars.map((bar, index) => {
+        const animatedStyle = useAnimatedStyle(() => ({
+          height: interpolate(bar.value, [0, 1], [8, 24], Extrapolation.CLAMP),
+        }));
+
+        return (
+          <AnimatedView
+            key={index}
+            style={[styles.waveformBar, animatedStyle]}
+          />
+        );
+      })}
+    </View>
+  );
+};
 
 export default function AddMemoryScreen() {
   const posthog = usePostHog();
-  const [mode, setMode] = useState<MemoryMode>('text');
   const [memoryText, setMemoryText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const inputRef = useRef<TextInput>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Animations
+  const saveButtonScale = useSharedValue(1);
+  const inputFocused = useSharedValue(0);
+
+  useEffect(() => {
+    setTimeout(() => inputRef.current?.focus(), 400);
+  }, []);
 
   useEffect(() => {
     if (isRecording) {
-      const pulse = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.15,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-        ])
-      );
-      pulse.start();
-
       timerRef.current = setInterval(() => {
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
 
       return () => {
-        pulse.stop();
         if (timerRef.current) {
           clearInterval(timerRef.current);
         }
       };
     } else {
-      pulseAnim.setValue(1);
       setRecordingDuration(0);
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -87,117 +197,125 @@ export default function AddMemoryScreen() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleSaveText = async () => {
-    if (!memoryText.trim()) {
-      Alert.alert('Error', 'Please enter some text');
+  const handleSave = useCallback(async () => {
+    if (!memoryText.trim() && !selectedImage) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert('Add Context', 'Please write something or add a photo.');
       return;
     }
 
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsLoading(true);
+
+    // Animate save button
+    saveButtonScale.value = withSequence(
+      withSpring(0.8, { damping: 10 }),
+      withSpring(1, { damping: 10 })
+    );
+
     try {
-      await memoryService.createMemory({
-        content: memoryText,
-        memory_type: 'text',
-      });
+      if (selectedImage) {
+        const photoUrl = await api.uploadPhoto(selectedImage);
+        await memoryService.createMemory({
+          content: memoryText.trim() || 'Photo memory',
+          memory_type: 'photo',
+          photo_url: photoUrl,
+        });
 
-      // Track text memory created
-      posthog?.capture(ANALYTICS_EVENTS.TEXT_MEMORY_CREATED, {
-        content_length: memoryText.length,
-      });
+        posthog?.capture(ANALYTICS_EVENTS.PHOTO_MEMORY_CREATED, {
+          caption_length: memoryText.length,
+        });
+      } else {
+        await memoryService.createMemory({
+          content: memoryText,
+          memory_type: 'text',
+        });
 
-      // Memory saved instantly - entities/embeddings are processed in background
-      Alert.alert('Saved', 'Memory captured successfully.', [
-        { text: 'OK', onPress: goBack },
-      ]);
+        posthog?.capture(ANALYTICS_EVENTS.TEXT_MEMORY_CREATED, {
+          content_length: memoryText.length,
+        });
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      goBack();
     } catch (error: any) {
-      console.error('Save error:', error);
-      Alert.alert('Error', error.message || 'Failed to save memory');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message || 'Failed to save. Please try again.');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [memoryText, selectedImage, posthog]);
 
-  const toggleRecording = async () => {
+  const toggleRecording = useCallback(async () => {
     if (isRecording) {
       setIsRecording(false);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const result = await speechService.stopRecording();
 
       if (result && result.uri) {
-        const description = memoryText.trim();
+        setIsLoading(true);
 
-        Alert.alert(
-          'Processing',
-          'Your voice memo is being transcribed...',
-          [{ text: 'OK', onPress: goBack }]
-        );
+        try {
+          const uploadResult = await api.uploadAudioWithTranscription(result.uri);
+          const transcription = uploadResult.transcription?.trim();
 
-        processVoiceMemo(result.uri, description).catch((error) => {
-          console.error('Background processing error:', error);
-        });
+          let content = memoryText.trim();
+          if (transcription) {
+            content = content
+              ? `${transcription}\n\n[Note: ${content}]`
+              : transcription;
+          }
+
+          if (!content) {
+            content = '[Voice memo]';
+          }
+
+          await memoryService.createMemory({
+            content,
+            memory_type: 'voice',
+            audio_url: uploadResult.url,
+          });
+
+          posthog?.capture(ANALYTICS_EVENTS.VOICE_MEMORY_CREATED, {
+            has_transcription: !!transcription,
+            has_note: !!memoryText.trim(),
+          });
+
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          goBack();
+        } catch (error: any) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          Alert.alert('Error', 'Failed to process voice memo.');
+        } finally {
+          setIsLoading(false);
+        }
       }
     } else {
       const started = await speechService.startRecording();
       if (started) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         setIsRecording(true);
+        setSelectedImage(null);
       } else {
         Alert.alert(
           'Microphone Access',
-          'Please enable microphone access in Settings to record voice notes.',
+          'Please enable microphone access in Settings.',
           [{ text: 'OK' }]
         );
       }
     }
-  };
+  }, [isRecording, memoryText, posthog]);
 
-  const processVoiceMemo = async (audioUri: string, description: string) => {
-    try {
-      console.log('Background: Uploading audio for transcription...');
-      const uploadResult = await api.uploadAudioWithTranscription(audioUri);
+  const handleTakePhoto = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-      const transcription = uploadResult.transcription?.trim();
-
-      let content: string;
-      if (transcription && description) {
-        content = `${transcription}\n\n[User note: ${description}]`;
-      } else if (transcription) {
-        content = transcription;
-      } else if (description) {
-        content = description;
-      } else {
-        content = '[Voice memo - transcription unavailable]';
-      }
-
-      await memoryService.createMemory({
-        content,
-        memory_type: 'voice',
-        audio_url: uploadResult.url,
-      });
-
-      // Track voice memory created
-      posthog?.capture(ANALYTICS_EVENTS.VOICE_MEMORY_CREATED, {
-        has_transcription: !!transcription,
-        has_description: !!description,
-      });
-
-      console.log('Background: Voice memo saved successfully');
-    } catch (error: any) {
-      console.error('Background: Failed to process voice memo:', error);
-      throw error;
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Camera Access', 'Please enable camera access in Settings.');
+      return;
     }
-  };
 
-  const handleTakePhoto = async () => {
     try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          'Camera Access',
-          'Please enable camera access in Settings to take photos.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
         allowsEditing: true,
@@ -210,25 +328,17 @@ export default function AddMemoryScreen() {
       }
     } catch (error: any) {
       if (error.message?.includes('Camera not available')) {
-        Alert.alert(
-          'Camera Unavailable',
-          'Camera is not available on this device. Please use the photo library instead.',
-          [{ text: 'OK' }]
-        );
-      } else {
-        console.error('Camera error:', error);
+        Alert.alert('Camera Unavailable', 'Camera is not available on this device.');
       }
     }
-  };
+  }, []);
 
-  const handlePickPhoto = async () => {
+  const handlePickPhoto = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert(
-        'Photo Library Access',
-        'Please enable photo library access in Settings.',
-        [{ text: 'OK' }]
-      );
+      Alert.alert('Photo Library', 'Please enable photo library access in Settings.');
       return;
     }
 
@@ -242,115 +352,40 @@ export default function AddMemoryScreen() {
     if (!result.canceled && result.assets[0]) {
       setSelectedImage(result.assets[0].uri);
     }
-  };
+  }, []);
 
-  const handleSavePhoto = async () => {
-    if (!selectedImage) {
-      Alert.alert('Error', 'Please take or select a photo');
-      return;
-    }
-
-    const caption = memoryText.trim();
-    if (!caption) {
-      Alert.alert('Error', 'Please add a caption for your photo');
-      return;
-    }
-
-    setIsLoading(true);
-
-    Alert.alert(
-      'Saving',
-      'Your photo memory is being saved...',
-      [{ text: 'OK', onPress: goBack }]
-    );
-
-    processPhotoMemory(selectedImage, caption).catch((error) => {
-      console.error('Background processing error:', error);
-    });
-
-    setIsLoading(false);
-  };
-
-  const processPhotoMemory = async (imageUri: string, caption: string) => {
-    try {
-      console.log('Background: Uploading photo...');
-      const photoUrl = await api.uploadPhoto(imageUri);
-
-      await memoryService.createMemory({
-        content: caption,
-        memory_type: 'photo',
-        photo_url: photoUrl,
-      });
-
-      // Track photo memory created
-      posthog?.capture(ANALYTICS_EVENTS.PHOTO_MEMORY_CREATED, {
-        caption_length: caption.length,
-      });
-
-      console.log('Background: Photo memory saved successfully');
-    } catch (error: any) {
-      console.error('Background: Failed to process photo:', error);
-      throw error;
-    }
-  };
-
-  const clearSelectedImage = () => {
+  const clearImage = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedImage(null);
-  };
+  }, []);
 
-  const canSaveText = memoryText.trim().length > 0;
-  const canSavePhoto = selectedImage && memoryText.trim().length > 0;
+  const canSave = memoryText.trim().length > 0 || selectedImage;
 
-  const tabs = [
-    { key: 'text' as MemoryMode, icon: 'document-text-outline' as const, label: 'Note' },
-    { key: 'voice' as MemoryMode, icon: 'mic-outline' as const, label: 'Voice' },
-    { key: 'photo' as MemoryMode, icon: 'camera-outline' as const, label: 'Photo' },
-  ];
+  const saveButtonAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: saveButtonScale.value }],
+  }));
+
+  const inputContainerAnimatedStyle = useAnimatedStyle(() => ({
+    borderColor: inputFocused.value
+      ? colors.accent
+      : colors.glassBorder,
+  }));
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Sheet Handle */}
-      <View style={styles.handleContainer}>
-        <View style={styles.handle} />
-      </View>
-
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={goBack} style={styles.cancelButton} activeOpacity={0.7}>
-          <Text style={styles.cancelText}>Cancel</Text>
+        <TouchableOpacity
+          onPress={goBack}
+          style={styles.closeButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="close" size={24} color={colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Add Context</Text>
-        <View style={styles.headerSpacer} />
-      </View>
 
-      {/* Segmented Control */}
-      <View style={styles.segmentedControl}>
-        {tabs.map((tab) => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.segment, mode === tab.key && styles.segmentActive]}
-            onPress={() => {
-              if (mode !== tab.key) {
-                posthog?.capture(ANALYTICS_EVENTS.MEMORY_MODE_SWITCHED, {
-                  from_mode: mode,
-                  to_mode: tab.key,
-                });
-              }
-              setMode(tab.key);
-            }}
-            disabled={isRecording}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={tab.icon}
-              size={16}
-              color={mode === tab.key ? colors.textPrimary : colors.textTertiary}
-            />
-            <Text style={[styles.segmentText, mode === tab.key && styles.segmentTextActive]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        <Text style={styles.headerTitle}>Add Context</Text>
+
+        <View style={styles.headerSpacer} />
       </View>
 
       <KeyboardAvoidingView
@@ -358,158 +393,153 @@ export default function AddMemoryScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
       >
-        <ScrollView
-          style={styles.scrollContent}
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Text Mode */}
-          {mode === 'text' && (
-            <View style={styles.inputSection}>
-              <Text style={styles.inputLabel}>What would you like Cortex to remember?</Text>
-              <View style={styles.inputContainer}>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="e.g., My favorite restaurant is..."
-                  placeholderTextColor={colors.textTertiary}
-                  value={memoryText}
-                  onChangeText={setMemoryText}
-                  multiline
-                  numberOfLines={6}
-                  textAlignVertical="top"
-                />
+        <View style={styles.content}>
+          {/* Recording State */}
+          {isRecording && (
+            <AnimatedView
+              entering={FadeIn.duration(200)}
+              exiting={FadeOut.duration(200)}
+              style={styles.recordingCard}
+            >
+              <View style={styles.recordingHeader}>
+                <View style={styles.recordingLive}>
+                  <View style={styles.recordingDot} />
+                  <Text style={styles.recordingLiveText}>RECORDING</Text>
+                </View>
+                <Text style={styles.recordingTime}>{formatDuration(recordingDuration)}</Text>
               </View>
-              <Text style={styles.inputHint}>
-                This helps Cortex provide more personalized responses.
+
+              <RecordingWaveform isRecording={isRecording} />
+
+              <Text style={styles.recordingHint}>
+                Tap the mic button again to stop and save
               </Text>
+            </AnimatedView>
+          )}
+
+          {/* Image Preview */}
+          {selectedImage && !isRecording && (
+            <View style={styles.imageCard}>
+              <Image source={{ uri: selectedImage }} style={styles.imagePreview} />
+              <LinearGradient
+                colors={['transparent', 'rgba(0,0,0,0.7)']}
+                style={styles.imageOverlay}
+              />
+              <TouchableOpacity
+                style={styles.removeImageButton}
+                onPress={clearImage}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="close" size={18} color="#fff" />
+              </TouchableOpacity>
             </View>
           )}
 
-          {/* Voice Mode */}
-          {mode === 'voice' && (
-            <>
-              <View style={styles.voiceSection}>
-                <Animated.View style={[styles.recordButtonContainer, { transform: [{ scale: pulseAnim }] }]}>
-                  <TouchableOpacity
-                    onPress={toggleRecording}
-                    activeOpacity={0.8}
-                    disabled={isLoading}
-                  >
-                    <LinearGradient
-                      colors={isRecording ? [colors.error, colors.error] : gradients.primary}
-                      style={styles.recordButton}
-                    >
-                      <Ionicons
-                        name={isRecording ? 'stop' : 'mic'}
-                        size={32}
-                        color={isRecording ? colors.textPrimary : colors.bgPrimary}
-                      />
-                    </LinearGradient>
-                  </TouchableOpacity>
-                </Animated.View>
-                <Text style={styles.recordText}>
-                  {isRecording
-                    ? `Recording ${formatDuration(recordingDuration)}`
-                    : 'Tap to record'}
-                </Text>
-                {isRecording && (
-                  <Text style={styles.recordHint}>Tap again to stop</Text>
-                )}
-              </View>
+          {/* Main Input */}
+          {!isRecording && (
+            <AnimatedView style={[styles.inputCard, inputContainerAnimatedStyle]}>
+              <TextInput
+                ref={inputRef}
+                style={styles.textInput}
+                placeholder={selectedImage
+                  ? "Add a caption for this photo..."
+                  : "What should Cortex remember?\n\ne.g., My favorite coffee shop is Blue Bottle on Market Street..."
+                }
+                placeholderTextColor={colors.textTertiary}
+                value={memoryText}
+                onChangeText={setMemoryText}
+                multiline
+                textAlignVertical="top"
+                onFocus={() => {
+                  inputFocused.value = withTiming(1, { duration: 200 });
+                }}
+                onBlur={() => {
+                  inputFocused.value = withTiming(0, { duration: 200 });
+                }}
+              />
 
-              <View style={styles.inputSection}>
-                <Text style={styles.inputLabel}>
-                  Add a note (optional)
-                </Text>
-                <View style={styles.inputContainerSmall}>
-                  <TextInput
-                    style={styles.textInputSmall}
-                    placeholder="Additional context..."
-                    placeholderTextColor={colors.textTertiary}
-                    value={memoryText}
-                    onChangeText={setMemoryText}
-                    multiline
-                    numberOfLines={2}
-                    textAlignVertical="top"
-                  />
-                </View>
-              </View>
-            </>
-          )}
-
-          {/* Photo Mode */}
-          {mode === 'photo' && (
-            <>
-              {selectedImage ? (
-                <View style={styles.imagePreviewContainer}>
-                  <Image source={{ uri: selectedImage }} style={styles.imagePreview} />
-                  <TouchableOpacity style={styles.removeImageButton} onPress={clearSelectedImage}>
-                    <View style={styles.removeImageIcon}>
-                      <Ionicons name="close" size={16} color={colors.textPrimary} />
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                <View style={styles.photoButtons}>
-                  <TouchableOpacity style={styles.photoButton} onPress={handleTakePhoto} activeOpacity={0.7}>
-                    <Ionicons name="camera-outline" size={24} color={colors.textSecondary} />
-                    <Text style={styles.photoButtonText}>Camera</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.photoButton} onPress={handlePickPhoto} activeOpacity={0.7}>
-                    <Ionicons name="images-outline" size={24} color={colors.textSecondary} />
-                    <Text style={styles.photoButtonText}>Library</Text>
-                  </TouchableOpacity>
+              {memoryText.length > 0 && (
+                <View style={styles.charCount}>
+                  <Text style={styles.charCountText}>{memoryText.length}</Text>
                 </View>
               )}
-
-              <View style={styles.inputSection}>
-                <Text style={styles.inputLabel}>Add a caption</Text>
-                <View style={styles.inputContainerSmall}>
-                  <TextInput
-                    style={styles.textInputSmall}
-                    placeholder="Describe this photo..."
-                    placeholderTextColor={colors.textTertiary}
-                    value={memoryText}
-                    onChangeText={setMemoryText}
-                    multiline
-                    numberOfLines={2}
-                    textAlignVertical="top"
-                  />
-                </View>
-              </View>
-            </>
+            </AnimatedView>
           )}
-        </ScrollView>
 
-        {/* Save Bar - Chat style */}
-        <View style={styles.footer}>
-          <View style={styles.saveBarWrapper}>
-            <Text style={styles.saveBarText}>
-              {mode === 'text' ? 'Save memory' : mode === 'voice' ? 'Save note' : 'Save photo'}
+          {/* Helper Text */}
+          {!isRecording && !selectedImage && (
+            <Text style={styles.helperText}>
+              Add personal context to make Cortex more helpful. This could be preferences,
+              important dates, relationships, or anything you want remembered.
             </Text>
-            <TouchableOpacity
-              onPress={mode === 'photo' ? handleSavePhoto : handleSaveText}
-              disabled={(mode === 'text' && !canSaveText) || (mode === 'photo' && !canSavePhoto) || (mode === 'voice' && !canSaveText && !isRecording) || isLoading}
+          )}
+        </View>
+
+        {/* Bottom Action Bar */}
+        <View style={styles.bottomBar}>
+          <View style={styles.attachmentRow}>
+            <AttachmentButton
+              icon={isRecording ? 'stop' : 'mic-outline'}
+              label={isRecording ? 'Stop' : 'Voice'}
+              onPress={toggleRecording}
+              disabled={isLoading || !!selectedImage}
+              isActive={isRecording}
+              activeColor={colors.error}
+            />
+
+            <AttachmentButton
+              icon="camera-outline"
+              label="Camera"
+              onPress={handleTakePhoto}
+              disabled={isLoading || isRecording}
+            />
+
+            <AttachmentButton
+              icon="images-outline"
+              label="Photos"
+              onPress={handlePickPhoto}
+              disabled={isLoading || isRecording}
+            />
+          </View>
+
+          {/* Save Button */}
+          {!isRecording && (
+            <AnimatedTouchable
+              style={[styles.saveButton, saveButtonAnimatedStyle]}
+              onPress={handleSave}
+              disabled={!canSave || isLoading}
               activeOpacity={0.8}
             >
               <LinearGradient
-                colors={gradients.primary}
+                colors={canSave ? gradients.primary : [colors.bgTertiary, colors.bgTertiary]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={[
-                  styles.saveBarButton,
-                  ((mode === 'text' && !canSaveText) || (mode === 'photo' && !canSavePhoto) || (mode === 'voice' && !canSaveText && !isRecording)) && styles.saveBarButtonDisabled
-                ]}
+                style={styles.saveButtonGradient}
               >
                 {isLoading ? (
-                  <ActivityIndicator color="#0D0D0D" size="small" />
+                  <View style={styles.loadingDots}>
+                    <View style={styles.loadingDot} />
+                    <View style={[styles.loadingDot, { opacity: 0.7 }]} />
+                    <View style={[styles.loadingDot, { opacity: 0.4 }]} />
+                  </View>
                 ) : (
-                  <Ionicons name="arrow-up" size={18} color="#0D0D0D" />
+                  <>
+                    <Text style={[
+                      styles.saveButtonText,
+                      !canSave && styles.saveButtonTextDisabled,
+                    ]}>
+                      Save
+                    </Text>
+                    <Ionicons
+                      name="arrow-forward"
+                      size={16}
+                      color={canSave ? colors.bgPrimary : colors.textTertiary}
+                    />
+                  </>
                 )}
               </LinearGradient>
-            </TouchableOpacity>
-          </View>
+            </AnimatedTouchable>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -519,33 +549,22 @@ export default function AddMemoryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
-  },
-  handleContainer: {
-    alignItems: 'center',
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  handle: {
-    width: 36,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: colors.textTertiary,
-    opacity: 0.4,
+    backgroundColor: colors.bgPrimary,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
   },
-  cancelButton: {
-    minWidth: 60,
-  },
-  cancelText: {
-    color: colors.textSecondary,
-    fontSize: 16,
+  closeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.bgSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
     fontSize: 17,
@@ -553,194 +572,203 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   headerSpacer: {
-    minWidth: 60,
-  },
-  segmentedControl: {
-    flexDirection: 'row',
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
-    backgroundColor: colors.bgSecondary,
-    borderRadius: borderRadius.lg,
-    padding: 4,
-  },
-  segment: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    gap: 6,
-  },
-  segmentActive: {
-    backgroundColor: colors.bgTertiary,
-  },
-  segmentText: {
-    color: colors.textTertiary,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  segmentTextActive: {
-    color: colors.textPrimary,
+    width: 40,
   },
   keyboardView: {
     flex: 1,
   },
-  scrollContent: {
-    flex: 1,
-  },
   content: {
+    flex: 1,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.lg,
+    paddingTop: spacing.sm,
   },
-  // Input Section
-  inputSection: {
-    width: '100%',
-  },
-  inputLabel: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
-  },
-  inputContainer: {
-    backgroundColor: colors.bgSecondary,
-    borderRadius: borderRadius.lg,
+
+  // Recording Card
+  recordingCard: {
+    backgroundColor: 'rgba(255, 69, 58, 0.1)',
+    borderRadius: borderRadius.xl,
+    padding: spacing.lg,
     borderWidth: 1,
-    borderColor: colors.glassBorder,
-  },
-  inputContainerSmall: {
-    backgroundColor: colors.bgSecondary,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-  },
-  textInput: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.textPrimary,
-    fontSize: 16,
-    minHeight: 150,
-    lineHeight: 22,
-  },
-  textInputSmall: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.textPrimary,
-    fontSize: 16,
-    minHeight: 80,
-    lineHeight: 22,
-  },
-  inputHint: {
-    fontSize: 13,
-    color: colors.textTertiary,
-    marginTop: spacing.sm,
-  },
-  // Voice Section
-  voiceSection: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-    marginBottom: spacing.lg,
-  },
-  recordButtonContainer: {
+    borderColor: 'rgba(255, 69, 58, 0.3)',
     marginBottom: spacing.md,
   },
-  recordButton: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordText: {
-    fontSize: 16,
-    color: colors.textPrimary,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  recordHint: {
-    fontSize: 13,
-    color: colors.textTertiary,
-    marginTop: spacing.xs,
-  },
-  // Photo Section
-  photoButtons: {
+  recordingHeader: {
     flexDirection: 'row',
-    gap: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  photoButton: {
-    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.xl,
-    backgroundColor: colors.bgSecondary,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    borderStyle: 'dashed',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+  },
+  recordingLive: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
   },
-  photoButtonText: {
-    color: colors.textSecondary,
-    fontSize: 14,
-    fontWeight: '500',
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.error,
   },
-  imagePreviewContainer: {
+  recordingLiveText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.error,
+    letterSpacing: 1,
+  },
+  recordingTime: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    fontVariant: ['tabular-nums'],
+  },
+  waveformContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    height: 32,
+    marginBottom: spacing.md,
+  },
+  waveformBar: {
+    width: 4,
+    backgroundColor: colors.error,
+    borderRadius: 2,
+  },
+  recordingHint: {
+    fontSize: 13,
+    color: colors.textTertiary,
+    textAlign: 'center',
+  },
+
+  // Image Card
+  imageCard: {
+    borderRadius: borderRadius.xl,
+    overflow: 'hidden',
+    marginBottom: spacing.md,
     position: 'relative',
-    marginBottom: spacing.lg,
   },
   imagePreview: {
     width: '100%',
-    aspectRatio: 4 / 3,
-    borderRadius: borderRadius.lg,
+    height: 220,
     resizeMode: 'cover',
+  },
+  imageOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 60,
   },
   removeImageButton: {
     position: 'absolute',
     top: spacing.sm,
     right: spacing.sm,
-  },
-  removeImageIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Footer - Chat style save bar
-  footer: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    paddingBottom: spacing.xl,
-  },
-  saveBarWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.bgTertiary,
-    borderRadius: borderRadius.full,
-    paddingLeft: spacing.md,
-    paddingRight: spacing.xs,
-    paddingVertical: spacing.xs,
-    minHeight: 48,
+
+  // Input Card
+  inputCard: {
+    backgroundColor: colors.bgSecondary,
+    borderRadius: borderRadius.xl,
     borderWidth: 1,
     borderColor: colors.glassBorder,
+    minHeight: 180,
+    position: 'relative',
   },
-  saveBarText: {
-    flex: 1,
-    color: colors.textSecondary,
+  textInput: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    color: colors.textPrimary,
     fontSize: 16,
+    lineHeight: 24,
+    flex: 1,
   },
-  saveBarButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  charCount: {
+    position: 'absolute',
+    bottom: spacing.sm,
+    right: spacing.md,
+  },
+  charCountText: {
+    fontSize: 12,
+    color: colors.textTertiary,
+  },
+  helperText: {
+    fontSize: 13,
+    color: colors.textTertiary,
+    lineHeight: 18,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.xs,
+  },
+
+  // Bottom Bar
+  bottomBar: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
+    gap: spacing.md,
+  },
+  attachmentRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.md,
+  },
+  attachmentButton: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.lg,
+  },
+  attachmentButtonDisabled: {
+    opacity: 0.4,
+  },
+  attachmentIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.bgSecondary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  saveBarButtonDisabled: {
-    opacity: 0.4,
+  attachmentLabel: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: colors.textSecondary,
+  },
+  saveButton: {
+    borderRadius: borderRadius.full,
+    overflow: 'hidden',
+  },
+  saveButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    gap: spacing.sm,
+  },
+  saveButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.bgPrimary,
+  },
+  saveButtonTextDisabled: {
+    color: colors.textTertiary,
+  },
+  loadingDots: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  loadingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.bgPrimary,
   },
 });

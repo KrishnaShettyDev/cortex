@@ -14,7 +14,23 @@ import type * as NotificationsType from 'expo-notifications';
 import type * as DeviceType from 'expo-device';
 
 export interface NotificationData {
-  type: 'briefing' | 'reminder' | 'memory_insight' | 'connection' | 'meeting_prep';
+  type:
+    | 'briefing'
+    | 'reminder'
+    | 'memory_insight'
+    | 'connection'
+    | 'meeting_prep'
+    | 'urgent_email'
+    | 'commitment'
+    | 'pattern_warning'
+    | 'reconnection_nudge'
+    | 'important_date_reminder'
+    | 'promise_reminder'
+    | 'intention_nudge'
+    | 'snoozed_email'
+    | 'decision_outcome';
+
+  // Common fields
   full_content?: string;
   prompt?: string;
   topic?: string;
@@ -22,6 +38,39 @@ export interface NotificationData {
   memory_id?: string;
   connection_id?: string;
   person_name?: string;
+
+  // Email fields
+  thread_id?: string;
+  message_id?: string;
+  subject?: string;
+  from?: string;
+  urgency_score?: number;
+
+  // Commitment/intention fields
+  commitment_id?: string;
+  intention_id?: string;
+  description?: string;
+  is_overdue?: boolean;
+  days_overdue?: number;
+
+  // Pattern fields
+  pattern_name?: string;
+  confidence?: number;
+
+  // Important date fields
+  date_id?: string;
+  date_type?: string;
+
+  // Promise fields
+  promise_id?: string;
+  total_pending?: number;
+
+  // Decision fields
+  decision_id?: string;
+
+  // Entity fields
+  entity_id?: string;
+  total_neglected?: number;
 }
 
 // Lazy-loaded modules
@@ -157,9 +206,10 @@ class NotificationService {
   }
 
   /**
-   * Setup Android notification channel.
+   * Setup Android notification channels for all notification types.
    */
   private async setupAndroidChannel(Notifications: typeof NotificationsType): Promise<void> {
+    // Default channel
     await Notifications.setNotificationChannelAsync('default', {
       name: 'Cortex',
       importance: Notifications.AndroidImportance.HIGH,
@@ -176,10 +226,50 @@ class NotificationService {
       sound: 'default',
     });
 
-    // Reminders channel
+    // Meeting preparation channel
+    await Notifications.setNotificationChannelAsync('meeting_prep', {
+      name: 'Meeting Preparation',
+      description: 'Context and insights before your meetings',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+    });
+
+    // Urgent emails channel
+    await Notifications.setNotificationChannelAsync('urgent_email', {
+      name: 'Urgent Emails',
+      description: 'Important emails that need your attention',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+    });
+
+    // Commitments channel
+    await Notifications.setNotificationChannelAsync('commitments', {
+      name: 'Commitments',
+      description: 'Reminders about things you said you would do',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+    });
+
+    // Pattern warnings channel
+    await Notifications.setNotificationChannelAsync('patterns', {
+      name: 'Pattern Alerts',
+      description: 'Warnings when you might be repeating past mistakes',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: 'default',
+    });
+
+    // Relationships channel
+    await Notifications.setNotificationChannelAsync('relationships', {
+      name: 'Relationships',
+      description: 'Reconnection nudges and important dates',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: 'default',
+    });
+
+    // Smart reminders channel
     await Notifications.setNotificationChannelAsync('reminders', {
       name: 'Smart Reminders',
-      description: 'Contextual reminders for meetings and follow-ups',
+      description: 'Contextual reminders for events and follow-ups',
       importance: Notifications.AndroidImportance.HIGH,
       sound: 'default',
     });

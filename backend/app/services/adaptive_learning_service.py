@@ -449,6 +449,207 @@ Return only a number between 0.0 and 1.0."""
 
         return weight
 
+    # ==================== SCHEDULE PREFERENCE LEARNING ====================
+
+    async def learn_schedule_preferences(self, user_id: UUID, days: int = 30) -> dict:
+        """
+        Learn user's schedule preferences from calendar patterns.
+
+        Analyzes:
+        - When they typically schedule meetings
+        - Preferred meeting durations
+        - Preferred break patterns
+        - Focus time patterns
+        """
+        from app.services.sync_service import SyncService
+        sync_service = SyncService(self.db)
+
+        # Get calendar events from the past N days
+        start_date = datetime.utcnow() - timedelta(days=days)
+        end_date = datetime.utcnow()
+
+        events_result = await sync_service.get_calendar_events(
+            user_id=user_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        events = events_result.get("events", [])
+
+        if len(events) < 10:
+            return {
+                "success": False,
+                "message": "Not enough calendar data to learn preferences",
+            }
+
+        # Analyze patterns
+        patterns = self._analyze_calendar_patterns(events)
+
+        # Store preferences
+        await self.learn_preference(
+            user_id=user_id,
+            preference_type="schedule_patterns",
+            preference_value=json.dumps(patterns),
+            confidence=min(0.9, 0.5 + (len(events) / 100)),
+            evidence=f"Analyzed {len(events)} calendar events",
+        )
+
+        return {
+            "success": True,
+            "patterns": patterns,
+            "events_analyzed": len(events),
+        }
+
+    def _analyze_calendar_patterns(self, events: list) -> dict:
+        """Analyze calendar events to extract scheduling patterns."""
+        patterns = {
+            "preferred_meeting_hours": [],
+            "preferred_focus_hours": [],
+            "typical_meeting_duration_mins": 60,
+            "prefers_morning_meetings": False,
+            "prefers_afternoon_meetings": False,
+            "avg_meetings_per_day": 0,
+            "busiest_day_of_week": None,
+            "common_meeting_types": [],
+        }
+
+        if not events:
+            return patterns
+
+        # Track meeting hours
+        meeting_hours = []
+        durations = []
+        day_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}  # Mon-Sun
+
+        for event in events:
+            try:
+                start_str = event.get("start_time", "")
+                end_str = event.get("end_time", "")
+
+                if isinstance(start_str, str):
+                    start = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    end = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                else:
+                    start = start_str
+                    end = end_str
+
+                # Track hour
+                meeting_hours.append(start.hour)
+
+                # Track duration
+                duration_mins = (end - start).total_seconds() / 60
+                durations.append(duration_mins)
+
+                # Track day of week
+                day_counts[start.weekday()] += 1
+
+            except Exception:
+                continue
+
+        if meeting_hours:
+            # Calculate preferred meeting times
+            morning_count = sum(1 for h in meeting_hours if 8 <= h < 12)
+            afternoon_count = sum(1 for h in meeting_hours if 12 <= h < 17)
+
+            patterns["prefers_morning_meetings"] = morning_count > afternoon_count
+            patterns["prefers_afternoon_meetings"] = afternoon_count > morning_count
+
+            # Find most common hours
+            from collections import Counter
+            hour_counts = Counter(meeting_hours)
+            patterns["preferred_meeting_hours"] = [h for h, _ in hour_counts.most_common(3)]
+
+            # Infer focus hours (times with fewer meetings)
+            all_hours = set(range(8, 18))
+            busy_hours = set(patterns["preferred_meeting_hours"])
+            patterns["preferred_focus_hours"] = list(all_hours - busy_hours)[:3]
+
+        if durations:
+            # Average meeting duration
+            patterns["typical_meeting_duration_mins"] = int(sum(durations) / len(durations))
+
+        # Busiest day
+        if any(day_counts.values()):
+            busiest_day_num = max(day_counts, key=day_counts.get)
+            day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+            patterns["busiest_day_of_week"] = day_names[busiest_day_num]
+
+        # Average meetings per day
+        unique_days = len(set(event.get("start_time", "")[:10] for event in events if event.get("start_time")))
+        if unique_days > 0:
+            patterns["avg_meetings_per_day"] = round(len(events) / unique_days, 1)
+
+        return patterns
+
+    async def learn_preference(
+        self,
+        user_id: UUID,
+        preference_type: str,
+        preference_value: str,
+        confidence: float,
+        evidence: str,
+    ) -> None:
+        """Store a learned preference."""
+        from app.models.adaptive import UserPreferences as UserPreference
+
+        try:
+            # Check if preference exists
+            result = await self.db.execute(
+                select(UserPreference).where(
+                    and_(
+                        UserPreference.user_id == user_id,
+                        UserPreference.preference_type == preference_type,
+                    )
+                )
+            )
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                existing.preference_value = preference_value
+                existing.confidence = confidence
+                existing.evidence = evidence
+                existing.updated_at = datetime.utcnow()
+            else:
+                pref = UserPreference(
+                    user_id=user_id,
+                    preference_type=preference_type,
+                    preference_value=preference_value,
+                    confidence=confidence,
+                    evidence=evidence,
+                )
+                self.db.add(pref)
+
+            await self.db.commit()
+
+        except Exception as e:
+            logger.error(f"Error storing preference: {e}")
+
+    async def get_schedule_preferences(self, user_id: UUID) -> dict:
+        """Get learned schedule preferences."""
+        from app.models.adaptive import UserPreferences as UserPreference
+
+        try:
+            result = await self.db.execute(
+                select(UserPreference).where(
+                    and_(
+                        UserPreference.user_id == user_id,
+                        UserPreference.preference_type == "schedule_patterns",
+                    )
+                )
+            )
+            pref = result.scalar_one_or_none()
+
+            if pref:
+                return json.loads(pref.preference_value)
+
+            # If no stored preferences, try to learn them
+            learn_result = await self.learn_schedule_preferences(user_id)
+            return learn_result.get("patterns", {})
+
+        except Exception as e:
+            logger.error(f"Error getting schedule preferences: {e}")
+            return {}
+
     # ==================== STATISTICS ====================
 
     async def get_learning_stats(self, user_id: UUID) -> dict:

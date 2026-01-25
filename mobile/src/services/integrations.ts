@@ -81,6 +81,20 @@ export interface CalendarEventsResponse {
   message?: string;
 }
 
+// Calendar availability/free slots types
+export interface TimeSlot {
+  start: string; // ISO datetime
+  end: string; // ISO datetime
+  duration_minutes: number;
+}
+
+export interface CalendarAvailabilityResponse {
+  success: boolean;
+  free_slots: TimeSlot[];
+  busy_slots?: { start: string; end: string }[];
+  message?: string;
+}
+
 // Email types
 export interface EmailRecipient {
   email: string;
@@ -203,6 +217,25 @@ class IntegrationsService {
     return api.request<CalendarEventResponse>(
       `/integrations/google/calendar/events/${eventId}?send_notifications=${sendNotifications}`,
       { method: 'DELETE' }
+    );
+  }
+
+  /**
+   * Find available time slots in the calendar
+   */
+  async getCalendarAvailability(
+    date: string, // YYYY-MM-DD
+    durationMinutes: number = 30,
+    startHour: number = 9,
+    endHour: number = 18
+  ): Promise<CalendarAvailabilityResponse> {
+    const params = new URLSearchParams();
+    params.append('date', date);
+    params.append('duration_minutes', durationMinutes.toString());
+    params.append('start_hour', startHour.toString());
+    params.append('end_hour', endHour.toString());
+    return api.request<CalendarAvailabilityResponse>(
+      `/integrations/google/calendar/availability?${params.toString()}`
     );
   }
 

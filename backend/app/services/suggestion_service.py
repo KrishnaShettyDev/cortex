@@ -467,3 +467,319 @@ Return ONLY valid JSON array, no other text."""
                 "greeting": f"{time_greeting}, {first_name}." if first_name else f"{time_greeting}.",
                 "has_context": False,
             }
+
+    # ==================== SMART PRE-FILLED ACTIONS ====================
+
+    async def get_prefilled_actions(
+        self,
+        user_id: UUID,
+        gmail_connected: bool,
+        calendar_connected: bool,
+    ) -> list[dict]:
+        """
+        Get smart pre-filled actions like Iris.
+
+        Returns actions with all data pre-filled so user just needs to approve.
+        Each action includes:
+        - type: the action type (reply_email, follow_up, resolve_conflict, etc.)
+        - title: display text
+        - data: pre-filled data for the action
+        - requires_confirmation: whether user needs to approve
+
+        Example:
+        {
+            "type": "reply_email",
+            "title": "Reply to Sarah about budget",
+            "priority": 1,
+            "data": {
+                "thread_id": "...",
+                "draft_body": "Hi Sarah, Thanks for sending...",
+                "to": "sarah@example.com"
+            },
+            "requires_confirmation": True
+        }
+        """
+        actions = []
+
+        try:
+            # 1. Check for emails needing replies
+            if gmail_connected:
+                reply_actions = await self._get_email_reply_actions(user_id)
+                actions.extend(reply_actions)
+
+                # 2. Check for follow-ups needed
+                followup_actions = await self._get_followup_actions(user_id)
+                actions.extend(followup_actions)
+
+            # 3. Check for calendar conflicts
+            if calendar_connected:
+                conflict_actions = await self._get_conflict_actions(user_id)
+                actions.extend(conflict_actions)
+
+                # 4. Check for focus time opportunities
+                focus_actions = await self._get_focus_time_actions(user_id)
+                actions.extend(focus_actions)
+
+            # Sort by priority and limit
+            actions.sort(key=lambda x: x.get("priority", 5))
+            return actions[:5]
+
+        except Exception as e:
+            logger.error(f"Error generating prefilled actions: {e}")
+            return []
+
+    async def _get_email_reply_actions(self, user_id: UUID) -> list[dict]:
+        """Get pre-filled email reply actions."""
+        actions = []
+
+        try:
+            from app.services.email_intelligence_service import EmailIntelligenceService
+            email_intel = EmailIntelligenceService(self.db)
+
+            # Get recent unread emails
+            emails = await self._get_recent_emails(user_id, hours=24)
+
+            for i, email in enumerate(emails[:3]):
+                # Check if this looks like it needs a reply
+                subject = email.get("subject", "").lower()
+                needs_reply = any([
+                    "?" in subject,
+                    "request" in subject,
+                    "please" in subject,
+                    "question" in subject,
+                    "when" in subject,
+                    "can you" in subject,
+                ])
+
+                if needs_reply and email.get("source_id"):
+                    # Generate a draft reply
+                    # Note: In production, this would be async/background
+                    actions.append({
+                        "type": "reply_email",
+                        "title": f"Reply to {email.get('sender', 'Unknown').split()[0]} about {email.get('subject', 'email')[:30]}",
+                        "priority": 1 + i,
+                        "data": {
+                            "thread_id": email.get("source_id"),
+                            "subject": email.get("subject"),
+                            "to": email.get("sender"),
+                        },
+                        "context": f"From {email.get('sender', 'Unknown')}, {email.get('age_hours', 0):.0f}h ago",
+                        "requires_confirmation": True,
+                    })
+
+        except Exception as e:
+            logger.error(f"Error getting email reply actions: {e}")
+
+        return actions
+
+    async def _get_followup_actions(self, user_id: UUID) -> list[dict]:
+        """Get pre-filled follow-up actions."""
+        actions = []
+
+        try:
+            from app.services.email_intelligence_service import EmailIntelligenceService
+            email_intel = EmailIntelligenceService(self.db)
+
+            # Get awaiting replies
+            awaiting = await email_intel.get_awaiting_replies(user_id, days_threshold=3)
+
+            for email in awaiting.get("awaiting_replies", [])[:2]:
+                actions.append({
+                    "type": "follow_up",
+                    "title": f"Follow up with {email.get('to', 'contact').split('@')[0]} - {email.get('days_without_reply', 0)}d",
+                    "priority": 3,
+                    "data": {
+                        "thread_id": email.get("thread_id"),
+                        "subject": email.get("subject"),
+                        "days_waiting": email.get("days_without_reply"),
+                    },
+                    "context": f"No response in {email.get('days_without_reply', 0)} days",
+                    "requires_confirmation": True,
+                })
+
+        except Exception as e:
+            logger.error(f"Error getting followup actions: {e}")
+
+        return actions
+
+    async def _get_conflict_actions(self, user_id: UUID) -> list[dict]:
+        """Get pre-filled conflict resolution actions."""
+        actions = []
+
+        try:
+            from app.services.calendar_intelligence_service import CalendarIntelligenceService
+            cal_intel = CalendarIntelligenceService(self.db)
+
+            # Check for conflicts in next 24 hours
+            conflicts = await cal_intel.detect_conflicts(
+                user_id=user_id,
+                start_date=utcnow().replace(tzinfo=None),
+                end_date=(utcnow() + timedelta(hours=24)).replace(tzinfo=None),
+            )
+
+            for conflict in conflicts.get("conflicts", [])[:2]:
+                e1 = conflict.get("event1", {})
+                e2 = conflict.get("event2", {})
+
+                actions.append({
+                    "type": "resolve_conflict",
+                    "title": f"Conflict: {e1.get('title', 'Event 1')[:15]} & {e2.get('title', 'Event 2')[:15]}",
+                    "priority": 2,
+                    "data": {
+                        "conflict": conflict,
+                        "suggestions": conflict.get("suggestions", []),
+                    },
+                    "context": f"{conflict.get('overlap_minutes', 0)} min overlap",
+                    "requires_confirmation": True,
+                })
+
+        except Exception as e:
+            logger.error(f"Error getting conflict actions: {e}")
+
+        return actions
+
+    async def _get_focus_time_actions(self, user_id: UUID) -> list[dict]:
+        """Get pre-filled focus time blocking actions."""
+        actions = []
+
+        try:
+            from app.services.calendar_intelligence_service import CalendarIntelligenceService
+            cal_intel = CalendarIntelligenceService(self.db)
+
+            # Get today's summary
+            summary = await cal_intel.get_day_summary(
+                user_id=user_id,
+                date=utcnow().replace(tzinfo=None),
+            )
+
+            # If it's a busy day but has some free time, suggest focus block
+            total_meeting_hours = summary.get("total_meeting_hours", 0)
+            free_hours = summary.get("free_hours", 0)
+            longest_free = summary.get("longest_free_block", 0)
+
+            if total_meeting_hours > 4 and free_hours >= 1 and longest_free >= 60:
+                # Find a free slot
+                slots_result = await cal_intel.find_focus_time_slots(
+                    user_id=user_id,
+                    date=utcnow().replace(tzinfo=None),
+                    duration_minutes=60,
+                )
+
+                if slots_result.get("best_slot"):
+                    slot = slots_result["best_slot"]
+                    start = slot.get("start")
+                    if isinstance(start, str):
+                        from datetime import datetime
+                        start = datetime.fromisoformat(start.replace("Z", "+00:00"))
+
+                    actions.append({
+                        "type": "block_focus_time",
+                        "title": f"Block focus time at {start.strftime('%I:%M %p') if hasattr(start, 'strftime') else 'available slot'}",
+                        "priority": 4,
+                        "data": {
+                            "start_time": slot.get("start"),
+                            "duration_minutes": 60,
+                            "title": "Focus Time",
+                        },
+                        "context": f"Busy day - {total_meeting_hours}h of meetings",
+                        "requires_confirmation": True,
+                    })
+
+        except Exception as e:
+            logger.error(f"Error getting focus time actions: {e}")
+
+        return actions
+
+    # ==================== CONTEXT-AWARE PROACTIVE SUGGESTIONS ====================
+
+    async def get_proactive_suggestions(
+        self,
+        user_id: UUID,
+        context: dict,
+    ) -> list[dict]:
+        """
+        Get proactive suggestions based on current context.
+
+        Context can include:
+        - current_time: datetime
+        - location: lat/lng
+        - just_finished: event that just ended
+        - next_event: upcoming event
+        - last_action: what user just did
+
+        Returns suggestions that are contextually relevant.
+        """
+        suggestions = []
+        now = context.get("current_time", utcnow())
+
+        try:
+            # After meeting - suggest capture notes
+            if context.get("just_finished"):
+                event = context["just_finished"]
+                suggestions.append({
+                    "type": "capture_notes",
+                    "title": f"Capture notes from {event.get('title', 'meeting')}",
+                    "priority": 1,
+                    "data": {
+                        "event_id": event.get("id"),
+                        "event_title": event.get("title"),
+                        "attendees": event.get("attendees", []),
+                    },
+                    "context": "Meeting just ended",
+                })
+
+            # Before meeting - prepare context
+            if context.get("next_event"):
+                event = context["next_event"]
+                hours_until = event.get("hours_until", 24)
+
+                if 0.25 <= hours_until <= 1:  # 15-60 mins before
+                    from app.services.people_service import PeopleService
+                    people_service = PeopleService(self.db)
+
+                    # Get attendee context
+                    attendees = event.get("attendees", [])
+                    if attendees:
+                        attendee_name = attendees[0].split("@")[0] if "@" in attendees[0] else attendees[0]
+                        meeting_context = await people_service.generate_meeting_context(
+                            user_id=user_id,
+                            person_name=attendee_name,
+                        )
+
+                        suggestions.append({
+                            "type": "meeting_prep",
+                            "title": f"Prep for {event.get('title', 'meeting')}",
+                            "priority": 1,
+                            "data": {
+                                "event_id": event.get("id"),
+                                "event_title": event.get("title"),
+                                "attendees": attendees,
+                                "context": meeting_context,
+                            },
+                            "context": f"Meeting in {int(hours_until * 60)} minutes",
+                        })
+
+            # Morning - suggest day planning
+            if now.hour == 8 and not context.get("morning_briefing_sent"):
+                suggestions.append({
+                    "type": "day_planning",
+                    "title": "Plan your day",
+                    "priority": 2,
+                    "data": {},
+                    "context": "Start of day",
+                })
+
+            # End of day - suggest reflection
+            if now.hour == 17 and not context.get("evening_briefing_sent"):
+                suggestions.append({
+                    "type": "day_reflection",
+                    "title": "Reflect on today",
+                    "priority": 3,
+                    "data": {},
+                    "context": "End of work day",
+                })
+
+        except Exception as e:
+            logger.error(f"Error getting proactive suggestions: {e}")
+
+        return suggestions[:3]

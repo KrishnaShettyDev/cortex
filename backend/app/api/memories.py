@@ -1,9 +1,10 @@
 from uuid import UUID
 from datetime import datetime, date
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, Request
 from pydantic import BaseModel
 
 from app.api.deps import Database, CurrentUser
+from app.rate_limiter import limiter
 from app.services.memory_service import MemoryService
 from app.services.search_service import SearchService
 from app.schemas.memory import (
@@ -49,8 +50,10 @@ router = APIRouter()
 
 
 @router.post("", response_model=MemoryCreateResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")
 async def create_memory(
-    request: MemoryCreate,
+    request: Request,
+    memory_request: MemoryCreate,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -59,20 +62,69 @@ async def create_memory(
 
     The memory content will be embedded for semantic search,
     and entities will be automatically extracted.
+
+    Optionally accepts context data (location, time, activity, etc.)
+    for context-dependent retrieval.
     """
     memory_service = MemoryService(db)
 
     # Default memory_date to now if not provided
-    memory_date = request.memory_date or datetime.utcnow()
+    memory_date = memory_request.memory_date or datetime.utcnow()
 
     memory, entities = await memory_service.create_memory(
         user_id=current_user.id,
-        content=request.content,
-        memory_type=request.memory_type,
+        content=memory_request.content,
+        memory_type=memory_request.memory_type,
         memory_date=memory_date,
-        audio_url=request.audio_url,
-        photo_url=request.photo_url,
+        audio_url=memory_request.audio_url,
+        photo_url=memory_request.photo_url,
     )
+
+    # Capture context if provided
+    context_captured = False
+    if memory_request.context:
+        try:
+            from datetime import time as time_type
+            from app.services.context_service import ContextService, CapturedContext
+
+            # Parse local_time if provided
+            local_time_obj = None
+            if memory_request.context.local_time:
+                try:
+                    parts = memory_request.context.local_time.split(":")
+                    local_time_obj = time_type(int(parts[0]), int(parts[1]))
+                except (ValueError, IndexError):
+                    pass
+
+            context_data = CapturedContext(
+                latitude=memory_request.context.latitude,
+                longitude=memory_request.context.longitude,
+                location_name=memory_request.context.location_name,
+                location_type=memory_request.context.location_type,
+                local_time=local_time_obj,
+                time_of_day=memory_request.context.time_of_day,
+                day_of_week=memory_request.context.day_of_week,
+                is_weekend=memory_request.context.is_weekend,
+                weather=memory_request.context.weather,
+                temperature=memory_request.context.temperature,
+                activity=memory_request.context.activity,
+                activity_category=memory_request.context.activity_category,
+                people_present=memory_request.context.people_present,
+                social_setting=memory_request.context.social_setting,
+                device_type=memory_request.context.device_type,
+                app_source=request.context.app_source,
+            )
+
+            context_service = ContextService(db)
+            # Enrich with location data if coordinates provided
+            if request.context.latitude and request.context.longitude:
+                context_data = await context_service.enrich_context_from_location(context_data)
+            await context_service.capture_context(memory.id, context_data)
+            context_captured = True
+        except Exception as e:
+            # Log but don't fail memory creation if context capture fails
+            import logging
+            logging.getLogger(__name__).warning(f"Context capture failed: {e}")
 
     return MemoryCreateResponse(
         memory_id=memory.id,

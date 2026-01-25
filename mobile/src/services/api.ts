@@ -17,17 +17,18 @@ interface ValidationErrorDetail {
   type: string;
 }
 
-// Streaming event types matching backend SSE format
-export interface StreamEvent {
-  type: 'memories' | 'content' | 'pending_actions' | 'status' | 'done' | 'error';
-  data: MemoryReference[] | string | PendingAction[] | StatusUpdate | { conversation_id: string };
-
 // Status update for real-time reasoning display
 export interface StatusUpdate {
   step: string;
   message: string;
   tool?: string;
   count?: number;
+}
+
+// Streaming event types matching backend SSE format
+export interface StreamEvent {
+  type: 'memories' | 'content' | 'pending_actions' | 'status' | 'done' | 'error';
+  data: MemoryReference[] | string | PendingAction[] | StatusUpdate | { conversation_id: string };
 }
 
 export interface StreamCallbacks {

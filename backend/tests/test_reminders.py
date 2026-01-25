@@ -19,7 +19,7 @@ async def test_user(test_session: AsyncSession):
     """Create a test user."""
     user = TestUser(
         id=str(uuid4()),
-        apple_id="test_apple_id",
+        oauth_id="test_oauth_id",
         email="test@example.com",
         name="Test User",
     )

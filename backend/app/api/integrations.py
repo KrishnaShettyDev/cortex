@@ -1,9 +1,13 @@
+import logging
 from uuid import UUID
 from fastapi import APIRouter, HTTPException, status, Query, Path, Request
 
 from app.api.deps import Database, CurrentUser
+from app.rate_limiter import limiter
 from app.services.sync_service import SyncService
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.integration import (
     IntegrationsStatusResponse,
@@ -24,7 +28,9 @@ router = APIRouter()
 
 
 @router.get("/status", response_model=IntegrationsStatusResponse)
+@limiter.limit("60/minute")
 async def get_integrations_status(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -41,6 +47,7 @@ async def get_integrations_status(
 
 
 @router.get("/google/connect", response_model=OAuthRedirectResponse)
+@limiter.limit("10/minute")
 async def connect_google(
     request: Request,
     current_user: CurrentUser,
@@ -77,7 +84,7 @@ async def connect_google(
             detail=str(e),
         )
     except Exception as e:
-        print(f"Unexpected error in connect_google: {type(e).__name__}: {e}")
+        logger.error(f"Unexpected error in connect_google: {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to initialize OAuth: {str(e)}",
@@ -108,12 +115,8 @@ async def google_oauth_callback(
     import base64
     import json as json_module
 
-    # Debug: Log callback parameters
-    print(f"=== OAuth Callback Hit ===")
-    print(f"  status: {status}")
-    print(f"  connectedAccountId: {connectedAccountId}")
-    print(f"  appName: {appName}")
-    print(f"  full URL: {request.url}")
+    # Log callback parameters
+    logger.debug(f"OAuth Callback: status={status}, connectedAccountId={connectedAccountId}, appName={appName}")
 
     user_id = None
     # Use appName from Composio, normalize to googlesuper
@@ -131,13 +134,13 @@ async def google_oauth_callback(
                 user_id = state_data.get('user_id')
                 # Always use googlesuper regardless of what's in state
                 app_return_url = state_data.get('app_return_url', app_return_url)
-                print(f"  Decoded state: user_id={user_id}, service={service}")
-            except:
+                logger.debug(f"Decoded state: user_id={user_id}, service={service}")
+            except Exception:
                 from uuid import UUID as UUIDType
                 user_id = str(UUIDType(state))
-                print(f"  Parsed as plain UUID: {user_id}")
+                logger.debug(f"Parsed as plain UUID: {user_id}")
         except Exception as e:
-            print(f"Failed to parse state: {e}")
+            logger.warning(f"Failed to parse state: {e}")
 
     # If no user_id from state, try to get it from Composio connection
     connection_saved = False
@@ -153,11 +156,9 @@ async def google_oauth_callback(
             connection_saved = account is not None
             if account:
                 user_id = str(account.user_id)
-            print(f"OAuth callback: {service} connection saved: {connection_saved}, user_id: {user_id}")
+            logger.debug(f"OAuth callback: {service} connection saved: {connection_saved}, user_id: {user_id}")
         except Exception as e:
-            print(f"Error handling OAuth callback: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error handling OAuth callback: {e}", exc_info=True)
     elif user_id:
         # Fallback to old method if we have user_id from state
         try:
@@ -168,9 +169,9 @@ async def google_oauth_callback(
                 service=service,
             )
             connection_saved = account is not None
-            print(f"OAuth callback (legacy): {service} connection saved: {connection_saved}")
+            logger.debug(f"OAuth callback (legacy): {service} connection saved: {connection_saved}")
         except Exception as e:
-            print(f"Error handling OAuth callback: {e}")
+            logger.error(f"Error handling OAuth callback: {e}")
 
     # With googlesuper, everything is connected in one flow - show success page
     html_content = f"""
@@ -316,7 +317,9 @@ async def google_oauth_callback(
 
 
 @router.delete("/google")
+@limiter.limit("10/minute")
 async def disconnect_google(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -336,8 +339,10 @@ async def disconnect_google(
 
 
 @router.post("/sync", response_model=SyncResponse)
+@limiter.limit("10/minute")
 async def sync_provider(
-    request: SyncRequest,
+    request: Request,
+    sync_request: SyncRequest,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -349,7 +354,7 @@ async def sync_provider(
     """
     sync_service = SyncService(db)
 
-    if request.provider not in ["google", "microsoft"]:
+    if sync_request.provider not in ["google", "microsoft"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid provider. Must be 'google' or 'microsoft'",
@@ -358,7 +363,7 @@ async def sync_provider(
     total_memories = 0
     all_errors = []
 
-    if request.provider == "google":
+    if sync_request.provider == "google":
         # Sync Gmail
         gmail_count, gmail_errors = await sync_service.sync_gmail(current_user.id)
         total_memories += gmail_count
@@ -379,7 +384,9 @@ async def sync_provider(
 
 
 @router.get("/google/calendar/events", response_model=CalendarEventsResponse)
+@limiter.limit("30/minute")
 async def get_calendar_events(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     start_date: datetime = Query(default=None, description="Start of date range (ISO format)"),
@@ -426,8 +433,10 @@ async def get_calendar_events(
 
 
 @router.post("/google/calendar/events", response_model=CalendarEventResponse)
+@limiter.limit("20/minute")
 async def create_calendar_event(
-    request: CreateCalendarEventRequest,
+    request: Request,
+    event_request: CreateCalendarEventRequest,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -441,18 +450,18 @@ async def create_calendar_event(
     # Convert attendees to dict format
     attendees = [
         {"email": a.email, "name": a.name}
-        for a in request.attendees
-    ] if request.attendees else None
+        for a in event_request.attendees
+    ] if event_request.attendees else None
 
     result = await sync_service.create_calendar_event(
         user_id=current_user.id,
-        title=request.title,
-        start_time=request.start_time,
-        end_time=request.end_time,
-        description=request.description,
-        location=request.location,
+        title=event_request.title,
+        start_time=event_request.start_time,
+        end_time=event_request.end_time,
+        description=event_request.description,
+        location=event_request.location,
         attendees=attendees,
-        send_notifications=request.send_notifications,
+        send_notifications=event_request.send_notifications,
     )
 
     if not result["success"]:
@@ -465,8 +474,10 @@ async def create_calendar_event(
 
 
 @router.put("/google/calendar/events/{event_id}", response_model=CalendarEventResponse)
+@limiter.limit("20/minute")
 async def update_calendar_event(
-    request: UpdateCalendarEventRequest,
+    request: Request,
+    update_request: UpdateCalendarEventRequest,
     current_user: CurrentUser,
     db: Database,
     event_id: str = Path(..., description="The Google Calendar event ID"),
@@ -480,22 +491,22 @@ async def update_calendar_event(
 
     # Convert attendees to dict format if provided
     attendees = None
-    if request.attendees is not None:
+    if update_request.attendees is not None:
         attendees = [
             {"email": a.email, "name": a.name}
-            for a in request.attendees
+            for a in update_request.attendees
         ]
 
     result = await sync_service.update_calendar_event(
         user_id=current_user.id,
         event_id=event_id,
-        title=request.title,
-        start_time=request.start_time,
-        end_time=request.end_time,
-        description=request.description,
-        location=request.location,
+        title=update_request.title,
+        start_time=update_request.start_time,
+        end_time=update_request.end_time,
+        description=update_request.description,
+        location=update_request.location,
         attendees=attendees,
-        send_notifications=request.send_notifications,
+        send_notifications=update_request.send_notifications,
     )
 
     if not result["success"]:
@@ -508,7 +519,9 @@ async def update_calendar_event(
 
 
 @router.delete("/google/calendar/events/{event_id}", response_model=CalendarEventResponse)
+@limiter.limit("20/minute")
 async def delete_calendar_event(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     event_id: str = Path(..., description="The Google Calendar event ID"),
@@ -538,8 +551,10 @@ async def delete_calendar_event(
 
 
 @router.post("/google/gmail/send", response_model=EmailResponse)
+@limiter.limit("20/minute")
 async def send_email(
-    request: SendEmailRequest,
+    request: Request,
+    email_request: SendEmailRequest,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -551,19 +566,19 @@ async def send_email(
     sync_service = SyncService(db)
 
     # Convert recipients to dict format
-    to = [{"email": r.email, "name": r.name} for r in request.to]
-    cc = [{"email": r.email, "name": r.name} for r in request.cc] if request.cc else None
-    bcc = [{"email": r.email, "name": r.name} for r in request.bcc] if request.bcc else None
+    to = [{"email": r.email, "name": r.name} for r in email_request.to]
+    cc = [{"email": r.email, "name": r.name} for r in email_request.cc] if email_request.cc else None
+    bcc = [{"email": r.email, "name": r.name} for r in email_request.bcc] if email_request.bcc else None
 
     result = await sync_service.send_email(
         user_id=current_user.id,
         to=to,
-        subject=request.subject,
-        body=request.body,
+        subject=email_request.subject,
+        body=email_request.body,
         cc=cc,
         bcc=bcc,
-        is_html=request.is_html,
-        reply_to_message_id=request.reply_to_message_id,
+        is_html=email_request.is_html,
+        reply_to_message_id=email_request.reply_to_message_id,
     )
 
     if not result["success"]:
@@ -579,7 +594,9 @@ async def send_email(
 
 
 @router.get("/google/calendar/availability")
+@limiter.limit("30/minute")
 async def get_calendar_availability(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     date: str = Query(default=None, description="Date to check (YYYY-MM-DD). Defaults to today."),
@@ -638,7 +655,9 @@ async def get_calendar_availability(
 
 
 @router.post("/google/calendar/batch-reschedule")
+@limiter.limit("10/minute")
 async def batch_reschedule_events(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     events: list[dict] = None,
@@ -687,7 +706,9 @@ async def batch_reschedule_events(
 
 
 @router.get("/google/gmail/thread/{thread_id}")
+@limiter.limit("30/minute")
 async def get_email_thread(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     thread_id: str = Path(..., description="Gmail thread ID"),
@@ -714,7 +735,9 @@ async def get_email_thread(
 
 
 @router.post("/google/gmail/reply")
+@limiter.limit("20/minute")
 async def reply_to_email_thread(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     thread_id: str = Query(..., description="Gmail thread ID to reply to"),
@@ -745,7 +768,9 @@ async def reply_to_email_thread(
 
 
 @router.get("/google/gmail/inbox")
+@limiter.limit("30/minute")
 async def get_inbox(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     max_results: int = Query(default=20, description="Maximum results to return"),
@@ -774,7 +799,9 @@ async def get_inbox(
 
 
 @router.get("/google/gmail/search")
+@limiter.limit("30/minute")
 async def search_emails(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     query: str = Query(..., description="Gmail search query (e.g., 'from:john', 'subject:meeting')"),
@@ -805,7 +832,9 @@ async def search_emails(
 
 
 @router.get("/places/search")
+@limiter.limit("30/minute")
 async def search_places(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
     query: str = Query(..., description="Search query (e.g., 'quiet coffee shop', 'Italian restaurant')"),

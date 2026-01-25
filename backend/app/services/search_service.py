@@ -1,9 +1,10 @@
 from uuid import UUID
 from datetime import datetime, date
 import logging
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text, func, and_
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, defer
 from openai import AsyncOpenAI
 
 from app.config import get_settings
@@ -13,6 +14,9 @@ from app.services.embedding_service import embedding_service
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+# Lazy import to avoid circular dependency
+_cognitive_service = None
 
 
 class SearchService:
@@ -62,12 +66,43 @@ Today is {today}. Return valid JSON only."""
         """
         Fast search optimized for chat - skips entity loading and uses simpler logic.
         For simple greetings, returns recent memories. Otherwise uses text search first.
+        OPTIMIZED: Avoids slow embedding API calls whenever possible.
         """
+        query_lower = query.lower().strip().rstrip('!?.')
+
         # Simple greetings - just return recent memories, no embedding needed
-        simple_queries = {'hi', 'hey', 'hello', 'good morning', 'good afternoon', 'good evening', 'whats up', "what's up"}
-        if query.lower().strip().rstrip('!?.') in simple_queries:
+        simple_queries = {'hi', 'hey', 'hello', 'good morning', 'good afternoon', 'good evening',
+                         'whats up', "what's up", 'thanks', 'thank you', 'ok', 'okay', 'got it',
+                         'cool', 'nice', 'great', 'yes', 'no', 'sure', 'bye', 'goodbye'}
+        if query_lower in simple_queries:
             result = await self.db.execute(
                 select(Memory)
+                .options(defer(Memory.embedding), defer(Memory.search_vector))  # Skip large columns
+                .where(Memory.user_id == user_id)
+                .order_by(Memory.memory_date.desc())
+                .limit(limit)
+            )
+            return list(result.scalars().all())
+
+        # Short queries (1-3 words) - use text search only, skip expensive embedding
+        word_count = len(query.split())
+        if word_count <= 3:
+            ts_query = func.plainto_tsquery("english", query)
+            text_result = await self.db.execute(
+                select(Memory)
+                .options(defer(Memory.embedding), defer(Memory.search_vector))  # Skip large columns
+                .where(Memory.user_id == user_id)
+                .where(Memory.search_vector.op("@@")(ts_query))
+                .order_by(func.ts_rank(Memory.search_vector, ts_query).desc())
+                .limit(limit)
+            )
+            text_memories = list(text_result.scalars().all())
+            # Return text results or recent memories if none found
+            if text_memories:
+                return text_memories
+            result = await self.db.execute(
+                select(Memory)
+                .options(defer(Memory.embedding), defer(Memory.search_vector))  # Skip large columns
                 .where(Memory.user_id == user_id)
                 .order_by(Memory.memory_date.desc())
                 .limit(limit)
@@ -78,6 +113,7 @@ Today is {today}. Return valid JSON only."""
         ts_query = func.plainto_tsquery("english", query)
         text_result = await self.db.execute(
             select(Memory)
+            .options(defer(Memory.embedding), defer(Memory.search_vector))  # Skip large columns
             .where(Memory.user_id == user_id)
             .where(Memory.search_vector.op("@@")(ts_query))
             .order_by(func.ts_rank(Memory.search_vector, ts_query).desc())
@@ -85,43 +121,47 @@ Today is {today}. Return valid JSON only."""
         )
         text_memories = list(text_result.scalars().all())
 
-        # If text search found enough results, use those
-        if len(text_memories) >= 3:
+        # Return text results if found
+        if text_memories:
             return text_memories
 
-        # Fall back to vector search only if text search didn't find much
-        query_embedding = await embedding_service.embed(query)
-        embedding_str = self._embedding_to_pg_vector(query_embedding)
+        # Text search found nothing - use semantic search (slower but finds related concepts)
+        # e.g., "vacation" can find memories about "holiday trip"
+        try:
+            query_embedding = await embedding_service.embed(query)
+            embedding_str = self._embedding_to_pg_vector(query_embedding)
 
-        raw_conn = await self.db.connection()
-        result = await raw_conn.exec_driver_sql(
-            """
-            SELECT id FROM cortex_memories
-            WHERE user_id = $1::uuid AND embedding IS NOT NULL
-            ORDER BY embedding <=> $2::vector
-            LIMIT $3
-            """,
-            (str(user_id), embedding_str, limit)
+            raw_conn = await self.db.connection()
+            result = await raw_conn.exec_driver_sql(
+                """
+                SELECT id FROM cortex_memories
+                WHERE user_id = $1::uuid AND embedding IS NOT NULL
+                ORDER BY embedding <=> $2::vector
+                LIMIT $3
+                """,
+                (str(user_id), embedding_str, limit)
+            )
+            memory_ids = [row[0] for row in result.fetchall()]
+
+            if memory_ids:
+                memories_result = await self.db.execute(
+                    select(Memory)
+                    .options(defer(Memory.embedding), defer(Memory.search_vector))
+                    .where(Memory.id.in_(memory_ids))
+                )
+                return list(memories_result.scalars().all())
+        except Exception:
+            pass  # Fall back to recent memories on error
+
+        # Last resort: return recent memories
+        result = await self.db.execute(
+            select(Memory)
+            .options(defer(Memory.embedding), defer(Memory.search_vector))
+            .where(Memory.user_id == user_id)
+            .order_by(Memory.memory_date.desc())
+            .limit(limit)
         )
-        memory_ids = [row[0] for row in result.fetchall()]
-
-        if not memory_ids:
-            return text_memories  # Return whatever text search found
-
-        # Fetch memories WITHOUT entities (much faster)
-        memories_result = await self.db.execute(
-            select(Memory).where(Memory.id.in_(memory_ids))
-        )
-        vector_memories = list(memories_result.scalars().all())
-
-        # Combine and deduplicate
-        seen = set()
-        combined = []
-        for m in text_memories + vector_memories:
-            if m.id not in seen:
-                seen.add(m.id)
-                combined.append(m)
-        return combined[:limit]
+        return list(result.scalars().all())
 
     async def search(
         self,
@@ -579,3 +619,170 @@ Today is {today}. Return valid JSON only."""
             }
             for decision, memory in rows
         ]
+
+    async def search_facts(
+        self,
+        user_id: UUID,
+        query: str,
+        limit: int = 10,
+        reference_date: datetime | None = None,
+    ) -> tuple[list[dict], float]:
+        """
+        Search for atomic facts using hybrid retrieval (vector + entity + temporal).
+
+        This method provides MemoryBench-optimized retrieval with:
+        - Multi-hop reasoning through entity relations
+        - Temporal reasoning with event_date vs document_date
+        - Confidence scoring for abstention
+
+        Args:
+            user_id: The user's ID
+            query: Search query
+            limit: Maximum number of results
+            reference_date: Reference date for temporal queries
+
+        Returns:
+            Tuple of (list of fact dicts, confidence score)
+        """
+        try:
+            from app.services.hybrid_retrieval_service import HybridRetrievalService
+
+            retrieval_service = HybridRetrievalService(self.db)
+
+            # Search with confidence for abstention
+            results, confidence = await retrieval_service.search_with_confidence(
+                user_id=user_id,
+                query=query,
+                reference_date=reference_date,
+                limit=limit,
+            )
+
+            # Convert to dict format
+            facts = []
+            for result in results:
+                fact = result.fact
+                facts.append({
+                    "id": str(fact.id),
+                    "fact_text": fact.fact_text,
+                    "fact_type": fact.fact_type,
+                    "subject_entity": fact.subject_entity,
+                    "object_entity": fact.object_entity,
+                    "relation": fact.relation,
+                    "document_date": fact.document_date.isoformat() if fact.document_date else None,
+                    "event_date": fact.event_date.isoformat() if fact.event_date else None,
+                    "confidence": fact.confidence,
+                    "score": result.score,
+                    "source": result.source,
+                })
+
+            return facts, confidence
+
+        except Exception as e:
+            logger.error(f"Error in fact search: {e}")
+            return [], 0.0
+
+    async def search_cognitive(
+        self,
+        user_id: UUID,
+        query: str,
+        current_context: Optional[dict] = None,
+        limit: int = 10,
+    ) -> tuple[list[Memory], Optional[str]]:
+        """
+        Perform cognitive-enhanced search using FSRS-6 retrievability,
+        context reinstatement, emotional salience, and mood congruence.
+
+        This is the production integration of CognitiveRetrievalService.
+
+        Args:
+            user_id: The user's ID
+            query: Search query
+            current_context: Optional dict with current context (location, time_of_day, etc.)
+            limit: Maximum number of results
+
+        Returns:
+            Tuple of (list of Memory objects, formatted context string for LLM)
+        """
+        try:
+            from app.services.cognitive_retrieval_service import CognitiveRetrievalService
+
+            cognitive_service = CognitiveRetrievalService(self.db)
+            scored_memories = await cognitive_service.retrieve(
+                user_id=user_id,
+                query=query,
+                current_context=current_context,
+                limit=limit,
+            )
+
+            if not scored_memories:
+                return [], None
+
+            # Extract just the memories for simple return
+            memories = [m for m, _ in scored_memories]
+
+            # Generate cognitive-enhanced context string for LLM
+            formatted_context = cognitive_service.format_memories_with_cognitive_context(
+                scored_memories
+            )
+
+            return memories, formatted_context
+
+        except Exception as e:
+            logger.warning(f"Cognitive search failed, falling back to standard: {e}")
+            # Fallback to standard search
+            memories = await self.search(user_id=user_id, query=query, limit=limit)
+            return memories, None
+
+    async def search_fast_cognitive(
+        self,
+        user_id: UUID,
+        query: str,
+        current_context: Optional[dict] = None,
+        limit: int = 5,
+    ) -> tuple[list[Memory], Optional[str]]:
+        """
+        Fast search with cognitive enhancement for complex queries.
+
+        Uses simple search for greetings/short queries, cognitive search
+        for complex queries when context is available.
+
+        Args:
+            user_id: The user's ID
+            query: Search query
+            current_context: Optional dict with current context
+            limit: Maximum number of results
+
+        Returns:
+            Tuple of (list of Memory objects, optional formatted context for LLM)
+        """
+        query_lower = query.lower().strip().rstrip('!?.')
+
+        # Simple greetings - just return recent memories, no cognitive overhead
+        simple_queries = {'hi', 'hey', 'hello', 'good morning', 'good afternoon', 'good evening',
+                         'whats up', "what's up", 'thanks', 'thank you', 'ok', 'okay', 'got it',
+                         'cool', 'nice', 'great', 'yes', 'no', 'sure', 'bye', 'goodbye'}
+
+        if query_lower in simple_queries:
+            result = await self.db.execute(
+                select(Memory)
+                .options(defer(Memory.embedding), defer(Memory.search_vector))
+                .where(Memory.user_id == user_id)
+                .order_by(Memory.memory_date.desc())
+                .limit(limit)
+            )
+            return list(result.scalars().all()), None
+
+        # Short queries (1-3 words) without context - use fast text search
+        word_count = len(query.split())
+        if word_count <= 3 and not current_context:
+            memories = await self.search_fast(user_id=user_id, query=query, limit=limit)
+            return memories, None
+
+        # Complex queries or context available - use cognitive search
+        # This is where FSRS-6, mood congruence, and encoding specificity kick in
+        return await self.search_cognitive(
+            user_id=user_id,
+            query=query,
+            current_context=current_context,
+            limit=limit,
+        )

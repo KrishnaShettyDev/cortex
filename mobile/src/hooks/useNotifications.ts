@@ -80,6 +80,127 @@ export function useNotifications() {
         }
         break;
 
+      case 'urgent_email':
+        // Navigate to chat with email context
+        if (data.subject) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: `Tell me about the urgent email: "${data.subject}"` },
+          });
+        } else {
+          router.push('/(main)/chat');
+        }
+        break;
+
+      case 'commitment':
+        // Navigate to chat with commitment context
+        if (data.description) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: `Help me with my commitment: "${data.description}"` },
+          });
+        } else if (data.person_name) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: `What did I promise ${data.person_name}?` },
+          });
+        } else {
+          router.push('/(main)/chat');
+        }
+        break;
+
+      case 'pattern_warning':
+        // Navigate to chat about the pattern
+        if (data.pattern_name) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: `Tell me about my "${data.pattern_name}" pattern` },
+          });
+        } else {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: 'Tell me about the pattern you noticed' },
+          });
+        }
+        break;
+
+      case 'reconnection_nudge':
+        // Navigate to person screen
+        if (data.person_name) {
+          router.push({
+            pathname: '/(main)/person/[name]',
+            params: { name: data.person_name },
+          });
+        } else {
+          router.push('/(main)/people');
+        }
+        break;
+
+      case 'important_date_reminder':
+        // Navigate to chat with date context
+        if (data.person_name && data.date_type) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: `Help me plan for ${data.person_name}'s ${data.date_type}` },
+          });
+        } else if (data.person_name) {
+          router.push({
+            pathname: '/(main)/person/[name]',
+            params: { name: data.person_name },
+          });
+        } else {
+          router.push('/(main)/chat');
+        }
+        break;
+
+      case 'promise_reminder':
+        // Navigate to chat with promise context
+        if (data.person_name) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: `What did I promise ${data.person_name}?` },
+          });
+        } else {
+          router.push('/(main)/chat');
+        }
+        break;
+
+      case 'intention_nudge':
+        // Navigate to chat with intention context
+        if (data.intention_id) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: 'What were the things I said I would do?' },
+          });
+        } else {
+          router.push('/(main)/chat');
+        }
+        break;
+
+      case 'snoozed_email':
+        // Navigate to chat with email context
+        if (data.subject) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: `Tell me about the email: "${data.subject}"` },
+          });
+        } else {
+          router.push('/(main)/chat');
+        }
+        break;
+
+      case 'decision_outcome':
+        // Navigate to chat to record outcome
+        if (data.decision_id) {
+          router.push({
+            pathname: '/(main)/chat',
+            params: { message: 'Let me tell you about how that decision worked out' },
+          });
+        } else {
+          router.push('/(main)/chat');
+        }
+        break;
+
       default:
         // Default: just open chat
         router.push('/(main)/chat');

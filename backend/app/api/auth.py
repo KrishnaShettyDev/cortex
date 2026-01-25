@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 
 from app.api.deps import Database, CurrentUser
+from app.rate_limiter import limiter
 from app.services.auth_service import AuthService
 from app.schemas.auth import (
     AppleAuthRequest,
@@ -20,8 +21,10 @@ router = APIRouter()
 
 
 @router.post("/apple", response_model=TokenResponse)
+@limiter.limit("10/minute")
 async def authenticate_with_apple(
-    request: AppleAuthRequest,
+    request: Request,
+    auth_request: AppleAuthRequest,
     db: Database,
 ):
     """
@@ -34,7 +37,7 @@ async def authenticate_with_apple(
 
     try:
         # Verify Apple token
-        claims = await auth_service.verify_apple_token(request.identity_token)
+        claims = await auth_service.verify_apple_token(auth_request.identity_token)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -42,7 +45,7 @@ async def authenticate_with_apple(
         )
 
     # Get or create user
-    email = request.email or claims.get("email")
+    email = auth_request.email or claims.get("email")
     if not email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -52,7 +55,7 @@ async def authenticate_with_apple(
     user, is_new_user = await auth_service.get_or_create_user(
         oauth_id=claims["sub"],
         email=email,
-        name=request.name,
+        name=auth_request.name,
     )
 
     # Create tokens
@@ -68,8 +71,10 @@ async def authenticate_with_apple(
 
 
 @router.post("/google", response_model=TokenResponse)
+@limiter.limit("10/minute")
 async def authenticate_with_google(
-    request: GoogleAuthRequest,
+    request: Request,
+    auth_request: GoogleAuthRequest,
     db: Database,
 ):
     """
@@ -82,7 +87,7 @@ async def authenticate_with_google(
 
     try:
         # Verify Google token
-        claims = await auth_service.verify_google_token(request.id_token)
+        claims = await auth_service.verify_google_token(auth_request.id_token)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -90,7 +95,7 @@ async def authenticate_with_google(
         )
 
     # Get email from token or request
-    email = request.email or claims.get("email")
+    email = auth_request.email or claims.get("email")
     if not email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -102,7 +107,7 @@ async def authenticate_with_google(
     user, is_new_user = await auth_service.get_or_create_user(
         oauth_id=google_oauth_id,
         email=email,
-        name=request.name or claims.get("name"),
+        name=auth_request.name or claims.get("name"),
     )
 
     # Create tokens
@@ -120,8 +125,10 @@ async def authenticate_with_google(
 # Development-only endpoint - conditionally registered
 if settings.environment == "development":
     @router.post("/dev", response_model=TokenResponse)
+    @limiter.limit("20/minute")
     async def dev_authenticate(
-        request: DevAuthRequest,
+        request: Request,
+        dev_request: DevAuthRequest,
         db: Database,
     ):
         """
@@ -134,12 +141,12 @@ if settings.environment == "development":
         auth_service = AuthService(db)
 
         # Generate a dev oauth_id from the email
-        dev_oauth_id = f"dev_{request.email}"
+        dev_oauth_id = f"dev_{dev_request.email}"
 
         user, is_new_user = await auth_service.get_or_create_user(
             oauth_id=dev_oauth_id,
-            email=request.email,
-            name=request.name,
+            email=dev_request.email,
+            name=dev_request.name,
         )
 
         # Create tokens
@@ -155,8 +162,10 @@ if settings.environment == "development":
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
+@limiter.limit("30/minute")
 async def refresh_access_token(
-    request: RefreshTokenRequest,
+    request: Request,
+    refresh_request: RefreshTokenRequest,
     db: Database,
 ):
     """
@@ -165,7 +174,7 @@ async def refresh_access_token(
     auth_service = AuthService(db)
 
     try:
-        user_id = auth_service.verify_token(request.refresh_token, token_type="refresh")
+        user_id = auth_service.verify_token(refresh_request.refresh_token, token_type="refresh")
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -186,7 +195,9 @@ async def refresh_access_token(
 
 
 @router.get("/me", response_model=UserResponse)
+@limiter.limit("60/minute")
 async def get_current_user_profile(
+    request: Request,
     current_user: CurrentUser,
 ):
     """
@@ -201,7 +212,9 @@ async def get_current_user_profile(
 
 
 @router.delete("/account")
+@limiter.limit("5/minute")
 async def delete_account(
+    request: Request,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -217,8 +230,10 @@ async def delete_account(
 
 
 @router.post("/location", response_model=LocationUpdateResponse)
+@limiter.limit("60/minute")
 async def update_user_location(
-    request: LocationUpdateRequest,
+    request: Request,
+    location_request: LocationUpdateRequest,
     current_user: CurrentUser,
     db: Database,
 ):
@@ -230,8 +245,8 @@ async def update_user_location(
     """
     from datetime import datetime, timezone
 
-    current_user.location_lat = request.latitude
-    current_user.location_lng = request.longitude
+    current_user.location_lat = location_request.latitude
+    current_user.location_lng = location_request.longitude
     current_user.location_updated_at = datetime.now(timezone.utc)
 
     await db.commit()
@@ -240,7 +255,9 @@ async def update_user_location(
 
 
 @router.get("/location", response_model=LocationResponse)
+@limiter.limit("60/minute")
 async def get_user_location(
+    request: Request,
     current_user: CurrentUser,
 ):
     """

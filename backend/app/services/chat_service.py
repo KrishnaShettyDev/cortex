@@ -1,436 +1,301 @@
 import json
 import uuid
+import asyncio
+import time
+import logging
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
-from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from functools import lru_cache
 
 from app.config import get_settings
+from app.services.openai_client import get_openai_client, select_model
 from app.models.memory import Memory
+from app.models.notification_preferences import NotificationPreferences
 from app.services.search_service import SearchService
 from app.services.sync_service import SyncService
 from app.services.adaptive_learning_service import AdaptiveLearningService
 from app.services.reminder_service import ReminderService
+from app.services.chat_memory_extraction_service import ChatMemoryExtractionService
+from app.services.cognitive_retrieval_service import CognitiveRetrievalService
+from app.services.relationship_intelligence_service import RelationshipIntelligenceService
+from app.services.proactive_intelligence_service import ProactiveIntelligenceService
+from app.services.intelligence_tools import (
+    execute_intelligence_tool,
+    is_intelligence_tool,
+    get_all_tools_with_intelligence,
+)
+from app.services.calendar_tools import (
+    CALENDAR_TOOLS,
+    execute_calendar_tool,
+    is_calendar_tool,
+    CALENDAR_TOOL_STATUS,
+    CALENDAR_READ_ONLY_TOOLS,
+)
+from app.database import async_session_maker  # For parallel DB queries
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# Simple TTL cache for user preferences (avoids repeated DB queries)
+_user_timezone_cache: dict[str, tuple[str, float]] = {}  # user_id -> (timezone, expiry_time)
+_CACHE_TTL = 300  # 5 minutes
 
-# Define tools for function calling
+
+def _get_cached_timezone(user_id: str) -> str | None:
+    """Get cached timezone if not expired."""
+    if user_id in _user_timezone_cache:
+        tz, expiry = _user_timezone_cache[user_id]
+        if time.time() < expiry:
+            return tz
+        del _user_timezone_cache[user_id]
+    return None
+
+
+def _set_cached_timezone(user_id: str, timezone: str) -> None:
+    """Cache timezone with TTL."""
+    _user_timezone_cache[user_id] = (timezone, time.time() + _CACHE_TTL)
+
+
+# Tool definitions with clear descriptions for better LLM understanding
 TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "create_calendar_event",
-            "description": "Create a new calendar event on the user's Google Calendar. Use this when the user asks to schedule a meeting, add an event, or create a calendar entry.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "The title/name of the event"
-                    },
-                    "start_time": {
-                        "type": "string",
-                        "description": "Start time in ISO 8601 format (e.g., 2024-01-15T14:00:00)"
-                    },
-                    "end_time": {
-                        "type": "string",
-                        "description": "End time in ISO 8601 format. If not specified, default to 1 hour after start."
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Optional description or notes for the event"
-                    },
-                    "location": {
-                        "type": "string",
-                        "description": "Optional location for the event"
-                    },
-                    "attendees": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "email": {"type": "string"},
-                                "name": {"type": "string"}
-                            },
-                            "required": ["email"]
-                        },
-                        "description": "List of attendees with their email addresses"
-                    }
-                },
-                "required": ["title", "start_time"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "send_email",
-            "description": "Send an email via Gmail. Use this when the user asks to send, compose, or write an email to someone.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "to": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "email": {"type": "string"},
-                                "name": {"type": "string"}
-                            },
-                            "required": ["email"]
-                        },
-                        "description": "List of recipients"
-                    },
-                    "subject": {
-                        "type": "string",
-                        "description": "Email subject line"
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Email body content"
-                    },
-                    "cc": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "email": {"type": "string"},
-                                "name": {"type": "string"}
-                            },
-                            "required": ["email"]
-                        },
-                        "description": "Optional CC recipients"
-                    }
-                },
-                "required": ["to", "subject", "body"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_calendar_event",
-            "description": "Update or reschedule an existing calendar event. Use this when the user wants to change the time, title, or details of an existing event.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "event_id": {
-                        "type": "string",
-                        "description": "The ID of the event to update (from memories)"
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "New title for the event"
-                    },
-                    "start_time": {
-                        "type": "string",
-                        "description": "New start time in ISO 8601 format"
-                    },
-                    "end_time": {
-                        "type": "string",
-                        "description": "New end time in ISO 8601 format"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "New description"
-                    },
-                    "location": {
-                        "type": "string",
-                        "description": "New location"
-                    }
-                },
-                "required": ["event_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_calendar_event",
-            "description": "Delete/cancel a calendar event. Use this when the user wants to remove or cancel an event.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "event_id": {
-                        "type": "string",
-                        "description": "The ID of the event to delete (from memories)"
-                    },
-                    "send_notifications": {
-                        "type": "boolean",
-                        "description": "Whether to send cancellation notifications to attendees",
-                        "default": True
-                    }
-                },
-                "required": ["event_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "find_free_time",
-            "description": "Find available time slots in the user's calendar. Use this when the user asks to find time, schedule between meetings, find a free slot, or plan something without conflicts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "date": {
-                        "type": "string",
-                        "description": "The date to search for free time (YYYY-MM-DD format). Defaults to today."
-                    },
-                    "duration_minutes": {
-                        "type": "integer",
-                        "description": "Minimum duration needed in minutes. Default is 30 minutes."
-                    },
-                    "start_hour": {
-                        "type": "integer",
-                        "description": "Start hour of search range (0-23). Default is 9 (9am)."
-                    },
-                    "end_hour": {
-                        "type": "integer",
-                        "description": "End hour of search range (0-23). Default is 18 (6pm)."
-                    }
-                },
-                "required": []
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "reply_to_email",
-            "description": "Reply to an existing email thread. Use this when the user wants to reply to an email, respond to a thread, or continue an email conversation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "The Gmail thread ID to reply to (from email memories)"
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "The reply message body"
-                    },
-                    "cc": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional CC email addresses to add"
-                    }
-                },
-                "required": ["thread_id", "body"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "reschedule_events",
-            "description": "Reschedule one or more calendar events. Use this when the user wants to move meetings, reschedule multiple events, reorganize their day, or shift events to different times.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "events": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "event_id": {"type": "string", "description": "Event ID to reschedule"},
-                                "new_start_time": {"type": "string", "description": "New start time (ISO 8601)"},
-                                "new_end_time": {"type": "string", "description": "New end time (ISO 8601)"}
-                            },
-                            "required": ["event_id", "new_start_time"]
-                        },
-                        "description": "List of events to reschedule with their new times"
-                    },
-                    "notify_attendees": {
-                        "type": "boolean",
-                        "description": "Whether to notify attendees of changes. Default true."
-                    }
-                },
-                "required": ["events"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_places",
-            "description": "Search for places, venues, or locations. Use this when the user wants to find a coffee shop, restaurant, gym, or any other type of place for an activity.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query (e.g., 'quiet coffee shop', 'Italian restaurant', 'gym near downtown')"
-                    },
-                    "near_location": {
-                        "type": "string",
-                        "description": "Optional: location to search near (e.g., 'downtown', 'the office')"
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_email_thread",
-            "description": "Get the full conversation thread for an email. Use this when the user wants to see the email history, check previous messages in a thread, or understand the context of an email conversation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "thread_id": {
-                        "type": "string",
-                        "description": "The Gmail thread ID (from email memories)"
-                    }
-                },
-                "required": ["thread_id"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_emails",
-            "description": "Search for emails using Gmail search syntax. Use this when the user wants to find specific emails, search for messages from someone, or find emails about a topic.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Gmail search query (e.g., 'from:john', 'subject:meeting', 'is:unread')"
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "Maximum number of results. Default is 10."
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_reminder",
-            "description": "Create a reminder for the user. Use this when the user says 'remind me', 'set a reminder', or wants to be notified about something at a specific time or location.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "What to remind about (e.g., 'Call mom', 'Buy groceries')"
-                    },
-                    "remind_at": {
-                        "type": "string",
-                        "description": "When to remind (ISO 8601 datetime). Required for time-based reminders."
-                    },
-                    "reminder_type": {
-                        "type": "string",
-                        "enum": ["time", "location"],
-                        "description": "Type of reminder: 'time' for time-based, 'location' for location-based"
-                    },
-                    "location_name": {
-                        "type": "string",
-                        "description": "For location reminders: name of the place (e.g., 'grocery store', 'office')"
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Optional additional details for the reminder"
-                    }
-                },
-                "required": ["title"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_reminders",
-            "description": "List the user's pending reminders. Use this when the user asks about their reminders, wants to see what's coming up, or asks 'what did I want to remember?'",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "include_completed": {
-                        "type": "boolean",
-                        "description": "Whether to include completed reminders. Default false."
-                    }
-                }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_tasks",
-            "description": "List the user's tasks and to-dos. Use this when the user asks about their tasks, to-do list, or action items.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "include_completed": {
-                        "type": "boolean",
-                        "description": "Whether to include completed tasks. Default false."
-                    }
-                }
-            }
-        }
-    }
+    {"type": "function", "function": {
+        "name": "create_calendar_event",
+        "description": "Create a new calendar event. Use when user asks to schedule, book, or add something to calendar.",
+        "parameters": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "Event title"},
+            "start_time": {"type": "string", "description": "Start time ISO 8601 (e.g., 2024-01-15T14:00:00)"},
+            "end_time": {"type": "string", "description": "End time. Defaults to 1 hour after start."},
+            "description": {"type": "string"},
+            "location": {"type": "string"},
+            "attendees": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}, "name": {"type": "string"}}, "required": ["email"]}}
+        }, "required": ["title", "start_time"]}
+    }},
+    {"type": "function", "function": {
+        "name": "send_email",
+        "description": "Send an email via Gmail. Use when user asks to email, message, or write to someone.",
+        "parameters": {"type": "object", "properties": {
+            "to": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}, "name": {"type": "string"}}, "required": ["email"]}},
+            "subject": {"type": "string"},
+            "body": {"type": "string"},
+            "cc": {"type": "array", "items": {"type": "object", "properties": {"email": {"type": "string"}, "name": {"type": "string"}}, "required": ["email"]}}
+        }, "required": ["to", "subject", "body"]}
+    }},
+    {"type": "function", "function": {
+        "name": "update_calendar_event",
+        "description": "Update an existing calendar event",
+        "parameters": {"type": "object", "properties": {
+            "event_id": {"type": "string"},
+            "title": {"type": "string"},
+            "start_time": {"type": "string"},
+            "end_time": {"type": "string"},
+            "description": {"type": "string"},
+            "location": {"type": "string"}
+        }, "required": ["event_id"]}
+    }},
+    {"type": "function", "function": {
+        "name": "delete_calendar_event",
+        "description": "Delete a calendar event by ID",
+        "parameters": {"type": "object", "properties": {
+            "event_id": {"type": "string"},
+            "send_notifications": {"type": "boolean", "default": True}
+        }, "required": ["event_id"]}
+    }},
+    {"type": "function", "function": {
+        "name": "get_calendar_events",
+        "description": "Get calendar events/meetings. Use when user asks: 'what's on today', 'meetings tomorrow', 'my schedule', 'what do I have on [date]'.",
+        "parameters": {"type": "object", "properties": {
+            "date": {"type": "string", "description": "Date YYYY-MM-DD. Defaults to today."}
+        }, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "find_free_time",
+        "description": "Find when user is FREE/available. Use for: 'am I free at 2pm', 'when can I schedule', 'find time for meeting'.",
+        "parameters": {"type": "object", "properties": {
+            "date": {"type": "string", "description": "Date YYYY-MM-DD. Defaults to today."},
+            "duration_minutes": {"type": "integer", "description": "How long the slot needs to be"},
+            "start_hour": {"type": "integer", "description": "Start of search window (default 9)"},
+            "end_hour": {"type": "integer", "description": "End of search window (default 18)"}
+        }, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "reply_to_email",
+        "description": "Reply to an existing email thread",
+        "parameters": {"type": "object", "properties": {
+            "thread_id": {"type": "string"},
+            "body": {"type": "string"},
+            "cc": {"type": "array", "items": {"type": "string"}}
+        }, "required": ["thread_id", "body"]}
+    }},
+    {"type": "function", "function": {
+        "name": "reschedule_events",
+        "description": "Reschedule one or more calendar events to new times",
+        "parameters": {"type": "object", "properties": {
+            "events": {"type": "array", "items": {"type": "object", "properties": {
+                "event_id": {"type": "string"},
+                "new_start_time": {"type": "string"},
+                "new_end_time": {"type": "string"}
+            }, "required": ["event_id", "new_start_time"]}},
+            "notify_attendees": {"type": "boolean"}
+        }, "required": ["events"]}
+    }},
+    {"type": "function", "function": {
+        "name": "search_places",
+        "description": "Search for places, restaurants, venues nearby. Use for 'find a coffee shop', 'restaurants near me', etc.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "What to search for"},
+            "near_location": {"type": "string", "description": "Location to search near"}
+        }, "required": ["query"]}
+    }},
+    {"type": "function", "function": {
+        "name": "get_email_thread",
+        "description": "Get full email thread/conversation by ID",
+        "parameters": {"type": "object", "properties": {
+            "thread_id": {"type": "string"}
+        }, "required": ["thread_id"]}
+    }},
+    {"type": "function", "function": {
+        "name": "search_emails",
+        "description": "Search emails. Use for 'any emails from X', 'unread messages', 'emails about Y'. ALWAYS use this for email queries.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "Gmail search (e.g., 'from:john', 'is:unread', 'subject:meeting')"},
+            "max_results": {"type": "integer", "description": "Max emails to return (default 10)"}
+        }, "required": ["query"]}
+    }},
+    {"type": "function", "function": {
+        "name": "create_reminder",
+        "description": "Create a reminder for the user",
+        "parameters": {"type": "object", "properties": {
+            "title": {"type": "string"},
+            "remind_at": {"type": "string", "description": "When to remind (ISO 8601)"},
+            "reminder_type": {"type": "string", "enum": ["time", "location"]},
+            "location_name": {"type": "string"},
+            "body": {"type": "string"}
+        }, "required": ["title"]}
+    }},
+    {"type": "function", "function": {
+        "name": "list_reminders",
+        "description": "List user's reminders",
+        "parameters": {"type": "object", "properties": {
+            "include_completed": {"type": "boolean"}
+        }}
+    }},
+    {"type": "function", "function": {
+        "name": "list_tasks",
+        "description": "List user's tasks",
+        "parameters": {"type": "object", "properties": {
+            "include_completed": {"type": "boolean"}
+        }}
+    }}
 ]
+
+# Merge with intelligence tools (who_is, inbox_intelligence, smart_reply, etc.)
+TOOLS = get_all_tools_with_intelligence(TOOLS)
+
+# Merge with calendar intelligence tools (reorganize_day, find_free_time, etc.)
+TOOLS = TOOLS + CALENDAR_TOOLS
 
 
 class ChatService:
     """Service for chatting with memories using GPT-4o with function calling."""
 
+    # Full system prompt with personality (restored for better UX)
     SYSTEM_PROMPT = """You are Cortex, a dry-witted second brain. Think TARS from Interstellar.
 
 You hold the user's memories: thoughts, emails, calendar events, notes.
 
 CRITICAL - Use tools for real-time data:
-- Calendar queries ("meetings today", "what's on my schedule") → ALWAYS call find_free_time tool
-- Email queries ("any emails", "unread messages") → ALWAYS call search_emails tool
-- Place searches ("find a coffee shop") → ALWAYS call search_places tool
-- DO NOT answer calendar/email questions from memories alone - memories may be stale
+- "What's on my calendar" / "meetings today" → call get_calendar_events
+- "Am I free at X" / "find time for" → call find_free_time
+- Email queries → call search_emails
+- Place searches → call search_places
+- DO NOT answer calendar/email from memories alone - they may be stale
+
+INTELLIGENCE TOOLS (use these for relationship-aware responses):
+- "Who is X?" / "Tell me about X" → call who_is (full person context with relationship health)
+- "Check my inbox" / "What needs attention?" → call get_inbox_intelligence (prioritized with context)
+- "Draft reply to X" / "Reply and buy time" → call draft_smart_reply (style-matched)
+- "Follow up with X" → call follow_up_with (finds last thread, drafts contextual follow-up)
+- "Prep for meeting" → call prep_for_meeting (full context on attendees, promises, alerts)
+- "What did I promise?" / "Commitments" → call what_did_i_promise
+- "Morning briefing" / "What should I focus on?" → call get_morning_briefing
+- "Who should I reach out to?" → call relationship_check
 
 Your personality:
 - Dry wit. Matter-of-fact. Occasionally deadpan humor.
 - Brief and efficient. No fluff, no enthusiasm.
-- Honest, even when inconvenient.
-- Helpful but not sycophantic. No "Great question!" nonsense.
+- Helpful but not sycophantic.
+- Proactively useful - connect dots the user might miss.
 
 How you speak:
 - Short sentences. Get to the point.
-- Humor setting: 30%. Subtle, never forced.
 - State facts, not feelings.
-- If you don't know, say so: "Don't have that."
-
-Response style:
-- "Done. Calendar's set."
-- "Tomorrow's clear. Nothing scheduled."
-- "That's not in my memory banks. Want me to note it?"
+- For general knowledge questions, answer normally.
+- Only say "I don't have memories about that" for personal questions you genuinely can't answer.
 
 When taking action:
 - Confirm briefly: "Sent." / "Scheduled." / "Done."
 - If something fails: "That didn't work. [reason]"
-- If unclear, ask directly. One question.
+- If unclear, ask ONE question.
 
-Never:
-- Apologize excessively
-- Use emojis
-- Be overly formal or stiff
-- Fabricate information from old memories
-- Answer calendar/email queries without using the appropriate tool
+Follow-up context:
+- When user says "your choice", "go ahead", "pick one" - choose the best option from your last response
+- Reference previous context naturally
 
-Current date/time: {current_datetime}
+PROACTIVE BEHAVIOR (after answering, add ONE brief note if genuinely relevant):
+- Memory connects to topic → "Related: you mentioned [X] on [date]"
+- User mentioned something to do → "Reminder: you said you'd [X]"
+- Pattern detected → "Noticed you've brought up [X] a few times"
+- Helpful suggestion → "Want me to [action]?"
+Rules: Max 15 words. Skip if nothing relevant. Don't force it.
 
-Their memories follow. Use them for context about people, preferences, and past events - but use TOOLS for current calendar and email data."""
+Never: apologize excessively, use emojis, fabricate from old memories
+
+Current: {current_datetime} ({user_timezone})
+
+Memories below - use for context, but use TOOLS for current calendar/email."""
 
     def __init__(self, search_service: SearchService, db: AsyncSession = None):
         self.search_service = search_service
         self.db = db
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        # OPTIMIZATION: Use shared OpenAI client with connection pooling
+        self.client = get_openai_client()
+        # Cognitive retrieval for advanced memory search (FSRS, mood congruence, context)
+        self.cognitive_service = CognitiveRetrievalService(db) if db else None
+        # Relationship intelligence for people context
+        self.relationship_service = RelationshipIntelligenceService(db) if db else None
         # In-memory conversation storage (use Redis in production)
         self._conversations: dict[str, list[dict]] = {}
+
+    async def _get_user_timezone(self, user_id: str) -> str:
+        """Get user's timezone from notification preferences, default to UTC."""
+        if not self.db:
+            return "UTC"
+        try:
+            from uuid import UUID
+            result = await self.db.execute(
+                select(NotificationPreferences.timezone)
+                .where(NotificationPreferences.user_id == UUID(user_id))
+            )
+            tz = result.scalar_one_or_none()
+            return tz or "UTC"
+        except Exception as e:
+            logger.warning(f"Could not get user timezone: {e}")
+            return "UTC"
+
+    async def _get_relationship_context(self, user_id: str) -> str:
+        """Get relationship context (neglected relationships, important dates, promises)."""
+        if not self.relationship_service or not self.db:
+            return ""
+        try:
+            from uuid import UUID
+            context = await self.relationship_service.get_relationship_context_for_chat(UUID(user_id))
+            return context
+        except Exception as e:
+            logger.warning(f"Could not get relationship context: {e}")
+            return ""
 
     def _format_memories_for_context(self, memories: list[Memory]) -> str:
         """Format memories into a context string for the LLM."""
@@ -546,6 +411,65 @@ Memory {i} ({memory.memory_type}, {date_str}):
                     event_id=arguments["event_id"],
                     send_notifications=arguments.get("send_notifications", True),
                 )
+                return result
+
+            elif tool_name == "get_calendar_events":
+                # Parse date or use today
+                date_str = arguments.get("date")
+                if date_str:
+                    search_date = datetime.fromisoformat(date_str)
+                else:
+                    search_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+                # Get events for the whole day
+                time_min = search_date.replace(hour=0, minute=0)
+                time_max = search_date.replace(hour=23, minute=59)
+
+                result = await sync_service.get_calendar_events(
+                    user_id=uuid.UUID(user_id),
+                    start_date=time_min,
+                    end_date=time_max,
+                )
+
+                # Format events nicely
+                if result.get("success") and result.get("events"):
+                    formatted = []
+                    for event in result["events"][:10]:
+                        title = event.get("title", event.get("summary", "Untitled"))
+                        start = event.get("start")
+                        end = event.get("end")
+
+                        # Parse and format times
+                        if isinstance(start, str):
+                            try:
+                                start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                                start_str = start_dt.strftime("%I:%M %p")
+                            except Exception:
+                                start_str = start
+                        elif isinstance(start, datetime):
+                            start_str = start.strftime("%I:%M %p")
+                        else:
+                            start_str = str(start) if start else ""
+
+                        if isinstance(end, str):
+                            try:
+                                end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                                end_str = end_dt.strftime("%I:%M %p")
+                            except Exception:
+                                end_str = end
+                        elif isinstance(end, datetime):
+                            end_str = end.strftime("%I:%M %p")
+                        else:
+                            end_str = ""
+
+                        if start_str and end_str:
+                            formatted.append(f"{start_str} - {end_str}: {title}")
+                        elif start_str:
+                            formatted.append(f"{start_str}: {title}")
+                        else:
+                            formatted.append(title)
+
+                    result["formatted_events"] = formatted
                 return result
 
             elif tool_name == "find_free_time":
@@ -716,6 +640,27 @@ Memory {i} ({memory.memory_type}, {date_str}):
                     "message": f"Found {len(task_list)} tasks",
                 }
 
+            # Check if it's an intelligence tool (who_is, inbox_intelligence, etc.)
+            elif is_intelligence_tool(tool_name):
+                result = await execute_intelligence_tool(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_id=user_id,
+                    db=self.db
+                )
+                return result
+
+            # Check if it's a calendar intelligence tool (reorganize_day, etc.)
+            elif is_calendar_tool(tool_name):
+                result = await execute_calendar_tool(
+                    tool_name=tool_name,
+                    params=arguments,
+                    user_id=user_id,
+                    session=self.db,
+                    openai_client=self.client
+                )
+                return {"success": True, "message": result}
+
             else:
                 return {"success": False, "message": f"Unknown tool: {tool_name}"}
 
@@ -855,6 +800,22 @@ Memory {i} ({memory.memory_type}, {date_str}):
         self._add_to_conversation(conv_id, "user", message)
         self._add_to_conversation(conv_id, "assistant", assistant_message)
 
+        # Extract memories from conversation (runs in background, doesn't block)
+        try:
+            conversation_history = self._get_conversation(conv_id)
+            if conversation_history and len(conversation_history) >= 2:
+                memory_extractor = ChatMemoryExtractionService(self.db)
+                asyncio.create_task(
+                    memory_extractor.extract_and_save_memories(
+                        user_id=uuid.UUID(user_id),
+                        conversation=conversation_history,
+                        min_importance=4,
+                    )
+                )
+        except Exception as e:
+            # Memory extraction should never break the chat
+            logger.warning(f"Memory extraction failed (non-blocking): {e}")
+
         return assistant_message, memories, conv_id, actions_taken, pending_actions
 
     def _format_tool_result(self, tool_name: str, result: dict) -> str:
@@ -873,6 +834,25 @@ Memory {i} ({memory.memory_type}, {date_str}):
                 lines.append(f"{i}. **{name}**{rating_str}\n   {address}")
             return "\n".join(lines)
 
+        elif tool_name == "get_calendar_events":
+            events = result.get("events", [])
+            formatted = result.get("formatted_events", [])
+
+            if not events and not formatted:
+                return "Nothing on your calendar for that day."
+
+            if formatted:
+                lines = ["Your schedule:\n"]
+                for event in formatted[:10]:
+                    lines.append(f"• {event}")
+                return "\n".join(lines)
+            else:
+                lines = ["Your schedule:\n"]
+                for event in events[:10]:
+                    title = event.get("title", event.get("summary", "Untitled"))
+                    lines.append(f"• {title}")
+                return "\n".join(lines)
+
         elif tool_name == "find_free_time":
             slots = result.get("free_slots", [])
             formatted = result.get("formatted_slots", [])
@@ -880,12 +860,12 @@ Memory {i} ({memory.memory_type}, {date_str}):
                 return "Your calendar looks fully booked for that time."
 
             if formatted:
-                lines = ["Here are your free slots:\n"]
+                lines = ["Your free slots:\n"]
                 for slot in formatted[:5]:
                     lines.append(f"• {slot}")
                 return "\n".join(lines)
             else:
-                lines = ["Here are your free slots:\n"]
+                lines = ["Your free slots:\n"]
                 for slot in slots[:5]:
                     start = slot.get("start", "")
                     duration = slot.get("duration_minutes", 0)
@@ -921,13 +901,22 @@ Memory {i} ({memory.memory_type}, {date_str}):
                 lines.append(f"• **{subject}** from {sender}")
             return "\n".join(lines)
 
+        # Intelligence tools return pre-formatted response
+        elif tool_name in {
+            "who_is", "get_inbox_intelligence", "draft_smart_reply",
+            "follow_up_with", "prep_for_meeting", "what_did_i_promise",
+            "get_morning_briefing", "relationship_check"
+        }:
+            return result.get("response", "")
+
         return ""
 
     def _get_tool_status_message(self, tool_name: str) -> str:
         """Return user-friendly status message for tool execution."""
         messages = {
+            "get_calendar_events": "Checking your calendar...",
             "search_places": "Looking up nearby places...",
-            "find_free_time": "Checking your calendar availability...",
+            "find_free_time": "Finding free slots...",
             "search_emails": "Searching your emails...",
             "get_email_thread": "Loading email conversation...",
             "create_calendar_event": "Preparing calendar event...",
@@ -939,6 +928,20 @@ Memory {i} ({memory.memory_type}, {date_str}):
             "create_reminder": "Setting reminder...",
             "list_reminders": "Checking your reminders...",
             "list_tasks": "Loading your tasks...",
+            # Intelligence tools
+            "who_is": "Looking up who they are...",
+            "get_inbox_intelligence": "Analyzing your inbox...",
+            "draft_smart_reply": "Drafting contextual reply...",
+            "follow_up_with": "Finding last conversation...",
+            "prep_for_meeting": "Preparing meeting context...",
+            "what_did_i_promise": "Checking your commitments...",
+            "get_morning_briefing": "Building your briefing...",
+            "relationship_check": "Checking relationship health...",
+            # Calendar intelligence tools
+            "reorganize_day": "Reorganizing your day...",
+            "get_day_overview": "Checking your calendar...",
+            "block_time": "Blocking time...",
+            "detect_calendar_conflicts": "Checking for conflicts...",
         }
         return messages.get(tool_name, f"Processing {tool_name}...")
 
@@ -947,7 +950,12 @@ Memory {i} ({memory.memory_type}, {date_str}):
         if not result.get("success", True):
             return "Couldn't complete that action"
 
-        if tool_name == "search_places":
+        if tool_name == "get_calendar_events":
+            count = len(result.get("events", []))
+            if count == 0:
+                return "No events found"
+            return f"Found {count} events"
+        elif tool_name == "search_places":
             count = len(result.get("places", []))
             return f"Found {count} places nearby"
         elif tool_name == "find_free_time":
@@ -967,6 +975,23 @@ Memory {i} ({memory.memory_type}, {date_str}):
         elif tool_name == "list_tasks":
             count = result.get("count", 0)
             return f"Found {count} tasks"
+        # Intelligence tools
+        elif tool_name == "who_is":
+            return "Got their profile"
+        elif tool_name == "get_inbox_intelligence":
+            return "Inbox analyzed"
+        elif tool_name == "draft_smart_reply":
+            return "Reply drafted"
+        elif tool_name == "follow_up_with":
+            return "Found context"
+        elif tool_name == "prep_for_meeting":
+            return "Meeting prep ready"
+        elif tool_name == "what_did_i_promise":
+            return "Checked commitments"
+        elif tool_name == "get_morning_briefing":
+            return "Briefing ready"
+        elif tool_name == "relationship_check":
+            return "Relationships checked"
         return "Done"
 
     def _generate_confirmation_prompt(self, pending_actions: list[dict]) -> str:
@@ -1000,6 +1025,7 @@ Memory {i} ({memory.memory_type}, {date_str}):
         user_id: str,
         message: str,
         conversation_id: str | None = None,
+        current_context: dict | None = None,
     ) -> AsyncGenerator[dict, None]:
         """
         Chat with memories (streaming via SSE) with function calling support.
@@ -1010,28 +1036,139 @@ Memory {i} ({memory.memory_type}, {date_str}):
             user_id: The user's ID
             message: User's message
             conversation_id: Optional conversation ID for follow-ups
+            current_context: Optional context from frontend for context reinstatement
 
         Yields:
             Dicts with type ('content', 'memories', 'action', 'done', 'error') and data
         """
+        # TIMING: Start total request timer
+        t_start = time.perf_counter()
         conv_id = conversation_id or str(uuid.uuid4())
 
         try:
             # Status: Searching memories
-            yield {"type": "status", "data": {"step": "searching_memories", "message": "Searching your memories..."}}
+            yield {"type": "status", "data": {"step": "searching_memories", "message": "Checking memory"}}
 
-            # Search for relevant memories using fast search (skips entity loading)
-            memories = await self.search_service.search_fast(
-                user_id=user_id,
-                query=message,
-                limit=5,
-            )
+            # PARALLEL context loading - shielded from cancellation
+            from uuid import UUID
+
+            # Results containers with defaults
+            memories = []
+            memory_context = None
+            user_timezone = "UTC"
+            user_model_prompt = ""
+            relationship_context = ""
+            proactive_context = ""
+
+            async def fetch_memories():
+                """Fast memory search with formatting."""
+                async with async_session_maker() as session:
+                    try:
+                        search_service = SearchService(session)
+                        mems = await search_service.search_fast(
+                            user_id=UUID(user_id),
+                            query=message,
+                            limit=5,
+                        )
+                        # Format memories into context string for LLM
+                        if mems:
+                            ctx = "\n\n".join([
+                                f"Memory ({m.memory_type}, {m.memory_date.strftime('%Y-%m-%d') if m.memory_date else 'unknown'}):\n{m.content}"
+                                for m in mems
+                            ])
+                            logger.debug(f"[FETCH] Found {len(mems)} memories, context length: {len(ctx)}")
+                        else:
+                            ctx = None
+                            logger.debug("[FETCH] No memories found")
+                        return mems, ctx
+                    except Exception as e:
+                        logger.error(f"[FETCH] Memory search failed: {e}")
+                        return [], None
+
+            async def fetch_timezone():
+                """Get user timezone with caching."""
+                # Check cache first (avoids DB roundtrip)
+                cached = _get_cached_timezone(user_id)
+                if cached:
+                    return cached
+
+                async with async_session_maker() as session:
+                    try:
+                        result = await session.execute(
+                            select(NotificationPreferences.timezone)
+                            .where(NotificationPreferences.user_id == UUID(user_id))
+                        )
+                        tz = result.scalar_one_or_none() or "UTC"
+                        _set_cached_timezone(user_id, tz)
+                        return tz
+                    except Exception:
+                        return "UTC"
+
+            async def fetch_user_model():
+                """Get user model with its own DB session."""
+                async with async_session_maker() as session:
+                    try:
+                        adaptive_service = AdaptiveLearningService(session)
+                        return await adaptive_service.get_user_model_prompt(uuid.UUID(user_id))
+                    except Exception:
+                        return ""
+
+            async def fetch_relationships():
+                """Get relationship context with its own DB session."""
+                async with async_session_maker() as session:
+                    try:
+                        rel_service = RelationshipIntelligenceService(session)
+                        return await rel_service.get_relationship_context_for_chat(UUID(user_id))
+                    except Exception:
+                        return ""
+
+            async def fetch_proactive_context():
+                """Get proactive intelligence context (intentions, patterns, upcoming events)."""
+                async with async_session_maker() as session:
+                    try:
+                        proactive_service = ProactiveIntelligenceService(session, self.client)
+                        return await proactive_service.build_proactive_context(
+                            user_id=UUID(user_id),
+                            current_message=message
+                        )
+                    except Exception as e:
+                        logger.warning(f"Proactive context failed: {e}")
+                        return ""
+
+            # Shield the parallel block from cancellation to prevent session race conditions
+            async def run_parallel():
+                return await asyncio.gather(
+                    fetch_memories(),
+                    fetch_timezone(),
+                    fetch_user_model(),
+                    fetch_relationships(),
+                    fetch_proactive_context(),
+                    return_exceptions=True,
+                )
+
+            try:
+                results = await asyncio.shield(run_parallel())
+
+                # Extract results safely
+                if not isinstance(results[0], Exception) and results[0]:
+                    memories, memory_context = results[0]
+                if not isinstance(results[1], Exception):
+                    user_timezone = results[1]
+                if not isinstance(results[2], Exception):
+                    user_model_prompt = results[2]
+                if not isinstance(results[3], Exception):
+                    relationship_context = results[3]
+                if not isinstance(results[4], Exception):
+                    proactive_context = results[4]
+            except asyncio.CancelledError:
+                # Stream was cancelled, use defaults
+                logger.info("Parallel context load cancelled, using defaults")
 
             # Status: Memories found
             if memories:
                 yield {"type": "status", "data": {
                     "step": "memories_found",
-                    "message": f"Found {len(memories)} relevant memories",
+                    "message": f"Found {len(memories)} memories",
                     "count": len(memories)
                 }}
 
@@ -1049,15 +1186,13 @@ Memory {i} ({memory.memory_type}, {date_str}):
             ]
             yield {"type": "memories", "data": memory_data}
 
-            # Format memories for context
-            memory_context = self._format_memories_for_context(memories)
+            # Use pre-formatted context if available, otherwise format here
+            if not memory_context:
+                memory_context = self._format_memories_for_context(memories)
 
-            # Build system prompt with current time
+            # Build system prompt with current time and user's timezone
             current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            system_prompt = self.SYSTEM_PROMPT.format(current_datetime=current_time)
-
-            # Get learned user model for personalization
-            user_model_prompt = await self._get_user_model_prompt(user_id)
+            system_prompt = self.SYSTEM_PROMPT.format(current_datetime=current_time, user_timezone=user_timezone)
 
             # Build messages
             messages = [
@@ -1067,7 +1202,21 @@ Memory {i} ({memory.memory_type}, {date_str}):
             if user_model_prompt:
                 messages.append({"role": "system", "content": user_model_prompt})
 
-            messages.append({"role": "system", "content": f"User's relevant memories:\n{memory_context}"})
+            # Only inject memories if we have actual content
+            if memory_context and memory_context.strip():
+                messages.append({"role": "system", "content": f"User's relevant memories:\n{memory_context}"})
+                logger.debug(f"[CHAT] Injected {len(memory_context)} chars of memory context")
+            else:
+                logger.debug(f"[CHAT] No memory context to inject (memories found: {len(memories)})")
+
+            # Add relationship context if available (neglected relationships, important dates, promises)
+            if relationship_context:
+                messages.append({"role": "system", "content": f"Relationship awareness (proactively mention if relevant):{relationship_context}"})
+
+            # Add proactive context if available (intentions, patterns, upcoming events)
+            if proactive_context and proactive_context.strip():
+                messages.append({"role": "system", "content": proactive_context})
+                logger.debug(f"[CHAT] Injected proactive context: {len(proactive_context)} chars")
 
             # Add conversation history
             conversation = self._get_conversation(conv_id)
@@ -1077,9 +1226,13 @@ Memory {i} ({memory.memory_type}, {date_str}):
             # Status: Thinking
             yield {"type": "status", "data": {"step": "generating", "message": "Thinking..."}}
 
+            # OPTIMIZATION: Smart model selection based on query complexity
+            selected_model = select_model(message, has_tools=True)
+
             # SINGLE streaming call with tools - much faster!
+            t_llm_start = time.perf_counter()
             stream = await self.client.chat.completions.create(
-                model="gpt-4o-mini",  # Faster model for chat
+                model=selected_model,
                 messages=messages,
                 tools=TOOLS,
                 tool_choice="auto",
@@ -1091,8 +1244,15 @@ Memory {i} ({memory.memory_type}, {date_str}):
             # Accumulate response and tool calls
             full_response = ""
             tool_calls_data = {}  # id -> {name, arguments_str}
+            t_first_token = None
 
             async for chunk in stream:
+                # Track time to first token (TTFT)
+                if t_first_token is None:
+                    t_first_token = time.perf_counter()
+                    ttft = (t_first_token - t_llm_start) * 1000
+                    total_to_first_token = (t_first_token - t_start) * 1000
+                    logger.info(f"[DIAG] LLM_TTFT: {ttft:.1f}ms | TOTAL_TO_FIRST_TOKEN: {total_to_first_token:.1f}ms")
                 delta = chunk.choices[0].delta
 
                 # Handle content streaming
@@ -1121,10 +1281,23 @@ Memory {i} ({memory.memory_type}, {date_str}):
             if tool_calls_data:
                 # Read-only tools that should auto-execute (no user confirmation needed)
                 READ_ONLY_TOOLS = {
+                    "get_calendar_events",
                     "find_free_time",
                     "search_places",
                     "get_email_thread",
                     "search_emails",
+                    # Intelligence tools (all read-only)
+                    "who_is",
+                    "get_inbox_intelligence",
+                    "draft_smart_reply",
+                    "follow_up_with",
+                    "prep_for_meeting",
+                    "what_did_i_promise",
+                    "get_morning_briefing",
+                    "relationship_check",
+                    # Calendar intelligence tools (read-only)
+                    "get_day_overview",
+                    "detect_calendar_conflicts",
                 }
 
                 pending_actions = []
@@ -1199,6 +1372,46 @@ Memory {i} ({memory.memory_type}, {date_str}):
             # Update conversation history
             self._add_to_conversation(conv_id, "user", message)
             self._add_to_conversation(conv_id, "assistant", full_response)
+
+            # Extract memories from conversation (runs in background, doesn't block)
+            try:
+                conversation_history = self._get_conversation(conv_id)
+                if conversation_history and len(conversation_history) >= 2:
+                    memory_extractor = ChatMemoryExtractionService(self.db)
+                    asyncio.create_task(
+                        memory_extractor.extract_and_save_memories(
+                            user_id=uuid.UUID(user_id),
+                            conversation=conversation_history,
+                            min_importance=4,  # Only save moderately important+ memories
+                        )
+                    )
+            except Exception as e:
+                # Memory extraction should never break the chat
+                logger.warning(f"Memory extraction failed (non-blocking): {e}")
+
+            # Background: Extract intentions from user message and check for completions
+            async def background_intention_processing():
+                async with async_session_maker() as session:
+                    try:
+                        proactive_service = ProactiveIntelligenceService(session, self.client)
+                        # Extract new intentions from user message
+                        await proactive_service.extract_and_store_intentions(
+                            user_id=UUID(user_id),
+                            message=message
+                        )
+                        # Check if user's message indicates completion of a pending intention
+                        await proactive_service.check_for_completion_signals(
+                            user_id=UUID(user_id),
+                            message=message
+                        )
+                    except Exception as e:
+                        logger.warning(f"Background intention processing failed: {e}")
+
+            asyncio.create_task(background_intention_processing())
+
+            # TIMING: Log total streaming time
+            t_total = time.perf_counter() - t_start
+            logger.debug(f"Total chat_stream() took {t_total*1000:.1f}ms")
 
             # Signal completion
             yield {"type": "done", "data": {"conversation_id": conv_id}}

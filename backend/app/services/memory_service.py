@@ -145,8 +145,21 @@ Return ONLY valid JSON array, no other text. Example:
                 await db.commit()
                 logger.info(f"Background processing complete for memory {memory_id}: {len(entities)} entities")
 
+                # Extract intentions (prospective memory)
+                try:
+                    from app.services.intention_service import IntentionService
+                    intention_service = IntentionService(db)
+                    intentions = await intention_service.extract_intentions(memory)
+                    if intentions:
+                        logger.info(f"Extracted {len(intentions)} intentions from memory {memory_id}")
+                except Exception as e:
+                    logger.error(f"Error extracting intentions: {e}")
+
                 # Now process intelligence (connections, decisions)
                 await self._process_intelligence_in_session(db, memory)
+
+                # Extract atomic facts for MemoryBench SOTA
+                await self._extract_facts_in_session(db, memory, user_id)
 
         except Exception as e:
             logger.error(f"Error in background memory processing: {e}")
@@ -325,3 +338,45 @@ Return ONLY valid JSON array, no other text. Example:
         await self.db.delete(memory)
         await self.db.commit()
         return True
+
+    async def _extract_facts_in_session(
+        self,
+        db: AsyncSession,
+        memory: Memory,
+        user_id: UUID,
+    ) -> None:
+        """
+        Extract atomic facts from a memory.
+
+        This enables:
+        - Multi-hop reasoning (entity relations)
+        - Temporal reasoning (event_date vs document_date)
+        - Abstention (confidence-based)
+        """
+        try:
+            from app.services.fact_extraction_service import FactExtractionService
+
+            fact_service = FactExtractionService(db)
+
+            # Extract and save atomic facts from the memory
+            facts = await fact_service.extract_and_save(
+                user_id=user_id,
+                memory_id=memory.id,
+                content=memory.content,
+                document_date=memory.memory_date or datetime.utcnow(),
+            )
+
+            if not facts:
+                logger.debug(f"No facts extracted from memory {memory.id}")
+                return
+
+            # Extract entity relations from saved facts
+            if facts:
+                relations = await fact_service.extract_entity_relations(user_id, facts)
+                logger.info(
+                    f"Extracted {len(facts)} facts and {len(relations)} relations "
+                    f"from memory {memory.id}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error extracting facts from memory {memory.id}: {e}")

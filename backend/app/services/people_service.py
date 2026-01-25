@@ -411,3 +411,268 @@ Keep it brief and actionable. No headers, just bullet points."""
             .order_by(PersonProfile.next_meeting_date)
         )
         return list(result.all())
+
+    # ==================== RELATIONSHIP INTELLIGENCE ====================
+
+    async def get_relationship_context(
+        self,
+        user_id: UUID,
+        person_name: str,
+    ) -> dict:
+        """
+        Get comprehensive relationship context for a person.
+
+        Includes:
+        - Communication patterns
+        - Relationship strength
+        - Key topics and decisions
+        - Interaction history
+        """
+        entity = await self.get_person_by_name(user_id, person_name)
+        if not entity:
+            return {"success": False, "message": "Person not found"}
+
+        # Get profile
+        profile = await self._get_cached_profile(user_id, entity.id)
+
+        # Get recent interactions
+        memories = await self.get_person_memories(user_id, person_name, limit=30)
+
+        # Analyze communication patterns
+        patterns = self._analyze_communication_patterns(memories)
+
+        # Calculate relationship strength
+        strength = self._calculate_relationship_strength(entity, memories, patterns)
+
+        # Get key topics
+        topics = await self._extract_key_topics(person_name, memories)
+
+        return {
+            "success": True,
+            "person": {
+                "name": entity.name,
+                "email": entity.email,
+                "relationship_type": profile.relationship_type if profile else "contact",
+            },
+            "relationship_strength": strength,
+            "communication_patterns": patterns,
+            "key_topics": topics,
+            "summary": profile.summary if profile else None,
+            "sentiment": profile.sentiment_trend if profile else "neutral",
+            "stats": {
+                "total_interactions": entity.mention_count,
+                "first_contact": entity.first_seen.isoformat() if entity.first_seen else None,
+                "last_contact": entity.last_seen.isoformat() if entity.last_seen else None,
+                "days_known": (datetime.utcnow() - entity.first_seen).days if entity.first_seen else 0,
+            },
+        }
+
+    def _analyze_communication_patterns(self, memories: list[Memory]) -> dict:
+        """Analyze communication patterns from memories."""
+        patterns = {
+            "interaction_frequency": "rare",  # rare, occasional, regular, frequent
+            "primary_channel": "unknown",  # email, calendar, chat
+            "avg_interactions_per_week": 0,
+            "last_7_days": 0,
+            "last_30_days": 0,
+            "time_of_day_preference": None,  # morning, afternoon, evening
+        }
+
+        if not memories:
+            return patterns
+
+        now = datetime.utcnow()
+        last_7_days = sum(1 for m in memories if m.memory_date and (now - m.memory_date).days <= 7)
+        last_30_days = sum(1 for m in memories if m.memory_date and (now - m.memory_date).days <= 30)
+
+        patterns["last_7_days"] = last_7_days
+        patterns["last_30_days"] = last_30_days
+        patterns["avg_interactions_per_week"] = round(last_30_days / 4, 1)
+
+        # Determine frequency
+        if last_7_days >= 5:
+            patterns["interaction_frequency"] = "frequent"
+        elif last_7_days >= 2:
+            patterns["interaction_frequency"] = "regular"
+        elif last_30_days >= 4:
+            patterns["interaction_frequency"] = "occasional"
+
+        # Primary channel
+        email_count = sum(1 for m in memories if m.memory_type == "email")
+        calendar_count = sum(1 for m in memories if m.memory_type == "calendar")
+        other_count = len(memories) - email_count - calendar_count
+
+        if email_count >= calendar_count and email_count >= other_count:
+            patterns["primary_channel"] = "email"
+        elif calendar_count > email_count:
+            patterns["primary_channel"] = "meetings"
+        else:
+            patterns["primary_channel"] = "other"
+
+        # Time of day preference
+        hours = [m.memory_date.hour for m in memories if m.memory_date]
+        if hours:
+            avg_hour = sum(hours) / len(hours)
+            if avg_hour < 12:
+                patterns["time_of_day_preference"] = "morning"
+            elif avg_hour < 17:
+                patterns["time_of_day_preference"] = "afternoon"
+            else:
+                patterns["time_of_day_preference"] = "evening"
+
+        return patterns
+
+    def _calculate_relationship_strength(
+        self,
+        entity: Entity,
+        memories: list[Memory],
+        patterns: dict,
+    ) -> dict:
+        """Calculate relationship strength score."""
+        score = 0
+        max_score = 100
+
+        # Factor 1: Total interactions (up to 25 points)
+        interaction_score = min(entity.mention_count * 2, 25)
+        score += interaction_score
+
+        # Factor 2: Recency (up to 25 points)
+        if entity.last_seen:
+            days_since = (datetime.utcnow() - entity.last_seen).days
+            if days_since <= 7:
+                recency_score = 25
+            elif days_since <= 30:
+                recency_score = 15
+            elif days_since <= 90:
+                recency_score = 5
+            else:
+                recency_score = 0
+            score += recency_score
+
+        # Factor 3: Frequency (up to 25 points)
+        freq = patterns.get("interaction_frequency", "rare")
+        freq_scores = {"frequent": 25, "regular": 20, "occasional": 10, "rare": 0}
+        score += freq_scores.get(freq, 0)
+
+        # Factor 4: Relationship duration (up to 25 points)
+        if entity.first_seen:
+            months_known = (datetime.utcnow() - entity.first_seen).days / 30
+            duration_score = min(months_known * 2, 25)
+            score += duration_score
+
+        # Determine label
+        if score >= 75:
+            label = "strong"
+        elif score >= 50:
+            label = "moderate"
+        elif score >= 25:
+            label = "weak"
+        else:
+            label = "minimal"
+
+        return {
+            "score": round(score, 1),
+            "max_score": max_score,
+            "label": label,
+            "factors": {
+                "interactions": interaction_score,
+                "recency": recency_score if entity.last_seen else 0,
+                "frequency": freq_scores.get(freq, 0),
+                "duration": duration_score if entity.first_seen else 0,
+            },
+        }
+
+    async def _extract_key_topics(
+        self,
+        person_name: str,
+        memories: list[Memory],
+    ) -> list[str]:
+        """Extract key topics discussed with this person."""
+        if not memories or len(memories) < 3:
+            return []
+
+        # Use LLM to extract topics
+        memory_texts = "\n".join([
+            m.content[:200] for m in memories[:15]
+        ])
+
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": f"What are the top 5 topics discussed with {person_name} based on these interactions?\n\n{memory_texts}\n\nReturn only a JSON array of strings: [\"topic1\", \"topic2\", ...]",
+                    }
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=100,
+            )
+
+            import json
+            result = json.loads(response.choices[0].message.content)
+            return result.get("topics", result) if isinstance(result, dict) else result[:5]
+
+        except Exception as e:
+            logger.error(f"Error extracting topics: {e}")
+            return []
+
+    async def search_people(
+        self,
+        user_id: UUID,
+        query: str,
+        limit: int = 10,
+    ) -> list[dict]:
+        """
+        Search for people by name, email, or topic.
+        Enhanced search that also looks at profile content.
+        """
+        if not query or len(query) < 1:
+            return await self.list_people(user_id, sort_by="frequent", limit=limit)
+
+        query_lower = query.lower()
+
+        # Search entities
+        result = await self.db.execute(
+            select(Entity)
+            .where(Entity.user_id == user_id)
+            .where(Entity.entity_type == "person")
+            .where(
+                (func.lower(Entity.name).like(f"%{query_lower}%")) |
+                (func.lower(Entity.email).like(f"%{query_lower}%"))
+            )
+            .order_by(Entity.mention_count.desc())
+            .limit(limit)
+        )
+        entities = list(result.scalars().all())
+
+        # Also search in profiles for topic matches
+        profile_result = await self.db.execute(
+            select(PersonProfile, Entity)
+            .join(Entity, PersonProfile.entity_id == Entity.id)
+            .where(PersonProfile.user_id == user_id)
+            .where(
+                PersonProfile.topics.cast(str).like(f"%{query_lower}%") |
+                PersonProfile.summary.like(f"%{query_lower}%")
+            )
+            .limit(limit)
+        )
+        profile_matches = list(profile_result.all())
+
+        # Combine results
+        seen_ids = {e.id for e in entities}
+        for profile, entity in profile_matches:
+            if entity.id not in seen_ids:
+                entities.append(entity)
+                seen_ids.add(entity.id)
+
+        return [
+            {
+                "id": str(e.id),
+                "name": e.name,
+                "email": e.email,
+                "mention_count": e.mention_count,
+                "entity_type": e.entity_type,
+            }
+            for e in entities[:limit]
+        ]

@@ -1,7 +1,10 @@
 import asyncio
+import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException, status, BackgroundTasks
 
 from app.api.deps import CurrentUser
+
+logger = logging.getLogger(__name__)
 from app.services.storage_service import storage_service
 from app.services.transcription_service import transcription_service
 from app.schemas.upload import (
@@ -216,7 +219,7 @@ async def upload_audio_with_transcription(
     """
     # Get content type from filename or provided type
     content_type = get_audio_content_type(file)
-    print(f"Upload: filename={file.filename}, provided_type={file.content_type}, resolved_type={content_type}")
+    logger.debug(f"Upload: filename={file.filename}, provided_type={file.content_type}, resolved_type={content_type}")
 
     # Read file content
     content = await file.read()

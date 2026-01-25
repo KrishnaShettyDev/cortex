@@ -33,11 +33,14 @@ import {
   EmailActionData,
   CalendarActionData,
   FloatingActionButton,
-  ReasoningSteps,
+  ThinkingIndicator,
+  DailyBriefing,
+  DayBriefingScroll,
 } from '../../src/components';
+import { InsightsPillRow } from '../../src/components/InsightCards';
 import { useAuth } from '../../src/context/AuthContext';
 import { chatService, speechService, api, StatusUpdate } from '../../src/services';
-import { ChatMessage, PendingAction, MemoryReference } from '../../src/types';
+import { ChatMessage, PendingAction, MemoryReference, ProactiveInsightsResponse } from '../../src/types';
 import { colors, gradients, spacing, borderRadius } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { useChatSuggestions, useGreeting } from '../../src/hooks/useChat';
@@ -50,16 +53,25 @@ export default function ChatScreen() {
   const { user } = useAuth();
   const posthog = usePostHog();
   const insets = useSafeAreaInsets();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const {
+    chatDraft,
+    setChatDraft,
+    chatMessages,
+    addChatMessage,
+    setChatMessages,
+    clearChatMessages,
+    lastConversationId,
+    setLastConversationId,
+  } = useAppStore();
+
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [conversationId, setConversationId] = useState<string | undefined>();
+  const conversationId = lastConversationId || undefined;
   const [isFocused, setIsFocused] = useState(false);
   const flashListRef = useRef<any>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const { chatDraft, setChatDraft } = useAppStore();
 
   // Use React Query for greeting
   const { data: greetingData, refetch: refetchGreeting } = useGreeting();
@@ -80,6 +92,10 @@ export default function ChatScreen() {
   // Pull-to-refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Proactive insights state
+  const [insights, setInsights] = useState<ProactiveInsightsResponse | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+
   // Initialize input from draft
   useEffect(() => {
     if (chatDraft && !inputText) {
@@ -97,6 +113,26 @@ export default function ChatScreen() {
     useCallback(() => {
       refetchSuggestions();
     }, [refetchSuggestions])
+  );
+
+  // Fetch proactive insights when screen loads
+  const fetchInsights = useCallback(async () => {
+    try {
+      setInsightsLoading(true);
+      const data = await chatService.getInsights();
+      setInsights(data);
+    } catch (error) {
+      logger.warn('Failed to fetch insights:', error);
+    } finally {
+      setInsightsLoading(false);
+    }
+  }, []);
+
+  // Fetch insights on focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchInsights();
+    }, [fetchInsights])
   );
 
   // Auto-refresh suggestions when app comes to foreground
@@ -164,11 +200,11 @@ export default function ChatScreen() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await Promise.all([refetchSuggestions(), refetchGreeting()]);
+      await Promise.all([refetchSuggestions(), refetchGreeting(), fetchInsights()]);
     } finally {
       setIsRefreshing(false);
     }
-  }, [refetchSuggestions, refetchGreeting]);
+  }, [refetchSuggestions, refetchGreeting, fetchInsights]);
 
   // Action review state - now inline in chat
   const [actionToReview, setActionToReview] = useState<ActionData | null>(null);
@@ -176,8 +212,24 @@ export default function ChatScreen() {
   const [isActionLoading, setIsActionLoading] = useState(false);
 
   // Real-time streaming state
-  const [streamingSteps, setStreamingSteps] = useState<StatusUpdate[]>([]);
+  const [currentStatus, setCurrentStatus] = useState<StatusUpdate | null>(null);
   const [streamingContent, setStreamingContent] = useState<string>('');
+
+  // Actions that should be shown to users for review/confirmation
+  const USER_FACING_ACTIONS = [
+    'send_email',
+    'create_calendar_event',
+    'update_calendar_event',
+    'delete_calendar_event',
+    'reply_to_email',
+    'reschedule_events',
+  ];
+
+  // Filter pending actions to only include user-facing ones
+  const filterUserFacingActions = (actions: PendingAction[] | undefined): PendingAction[] => {
+    if (!actions) return [];
+    return actions.filter(a => USER_FACING_ACTIONS.includes(a.tool));
+  };
 
   // Convert pending action from API to ActionData for inline review
   const convertToActionData = (pending: PendingAction): ActionData | undefined => {
@@ -217,23 +269,32 @@ export default function ChatScreen() {
       timestamp: new Date(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    addChatMessage(userMessage);
     setInputText('');
     setIsLoading(true);
-    setStreamingSteps([]);
+    // Show thinking immediately - don't wait for backend
+    setCurrentStatus({ step: 'generating', message: 'Thinking' });
     setStreamingContent('');
-    setShowSuggestions(false); // Hide suggestions when sending a message
+    setShowSuggestions(false);
 
     // Scroll to bottom
     setTimeout(() => {
       flashListRef.current?.scrollToEnd({ animated: true });
     }, 50);
 
+    // Safety timeout to reset loading state if stream hangs
+    const safetyTimeout = setTimeout(() => {
+      if (isLoading) {
+        logger.warn('Chat stream timeout - resetting loading state');
+        setIsLoading(false);
+        setCurrentStatus(null);
+        setStreamingContent('');
+      }
+    }, 60000); // 60 second timeout
+
     try {
-      // Use streaming chat for real-time updates
       let memoriesFound: MemoryReference[] = [];
       let pendingActionsFound: PendingAction[] = [];
-      let reasoningStepsCollected: StatusUpdate[] = [];
       let fullContent = '';
       let convId = conversationId || '';
 
@@ -245,12 +306,9 @@ export default function ChatScreen() {
           memoriesFound = memories;
         },
         onStatus: (status) => {
-          // Collect reasoning steps to show with the response
-          logger.log('Received status:', status);
-          reasoningStepsCollected.push(status);
-          setStreamingSteps((prev) => [...prev, status]);
-          // Scroll to show new steps
-          flashListRef.current?.scrollToEnd({ animated: true });
+          logger.log('Status update:', status);
+          // Update single status indicator (not a list)
+          setCurrentStatus(status);
         },
         onContent: (chunk, total) => {
           fullContent = total;
@@ -263,12 +321,12 @@ export default function ChatScreen() {
           pendingActionsFound = actions;
         },
         onComplete: (response) => {
+          clearTimeout(safetyTimeout);
           convId = response.conversation_id;
-          setStreamingSteps([]);
+          setCurrentStatus(null);
           setStreamingContent('');
           setIsLoading(false);
 
-          // Track message sent
           posthog?.capture(ANALYTICS_EVENTS.MESSAGE_SENT, {
             message_length: messageText.length,
             has_memories: (response.memories_used?.length || 0) > 0,
@@ -277,22 +335,24 @@ export default function ChatScreen() {
             pending_actions_count: response.pending_actions?.length || 0,
           });
 
+          // Filter to only user-facing pending actions
+          const userFacingActions = filterUserFacingActions(response.pending_actions);
+
           const assistantMessage: ChatMessage = {
             id: (Date.now() + 1).toString(),
             role: 'assistant',
             content: response.response,
             memoriesUsed: response.memories_used,
-            pendingActions: response.pending_actions,
-            reasoningSteps: reasoningStepsCollected,
+            pendingActions: userFacingActions.length > 0 ? userFacingActions : undefined,
             timestamp: new Date(),
           };
 
-          setMessages((prev) => [...prev, assistantMessage]);
-          setConversationId(convId);
+          addChatMessage(assistantMessage);
+          setLastConversationId(convId);
 
-          // If there are pending actions, show the inline review for the first one
-          if (response.pending_actions && response.pending_actions.length > 0) {
-            const firstPending = response.pending_actions[0];
+          // Auto-show review for first reviewable action
+          if (userFacingActions.length > 0) {
+            const firstPending = userFacingActions[0];
             const reviewAction = convertToActionData(firstPending);
             if (reviewAction) {
               setCurrentPendingAction(firstPending);
@@ -304,30 +364,32 @@ export default function ChatScreen() {
           }
         },
         onError: (error) => {
+          clearTimeout(safetyTimeout);
           logger.error('Stream error:', error);
-          setStreamingSteps([]);
+          setCurrentStatus(null);
           setStreamingContent('');
           setIsLoading(false);
 
           const errorMessage: ChatMessage = {
             id: (Date.now() + 1).toString(),
             role: 'assistant',
-            content: `I couldn't process that. ${error || 'Please try again.'}`,
+            content: `Couldn't process that. ${error || 'Try again.'}`,
             timestamp: new Date(),
           };
-          setMessages((prev) => [...prev, errorMessage]);
+          addChatMessage(errorMessage);
         },
       });
     } catch (error: any) {
+      clearTimeout(safetyTimeout);
       logger.error('sendMessage error:', error);
       const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `I couldn't process that. ${error.message || 'Please try again.'}`,
+        content: `Couldn't process that. ${error.message || 'Try again.'}`,
         timestamp: new Date(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
-      setStreamingSteps([]);
+      addChatMessage(errorMessage);
+      setCurrentStatus(null);
       setStreamingContent('');
       setIsLoading(false);
     }
@@ -396,17 +458,16 @@ export default function ChatScreen() {
   };
 
   const clearConversation = () => {
-    setMessages([]);
-    setConversationId(undefined);
+    clearChatMessages();
   };
 
   useEffect(() => {
-    if (messages.length > 0) {
+    if (chatMessages.length > 0) {
       setTimeout(() => {
         flashListRef.current?.scrollToEnd({ animated: true });
       }, 100);
     }
-  }, [messages, isLoading]);
+  }, [chatMessages, isLoading]);
 
   const formatTimestamp = (date: Date) => {
     const now = new Date();
@@ -460,11 +521,53 @@ export default function ChatScreen() {
     );
   };
 
+  // Handle insight pill tap - send query to chat
+  const handleInsightTap = () => {
+    if (!insights) return;
+
+    // Build a contextual message based on what needs attention
+    let message = '';
+
+    if (insights.pattern_warnings.length > 0) {
+      message = `Tell me about the "${insights.pattern_warnings[0].name}" pattern you noticed.`;
+    } else if (insights.upcoming_dates.length > 0) {
+      const d = insights.upcoming_dates[0];
+      message = `Remind me about ${d.person_name}'s ${d.date_label} and suggest gift ideas.`;
+    } else if (insights.neglected_relationships.length > 0) {
+      const r = insights.neglected_relationships[0];
+      message = `Help me reconnect with ${r.name}. What should I say?`;
+    } else if (insights.pending_promises.length > 0) {
+      message = `What promises have I made that I need to keep?`;
+    } else if (insights.pending_intentions.length > 0) {
+      message = `What have I committed to doing recently?`;
+    }
+
+    if (message) {
+      setInputText(message);
+    }
+  };
+
+  // Handle briefing action tap - sends message to chat
+  const handleBriefingAction = useCallback((actionPrompt: string) => {
+    sendMessage(actionPrompt);
+  }, []);
+
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
       <Text style={styles.greetingText}>
         {getGreeting()}
       </Text>
+      {/* Horizontal scroll day briefing */}
+      <DayBriefingScroll onItemPress={handleBriefingAction} />
+      {/* Proactive Insights Pills */}
+      {insights && insights.total_attention_needed > 0 && (
+        <View style={styles.insightsContainer}>
+          <InsightsPillRow
+            insights={insights}
+            onPress={handleInsightTap}
+          />
+        </View>
+      )}
     </View>
   );
 
@@ -526,7 +629,7 @@ export default function ChatScreen() {
             : 'Event created successfully.',
           timestamp: new Date(),
         };
-        setMessages((prev) => [...prev, successMessage]);
+        addChatMessage(successMessage);
         setActionToReview(null);
         setCurrentPendingAction(null);
       } else {
@@ -555,14 +658,14 @@ export default function ChatScreen() {
       content: 'Action cancelled.',
       timestamp: new Date(),
     };
-    setMessages((prev) => [...prev, cancelMessage]);
+    addChatMessage(cancelMessage);
   };
 
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
     const isUser = item.role === 'user';
     const showTimestamp = index === 0 ||
-      (messages[index - 1] &&
-       new Date(item.timestamp).getTime() - new Date(messages[index - 1].timestamp).getTime() > 300000);
+      (chatMessages[index - 1] &&
+       new Date(item.timestamp).getTime() - new Date(chatMessages[index - 1].timestamp).getTime() > 300000);
 
     return (
       <View style={styles.messageContainer}>
@@ -604,8 +707,8 @@ export default function ChatScreen() {
 
           <TouchableOpacity
             onPress={clearConversation}
-            disabled={messages.length === 0}
-            style={[styles.headerButton, { opacity: messages.length === 0 ? 0.3 : 1 }]}
+            disabled={chatMessages.length === 0}
+            style={[styles.headerButton, { opacity: chatMessages.length === 0 ? 0.3 : 1 }]}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             activeOpacity={0.7}
           >
@@ -617,13 +720,23 @@ export default function ChatScreen() {
         {/* @ts-ignore - FlashList types issue with estimatedItemSize prop */}
         <FlashList<ChatMessage>
           ref={flashListRef}
-          data={messages}
+          data={chatMessages}
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messagesList}
           ListEmptyComponent={renderEmptyState}
+          ListHeaderComponent={
+            chatMessages.length > 0 ? (
+              <View style={styles.briefingPillContainer}>
+                <DailyBriefing
+                  onActionPress={handleBriefingAction}
+                  variant="pill"
+                />
+              </View>
+            ) : null
+          }
           onScrollBeginDrag={handleScroll}
-          extraData={{ streamingSteps, streamingContent, isLoading }}
+          extraData={{ currentStatus, streamingContent, isLoading }}
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
@@ -634,16 +747,18 @@ export default function ChatScreen() {
           {...{ estimatedItemSize: 100 } as any}
           ListFooterComponent={
             <View style={styles.footerContainer}>
-              {/* Real-time reasoning steps */}
-              {streamingSteps.length > 0 && (
-                <ReasoningSteps steps={streamingSteps} />
+              {/* Thinking indicator - shows immediately, updates dynamically */}
+              {isLoading && !streamingContent && (
+                <ThinkingIndicator
+                  status={currentStatus?.message}
+                  tool={currentStatus?.tool}
+                  isActive={true}
+                />
               )}
               {/* Streaming content as it arrives */}
               {streamingContent && (
                 <Text style={styles.streamingText}>{streamingContent}</Text>
               )}
-              {/* Loading dots when waiting for stream to start */}
-              {isLoading && streamingSteps.length === 0 && !streamingContent && <LoadingDots />}
               {/* Inline action review */}
               {actionToReview && (
                 <View style={styles.inlineReviewContainer}>
@@ -783,17 +898,18 @@ const styles = StyleSheet.create({
   },
   // Messages list
   messagesList: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.sm,
-    paddingBottom: 120,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: 140,
   },
   messageContainer: {
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
   },
   messageTimestamp: {
-    fontSize: 12,
+    fontSize: 11,
     color: colors.textTertiary,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
+    letterSpacing: 0.3,
   },
   messageTimestampRight: {
     textAlign: 'right',
@@ -807,7 +923,14 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: colors.textPrimary,
     lineHeight: 32,
+    marginBottom: spacing.md,
+  },
+  insightsContainer: {
+    marginTop: spacing.sm,
     marginBottom: spacing.xl,
+  },
+  briefingPillContainer: {
+    marginBottom: spacing.sm,
   },
   // Suggest button container - fixed position above input
   suggestButtonContainer: {

@@ -1,6 +1,7 @@
 export * from './api';
 export * from './auth';
 export * from './chat';
+export * from './contextCapture';
 export * from './location';
 export * from './memory';
 export * from './people';

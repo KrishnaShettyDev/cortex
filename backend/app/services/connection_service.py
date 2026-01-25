@@ -79,7 +79,7 @@ Response:"""
                 continue
 
             # Check if connection already exists
-            existing = await self._get_existing_connection(memory.id, similar_memory.id)
+            existing = await self._get_existing_connection(user_id, memory.id, similar_memory.id)
             if existing:
                 continue
 
@@ -176,13 +176,14 @@ Response:"""
         return [e for e in memory1.entities if e.id in shared_ids]
 
     async def _get_existing_connection(
-        self, memory_id_1: UUID, memory_id_2: UUID
+        self, user_id: UUID, memory_id_1: UUID, memory_id_2: UUID
     ) -> MemoryConnection | None:
-        """Check if a connection already exists between two memories."""
+        """Check if a connection already exists between two memories for a user."""
         id_1, id_2 = sorted([memory_id_1, memory_id_2])
         result = await self.db.execute(
             select(MemoryConnection).where(
                 and_(
+                    MemoryConnection.user_id == user_id,
                     MemoryConnection.memory_id_1 == id_1,
                     MemoryConnection.memory_id_2 == id_2,
                 )
@@ -286,13 +287,18 @@ Response:"""
         await self.db.commit()
         return True
 
-    async def mark_notified(self, connection_ids: list[UUID]) -> None:
-        """Mark connections as notified."""
+    async def mark_notified(self, user_id: UUID, connection_ids: list[UUID]) -> None:
+        """Mark connections as notified for a specific user."""
         if not connection_ids:
             return
 
         result = await self.db.execute(
-            select(MemoryConnection).where(MemoryConnection.id.in_(connection_ids))
+            select(MemoryConnection).where(
+                and_(
+                    MemoryConnection.user_id == user_id,
+                    MemoryConnection.id.in_(connection_ids),
+                )
+            )
         )
         connections = result.scalars().all()
 

@@ -2,14 +2,36 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { IntegrationsStatus } from '../services';
+import { ChatMessage } from '../types';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
 
 interface NotificationSettings {
+  // Briefings
   morningBriefing: boolean;
   eveningBriefing: boolean;
+
+  // Smart features
   smartReminders: boolean;
   memoryInsights: boolean;
+  meetingPrep: boolean;
+  emailAlerts: boolean;
+  commitmentReminders: boolean;
+  patternWarnings: boolean;
+  reconnectionNudges: boolean;
+  importantDates: boolean;
+
+  // Budget and quiet hours
+  maxNotificationsPerDay: number;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string; // HH:MM format
+  quietHoursEnd: string; // HH:MM format
+
+  // Timing
+  morningBriefingTime: string; // HH:MM format
+  eveningBriefingTime: string; // HH:MM format
+  meetingPrepMinutesBefore: number;
+  timezone: string;
 }
 
 interface AppState {
@@ -26,6 +48,9 @@ interface AppState {
   lastScreen: string;
   chatDraft: string;
   lastConversationId: string | null;
+
+  // Chat History (persisted)
+  chatMessages: ChatMessage[];
 
   // UI State
   hasSeenOnboarding: boolean;
@@ -50,6 +75,9 @@ interface AppState {
   setLastScreen: (screen: string) => void;
   setChatDraft: (draft: string) => void;
   setLastConversationId: (id: string | null) => void;
+  setChatMessages: (messages: ChatMessage[]) => void;
+  addChatMessage: (message: ChatMessage) => void;
+  clearChatMessages: () => void;
   setHasSeenOnboarding: (seen: boolean) => void;
   setThemeMode: (mode: ThemeMode) => void;
   setApiHealthy: (healthy: boolean) => void;
@@ -67,6 +95,7 @@ const initialState = {
   lastScreen: '/(main)/chat',
   chatDraft: '',
   lastConversationId: null,
+  chatMessages: [] as ChatMessage[],
   hasSeenOnboarding: false,
   themeMode: 'dark' as ThemeMode,
   isApiHealthy: true,
@@ -76,6 +105,20 @@ const initialState = {
     eveningBriefing: true,
     smartReminders: true,
     memoryInsights: true,
+    meetingPrep: true,
+    emailAlerts: true,
+    commitmentReminders: true,
+    patternWarnings: true,
+    reconnectionNudges: true,
+    importantDates: true,
+    maxNotificationsPerDay: 8,
+    quietHoursEnabled: false,
+    quietHoursStart: '22:00',
+    quietHoursEnd: '07:00',
+    morningBriefingTime: '08:00',
+    eveningBriefingTime: '18:00',
+    meetingPrepMinutesBefore: 30,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   },
   integrationStatus: null,
   integrationStatusLoadedAt: null,
@@ -109,6 +152,15 @@ export const useAppStore = create<AppState>()(
 
       setLastConversationId: (id) =>
         set({ lastConversationId: id }),
+
+      setChatMessages: (messages) =>
+        set({ chatMessages: messages }),
+
+      addChatMessage: (message) =>
+        set((state) => ({ chatMessages: [...state.chatMessages, message] })),
+
+      clearChatMessages: () =>
+        set({ chatMessages: [], lastConversationId: null }),
 
       setHasSeenOnboarding: (seen) =>
         set({ hasSeenOnboarding: seen }),
@@ -144,6 +196,7 @@ export const useAppStore = create<AppState>()(
         lastScreen: state.lastScreen,
         chatDraft: state.chatDraft,
         lastConversationId: state.lastConversationId,
+        chatMessages: state.chatMessages,
         hasSeenOnboarding: state.hasSeenOnboarding,
         themeMode: state.themeMode,
         notificationSettings: state.notificationSettings,

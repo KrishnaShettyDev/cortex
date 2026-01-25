@@ -8,7 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 import jwt
 
-from app.models.user import User
+from tests.conftest import TestUser
 from app.config import get_settings
 
 settings = get_settings()
@@ -20,9 +20,9 @@ settings = get_settings()
 @pytest_asyncio.fixture
 async def test_user(test_session: AsyncSession):
     """Create a test user."""
-    user = User(
-        id=uuid4(),
-        apple_id="test_apple_id_api",
+    user = TestUser(
+        id=str(uuid4()),
+        oauth_id="test_oauth_id_api",
         email="testapi@example.com",
         name="Test API User",
     )
@@ -33,7 +33,7 @@ async def test_user(test_session: AsyncSession):
 
 
 @pytest.fixture
-def auth_headers(test_user: User):
+def auth_headers(test_user: TestUser):
     """Generate auth headers with JWT token."""
     token = jwt.encode(
         {
@@ -41,7 +41,7 @@ def auth_headers(test_user: User):
             "email": test_user.email,
             "exp": datetime.utcnow() + timedelta(hours=1),
         },
-        settings.jwt_secret_key,
+        settings.jwt_secret,
         algorithm=settings.jwt_algorithm,
     )
     return {"Authorization": f"Bearer {token}"}

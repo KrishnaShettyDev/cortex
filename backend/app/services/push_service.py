@@ -2,11 +2,15 @@
 
 import httpx
 import uuid
+import logging
 from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.push_token import PushToken
+from app.models.notification_log import NotificationLog
+
+logger = logging.getLogger(__name__)
 
 
 class PushService:
@@ -95,14 +99,61 @@ class PushService:
         body: str,
         data: dict | None = None,
         badge: int | None = None,
+        log_notification: bool = False,
+        notification_type: str = "general",
+        priority_score: float = 50.0,
+        urgency_level: str = "medium",
+        source_service: str | None = None,
     ) -> dict:
-        """Send push notification to all user's devices."""
+        """
+        Send push notification to all user's devices.
+
+        Args:
+            user_id: The user to send to
+            title: Notification title
+            body: Notification body
+            data: Additional data payload
+            badge: Badge count
+            log_notification: Whether to log this notification
+            notification_type: Type for logging (e.g., 'meeting_prep', 'briefing')
+            priority_score: Priority score for logging (0-100)
+            urgency_level: Urgency level for logging ('high', 'medium', 'low')
+            source_service: Service that generated the notification
+
+        Returns:
+            Dict with 'sent' and 'failed' counts
+        """
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
         tokens = await self.get_user_tokens(user_id)
 
         if not tokens:
             return {"sent": 0, "failed": 0, "error": "No active tokens"}
 
-        return await self._send_to_tokens(tokens, title, body, data, badge)
+        result = await self._send_to_tokens(tokens, title, body, data, badge)
+
+        # Optionally log the notification
+        if log_notification:
+            try:
+                log_entry = NotificationLog(
+                    user_id=user_id,
+                    notification_type=notification_type,
+                    title=title,
+                    body=body,
+                    priority_score=priority_score,
+                    urgency_level=urgency_level,
+                    source_service=source_service,
+                    status="sent" if result.get("sent", 0) > 0 else "suppressed",
+                    sent_at=datetime.utcnow() if result.get("sent", 0) > 0 else None,
+                    data=data,
+                )
+                self.db.add(log_entry)
+                await self.db.commit()
+            except Exception as e:
+                logger.error(f"Failed to log notification: {e}")
+
+        return result
 
     async def send_to_token(
         self,
