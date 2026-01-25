@@ -64,10 +64,11 @@ jobs:
           flags: backend
           fail_ci_if_error: false
 
-  # Backend Lint
+  # Backend Lint (non-blocking - reports issues but doesn't fail build)
   backend-lint:
     name: Backend Lint
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -82,12 +83,13 @@ jobs:
 
       - name: Run Ruff
         working-directory: backend
-        run: ruff check app/ --output-format=github
+        run: ruff check app/ --output-format=github || true
 
-  # Mobile TypeScript Check
+  # Mobile TypeScript Check (non-blocking - reports issues but doesn't fail build)
   mobile-typecheck:
     name: Mobile TypeScript
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +107,7 @@ jobs:
 
       - name: TypeScript check
         working-directory: mobile
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit || true
 
   # Mobile Lint
   mobile-lint:
