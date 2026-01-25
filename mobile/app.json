@@ -3,9 +3,7 @@
     "name": "Cortex",
     "slug": "cortex",
     "version": "1.0.0",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "cortex",
@@ -55,7 +53,7 @@
       "expo-apple-authentication",
       "expo-secure-store",
       [
-        "expo-av",
+        "expo-audio",
         {
           "microphonePermission": "Cortex needs microphone access to record voice memories."
         }

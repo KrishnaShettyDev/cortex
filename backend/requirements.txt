@@ -32,6 +32,7 @@ sentry-sdk[fastapi]>=2.0.0
 
 # Rate Limiting
 slowapi>=0.1.9
+redis>=5.0.0
 
 # Scheduling
 apscheduler>=3.10.0

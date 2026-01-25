@@ -13,7 +13,16 @@ from app.config import get_settings
 settings = get_settings()
 
 # Use Redis in production if configured, otherwise fall back to in-memory
-storage_uri = settings.redis_url if settings.redis_url else "memory://"
+# Check if redis module is available before attempting to use Redis storage
+storage_uri = "memory://"
+
+if settings.redis_url:
+    try:
+        import redis
+        storage_uri = settings.redis_url
+    except ImportError:
+        print("WARNING: redis package not installed, falling back to memory storage")
+        storage_uri = "memory://"
 
 # Rate limiter configuration
 # Uses client IP for rate limiting
