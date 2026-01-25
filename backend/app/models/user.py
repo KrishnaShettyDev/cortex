@@ -79,6 +79,72 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    fsrs_parameters: Mapped["FSRSParameters | None"] = relationship(
+        "FSRSParameters",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    review_logs: Mapped[list["ReviewLog"]] = relationship(
+        "ReviewLog",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    life_periods: Mapped[list["LifePeriod"]] = relationship(
+        "LifePeriod",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    general_events: Mapped[list["GeneralEvent"]] = relationship(
+        "GeneralEvent",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    intentions: Mapped[list["Intention"]] = relationship(
+        "Intention",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    patterns: Mapped[list["Pattern"]] = relationship(
+        "Pattern",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    # Autonomous email features
+    scheduled_emails: Mapped[list["ScheduledEmail"]] = relationship(
+        "ScheduledEmail",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    snoozed_emails: Mapped[list["SnoozedEmail"]] = relationship(
+        "SnoozedEmail",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    auto_drafts: Mapped[list["AutoDraft"]] = relationship(
+        "AutoDraft",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    auto_followup_rules: Mapped[list["AutoFollowUpRule"]] = relationship(
+        "AutoFollowUpRule",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    # Proactive notification features
+    notification_logs: Mapped[list["NotificationLog"]] = relationship(
+        "NotificationLog",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    notification_preferences: Mapped["NotificationPreferences | None"] = relationship(
+        "NotificationPreferences",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"
