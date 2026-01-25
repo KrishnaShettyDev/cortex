@@ -54,6 +54,12 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/cortex_test
           JWT_SECRET: test-secret-key-for-ci-minimum-32-chars
           ENVIRONMENT: test
+          # Dummy storage config for CI (not actually used in tests)
+          R2_ENDPOINT_URL: https://dummy.r2.cloudflarestorage.com
+          R2_ACCESS_KEY_ID: dummy-access-key
+          R2_SECRET_ACCESS_KEY: dummy-secret-key
+          R2_BUCKET_NAME: dummy-bucket
+          R2_PUBLIC_URL: https://dummy.example.com
         run: |
           pytest tests/ -v --cov=app --cov-report=xml
 
