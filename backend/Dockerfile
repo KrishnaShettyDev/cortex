@@ -42,6 +42,9 @@ USER appuser
 # Copy application code
 COPY --chown=appuser:appuser . .
 
+# Make start script executable
+RUN chmod +x start.sh
+
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -51,5 +54,5 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Expose port (Railway uses PORT env var)
 EXPOSE ${PORT}
 
-# Run the application with shell form to allow variable expansion
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
+# Run migrations and start the application
+CMD ["./start.sh"]
