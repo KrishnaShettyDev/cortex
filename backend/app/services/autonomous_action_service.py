@@ -407,9 +407,11 @@ class AutonomousActionService:
 
         try:
             # Get upcoming events to check for conflicts
+            now = datetime.utcnow()
             events = await self.sync_service.get_calendar_events(
                 user_id=user_id,
-                days_ahead=7,
+                start_date=now,
+                end_date=now + timedelta(days=7),
             )
 
             calendar_events = events.get("events", [])
@@ -487,10 +489,12 @@ class AutonomousActionService:
         actions = []
 
         try:
-            # Get meetings in next 4 hours
+            # Get meetings in next 24 hours
+            now = datetime.utcnow()
             events = await self.sync_service.get_calendar_events(
                 user_id=user_id,
-                days_ahead=1,
+                start_date=now,
+                end_date=now + timedelta(days=1),
             )
 
             now = datetime.utcnow()

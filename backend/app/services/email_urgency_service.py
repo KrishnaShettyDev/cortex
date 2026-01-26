@@ -67,13 +67,13 @@ class EmailUrgencyService:
     ) -> Optional[str]:
         """Get the relationship tier for an email sender."""
         try:
-            # Find entity by email
+            # Find entity by email (email is a direct column, not in metadata)
             result = await self.db.execute(
                 select(Entity).where(
                     and_(
                         Entity.user_id == user_id,
                         Entity.entity_type == "person",
-                        Entity.metadata["email"].astext == sender_email,
+                        Entity.email == sender_email,
                     )
                 )
             )
