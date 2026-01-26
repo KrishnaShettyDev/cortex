@@ -30,6 +30,9 @@ export function AutonomousActionsList({ onActionExecuted }: AutonomousActionsLis
   const approveAction = useApproveAction();
   const dismissAction = useDismissAction();
 
+  // Debug logging
+  logger.log('[AutonomousActions] Loading:', isLoading, 'Data:', data, 'Error:', error);
+
   const handleApprove = async (
     actionId: string,
     modifications?: Record<string, unknown>
@@ -70,9 +73,23 @@ export function AutonomousActionsList({ onActionExecuted }: AutonomousActionsLis
     return null;
   }
 
-  // No actions state
+  // No actions state - show debug info temporarily
   if (!data || data.actions.length === 0) {
-    return null; // Don't show anything if no actions
+    // TODO: Remove this debug view after testing
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.sectionTitle}>Actions I Can Handle</Text>
+          <Text style={styles.sectionSubtitle}>No pending actions</Text>
+        </View>
+        <View style={[styles.skeletonCard, { padding: spacing.md }]}>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
+            Actions will appear here when Cortex has suggestions for you.
+            {'\n\n'}Try connecting Gmail or Calendar to get started!
+          </Text>
+        </View>
+      </View>
+    );
   }
 
   const isPending = approveAction.isPending || dismissAction.isPending;
