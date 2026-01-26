@@ -85,6 +85,22 @@ async def generate_actions(
         )
 
 
+@router.get("/stats/summary", response_model=ActionStatsResponse)
+async def get_action_stats(
+    current_user: CurrentUser,
+    db: Database,
+) -> ActionStatsResponse:
+    """
+    Get statistics on autonomous actions for the current user.
+
+    Includes counts by status and approval rate.
+    """
+    service = AutonomousActionService(db)
+    stats = await service.get_action_stats(current_user.id)
+
+    return ActionStatsResponse(**stats)
+
+
 @router.get("/{action_id}", response_model=AutonomousActionResponse)
 async def get_action(
     action_id: UUID,
@@ -184,19 +200,3 @@ async def submit_feedback(
         success=result.get("success", False),
         message=result.get("message", ""),
     )
-
-
-@router.get("/stats/summary", response_model=ActionStatsResponse)
-async def get_action_stats(
-    current_user: CurrentUser,
-    db: Database,
-) -> ActionStatsResponse:
-    """
-    Get statistics on autonomous actions for the current user.
-
-    Includes counts by status and approval rate.
-    """
-    service = AutonomousActionService(db)
-    stats = await service.get_action_stats(current_user.id)
-
-    return ActionStatsResponse(**stats)
