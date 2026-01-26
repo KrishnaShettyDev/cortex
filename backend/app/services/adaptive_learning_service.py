@@ -29,7 +29,7 @@ class AdaptiveLearningService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.openai = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        self.openai = AsyncOpenAI(api_key=settings.openai_api_key)
 
     # ==================== MEMORY ACCESS TRACKING ====================
 
