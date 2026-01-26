@@ -176,7 +176,11 @@ class HybridRetrievalService:
             return results
 
         except Exception as e:
-            logger.error(f"Vector search failed: {e}")
+            # This can fail in test environments using SQLite (no pgvector support)
+            if "sqlite" in str(e).lower() or "<=" in str(e) or "<=>" in str(e):
+                logger.debug(f"Vector search not available (SQLite/test environment): {e}")
+            else:
+                logger.error(f"Vector search failed: {e}")
             return []
 
     async def entity_search(

@@ -25,16 +25,24 @@ export interface StatusUpdate {
   count?: number;
 }
 
+// Action taken during chat (auto-executed tools)
+export interface ActionTaken {
+  tool: string;
+  arguments: Record<string, unknown>;
+  result: Record<string, unknown>;
+}
+
 // Streaming event types matching backend SSE format
 export interface StreamEvent {
-  type: 'memories' | 'content' | 'pending_actions' | 'status' | 'done' | 'error';
-  data: MemoryReference[] | string | PendingAction[] | StatusUpdate | { conversation_id: string };
+  type: 'memories' | 'content' | 'pending_actions' | 'actions_taken' | 'status' | 'done' | 'error';
+  data: MemoryReference[] | string | PendingAction[] | ActionTaken[] | StatusUpdate | { conversation_id: string };
 }
 
 export interface StreamCallbacks {
   onMemories?: (memories: MemoryReference[]) => void;
   onContent?: (content: string) => void;
   onPendingActions?: (actions: PendingAction[]) => void;
+  onActionsTaken?: (actions: ActionTaken[]) => void;
   onStatus?: (status: StatusUpdate) => void;
   onDone?: (data: { conversation_id: string }) => void;
   onError?: (error: string) => void;
@@ -515,6 +523,9 @@ class ApiService {
         break;
       case 'pending_actions':
         callbacks.onPendingActions?.(event.data);
+        break;
+      case 'actions_taken':
+        callbacks.onActionsTaken?.(event.data);
         break;
       case 'status':
         logger.log('API: Received status event:', event.data);

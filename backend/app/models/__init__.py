@@ -20,6 +20,10 @@ from app.models.autonomous import (
     AutoDraft,
     AutoDraftStatus,
     AutoFollowUpRule,
+    AutonomousAction,
+    AutonomousActionStatus,
+    AutonomousActionType,
+    ActionFeedback,
 )
 from app.models.relationship import (
     RelationshipHealth,
@@ -74,6 +78,10 @@ __all__ = [
     "AutoDraft",
     "AutoDraftStatus",
     "AutoFollowUpRule",
+    "AutonomousAction",
+    "AutonomousActionStatus",
+    "AutonomousActionType",
+    "ActionFeedback",
     "RelationshipHealth",
     "RelationshipTier",
     "ImportantDate",

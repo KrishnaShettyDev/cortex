@@ -1715,6 +1715,52 @@ class SchedulerService:
         logger.info(f"Pattern warnings queued: {queued}")
         return {"queued": queued}
 
+    # === AUTONOMOUS ACTIONS JOBS ===
+
+    async def generate_autonomous_actions(self) -> dict:
+        """Generate autonomous action suggestions for active users."""
+        logger.info("Starting autonomous actions generation job")
+        generated = 0
+        errors = 0
+
+        async with async_session_maker() as db:
+            # Get users who were active in the last 24 hours
+            result = await db.execute(
+                select(User)
+                .join(PushToken)
+                .where(PushToken.is_active == True)
+                .distinct()
+            )
+            users = result.scalars().all()
+
+            logger.info(f"Generating autonomous actions for {len(users)} users")
+
+            from app.services.autonomous_action_service import AutonomousActionService
+
+            for user in users:
+                try:
+                    service = AutonomousActionService(db)
+                    actions = await service.generate_actions(user.id)
+                    generated += len(actions)
+                except Exception as e:
+                    logger.error(f"Error generating actions for {user.id}: {e}")
+                    errors += 1
+
+        logger.info(f"Autonomous actions generated: {generated}, errors: {errors}")
+        return {"generated": generated, "errors": errors}
+
+    async def expire_autonomous_actions(self) -> dict:
+        """Expire old autonomous actions that were not actioned."""
+        logger.info("Starting autonomous actions expiry job")
+
+        async with async_session_maker() as db:
+            from app.services.autonomous_action_service import AutonomousActionService
+            service = AutonomousActionService(db)
+            expired_count = await service.expire_old_actions()
+
+        logger.info(f"Autonomous actions expired: {expired_count}")
+        return {"expired": expired_count}
+
 
 # Create singleton instance for scheduler jobs
 scheduler_service = SchedulerService()

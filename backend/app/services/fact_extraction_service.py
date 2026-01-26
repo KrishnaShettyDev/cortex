@@ -147,13 +147,26 @@ class FactExtractionService:
             )
 
             # Parse the response
-            response_text = response.choices[0].message.content.strip()
+            response_content = response.choices[0].message.content
+            if not response_content:
+                logger.warning("Empty response from OpenAI API for fact extraction")
+                return []
+
+            response_text = response_content.strip()
+            if not response_text:
+                logger.warning("Empty response text from fact extraction")
+                return []
 
             # Handle potential markdown code blocks
             if response_text.startswith("```"):
                 response_text = response_text.split("```")[1]
                 if response_text.startswith("json"):
                     response_text = response_text[4:]
+
+            # Handle case where response is just "[]" or empty after processing
+            response_text = response_text.strip()
+            if not response_text or response_text == "[]":
+                return []
 
             facts_data = json.loads(response_text)
 

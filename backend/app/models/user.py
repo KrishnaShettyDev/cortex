@@ -146,5 +146,17 @@ class User(Base):
         cascade="all, delete-orphan",
     )
 
+    # Autonomous actions (Iris-style proactive suggestions)
+    autonomous_actions: Mapped[list["AutonomousAction"]] = relationship(
+        "AutonomousAction",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    action_feedback: Mapped[list["ActionFeedback"]] = relationship(
+        "ActionFeedback",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
     def __repr__(self) -> str:
         return f"<User {self.email}>"

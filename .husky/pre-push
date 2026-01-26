@@ -1,0 +1,15 @@
+# Run tests for changed files before pushing
+
+# Check if backend files changed
+if git diff --name-only HEAD @{push} 2>/dev/null | grep -q "^backend/"; then
+  echo "Backend files changed, running tests..."
+  cd backend && python -m pytest tests/ -x -q || exit 1
+fi
+
+# Check if mobile files changed
+if git diff --name-only HEAD @{push} 2>/dev/null | grep -q "^mobile/"; then
+  echo "Mobile files changed, running tests..."
+  cd mobile && npm test -- --passWithNoTests || exit 1
+fi
+
+echo "All pre-push checks passed!"

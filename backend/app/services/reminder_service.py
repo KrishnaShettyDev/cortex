@@ -316,7 +316,11 @@ class ReminderService:
             return False
 
         except Exception as e:
-            logger.error(f"Error sending reminder notification: {e}")
+            # Handle SQLite test environment gracefully (no push_tokens table)
+            if "sqlite" in str(e).lower() or "no such table" in str(e).lower():
+                logger.debug(f"Push notifications not available (SQLite/test environment): {e}")
+            else:
+                logger.error(f"Error sending reminder notification: {e}")
             return False
 
     async def check_location_reminders(

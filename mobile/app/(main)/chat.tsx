@@ -36,11 +36,12 @@ import {
   ThinkingIndicator,
   DailyBriefing,
   DayBriefingScroll,
+  AutonomousActionsList,
 } from '../../src/components';
 import { InsightsPillRow } from '../../src/components/InsightCards';
 import { useAuth } from '../../src/context/AuthContext';
 import { chatService, speechService, api, StatusUpdate } from '../../src/services';
-import { ChatMessage, PendingAction, MemoryReference, ProactiveInsightsResponse } from '../../src/types';
+import { ChatMessage, PendingAction, MemoryReference, ProactiveInsightsResponse, ActionTaken } from '../../src/types';
 import { colors, gradients, spacing, borderRadius } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { useChatSuggestions, useGreeting } from '../../src/hooks/useChat';
@@ -295,6 +296,7 @@ export default function ChatScreen() {
     try {
       let memoriesFound: MemoryReference[] = [];
       let pendingActionsFound: PendingAction[] = [];
+      let actionsTakenFound: ActionTaken[] = [];
       let fullContent = '';
       let convId = conversationId || '';
 
@@ -320,6 +322,9 @@ export default function ChatScreen() {
         onPendingActions: (actions) => {
           pendingActionsFound = actions;
         },
+        onActionsTaken: (actions) => {
+          actionsTakenFound = actions;
+        },
         onComplete: (response) => {
           clearTimeout(safetyTimeout);
           convId = response.conversation_id;
@@ -344,6 +349,7 @@ export default function ChatScreen() {
             content: response.response,
             memoriesUsed: response.memories_used,
             pendingActions: userFacingActions.length > 0 ? userFacingActions : undefined,
+            actionsTaken: response.actions_taken?.length > 0 ? response.actions_taken : undefined,
             timestamp: new Date(),
           };
 
@@ -557,6 +563,8 @@ export default function ChatScreen() {
       <Text style={styles.greetingText}>
         {getGreeting()}
       </Text>
+      {/* Autonomous Actions - Iris-style proactive suggestions */}
+      <AutonomousActionsList />
       {/* Horizontal scroll day briefing */}
       <DayBriefingScroll onItemPress={handleBriefingAction} />
       {/* Proactive Insights Pills */}

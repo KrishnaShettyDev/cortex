@@ -1,192 +1,200 @@
 # Privacy Policy
 
-**Last updated:** January 25, 2025
+Last Updated: January 26, 2026
 
-**App Name:** Cortex
-**Company:** [Your Company Name]
-**Contact:** 
+App Name: Cortex
+Company: Plutas
+Contact: founders@plutas.in
+Phone: +91 7780185418
 
 ---
 
 ## Introduction
 
-Cortex is your personal AI memory assistant that helps you capture, organize, and recall everything important in your life. By connecting to your Gmail, Google Calendar, and Google Drive, Cortex creates a searchable second brain that learns your patterns and helps you stay on top of commitments, relationships, and decisions.
+Cortex is an AI-powered personal memory assistant developed by Plutas. This Privacy Policy explains how we collect, use, store, and protect your information when you use our application.
 
-We take your privacy seriously and are committed to being transparent about how we use your data.
+We are committed to transparency and protecting your privacy. Your memories are personal, and we treat them with the utmost care.
 
 ---
 
 ## Information We Collect
 
-With your explicit permission, Cortex accesses the following:
+### Information You Provide
 
-**Gmail:** Email metadata and content to extract important information, track commitments, identify follow-ups, and create memories from your communications.
+- Account information (name, email) via Apple or Google Sign-In
+- Text memories you create
+- Voice recordings and their transcriptions
+- Photos you upload
+- Reminders and tasks you create
 
-**Google Calendar:** Your event history, upcoming events, and free time slots to help with smart rescheduling, meeting preparation, and time optimization.
+### Information from Integrations
 
-**Google Drive:** Document metadata to help you recall and reference important files in context.
+When you connect third-party services, we may access:
 
-**Voice & Text Input:** Memories you create through voice recordings or text input are processed and stored to build your personal knowledge base.
+- Gmail: Email metadata, sender information, subject lines, and content for memory creation
+- Google Calendar: Event details, attendees, meeting times, and descriptions
+- Location data: Only when explicitly provided for location-based reminders
 
-**Photos:** Images you choose to attach to memories for visual context and recall.
+### Information We Collect Automatically
 
-**Device Info:** Device type, OS version, push notification tokens, and anonymous usage logs for debugging, performance tracking, and delivering notifications.
+- Device information (device type, operating system)
+- App usage analytics
+- Push notification tokens
+- Error logs for troubleshooting
 
-**Location (Optional):** With your permission, your location to provide context-aware memories and personalized suggestions based on where you are.
+### Information We Do Not Collect
 
-### We do NOT:
-
-- Access your contacts without consent
-- Read your emails without purpose
-- Sell or share your data with third parties
-- Take actions without explicit user consent
-- Train AI models on your personal data
+- We do not access your contacts without explicit action
+- We do not track your location continuously
+- We do not access files outside of what you explicitly share
+- We do not collect payment or financial information
 
 ---
 
 ## How We Use Your Data
 
-We use your data to:
+We use your information to:
 
-- **Capture and organize memories** from your conversations, emails, and calendar events
-- **Enable semantic search** so you can find any memory using natural language
-- **Extract and track commitments** you've made to others and others have made to you
-- **Provide meeting preparation** briefs with relevant context before your meetings
-- **Smart reschedule** your calendar based on your preferences and energy patterns
-- **Surface insights** about your time allocation, relationships, and patterns
-- **Send proactive reminders** about important follow-ups, birthdays, and commitments
-- **Learn from your preferences** to improve Cortex's suggestions over time
+1. Provide core functionality: Store, search, and retrieve your memories
+2. Generate AI insights: Create connections between memories, identify patterns, and provide personalized suggestions
+3. Enable integrations: Sync with Google Calendar and Gmail to create memories from your digital life
+4. Send notifications: Deliver reminders, briefings, and relevant alerts
+5. Improve the service: Analyze usage patterns to enhance features and fix issues
 
-All actions are shown transparently in the app — you're always in control.
+We do not use your data to:
+
+- Train general AI models
+- Sell to advertisers
+- Share with third parties for their marketing purposes
 
 ---
 
-## Data Storage & Security
+## Data Storage and Security
 
-### Third-Party Integrations
+### Where Your Data is Stored
 
-All third-party integrations (Gmail, Calendar, Drive) are facilitated via **Composio**, a SOC 2-certified platform that handles authentication and data access on behalf of Cortex.
-
-- Authentication is securely handled via Google OAuth through Composio
-- Data retrieval and action execution (e.g., sending emails, creating events) occur through temporary authorized sessions
-
-### Data We Store
-
-Unlike session-only access, Cortex stores certain data to provide its core memory functionality:
-
-- **Memories:** Text content, summaries, and metadata of memories you create or that are extracted from your connected services
-- **Embeddings:** Vector representations of your memories for semantic search (these cannot be reverse-engineered to reveal original content)
-- **User Preferences:** Your notification settings, timezone, and app preferences
-- **Relationship Data:** Information about people you interact with, extracted from your memories to provide relationship intelligence
+- Database: PostgreSQL hosted on Neon (encrypted at rest)
+- Files: Cloudflare R2 (encrypted at rest)
+- All data transmitted over HTTPS/TLS
 
 ### Security Measures
 
-- All data is encrypted in transit (TLS 1.3) and at rest (AES-256)
-- Database access is restricted and monitored
-- We perform regular security audits
-- We do not store your Google OAuth tokens — these are managed securely by Composio
+- Industry-standard encryption for data at rest and in transit
+- Secure authentication via OAuth 2.0
+- Regular security audits
+- Access controls and monitoring
+- No plain-text storage of sensitive credentials
 
-### What We Don't Do
+### Third-Party Processors
 
-- We do not train AI models on your personal data
-- We do not sell or share any user data with third parties
-- We do not access your data for advertising purposes
+We use the following processors:
+
+- Composio: SOC 2-certified integration platform for Google services
+- OpenAI: AI processing with data processing agreement in place
+- Cloudflare: Content delivery and file storage
+- Neon: Database hosting
+- Expo: Push notification delivery
+
+---
+
+## Data Retention
+
+- Active accounts: Data retained while your account is active
+- Deleted memories: Permanently removed within 30 days
+- Account deletion: All data permanently deleted within 30 days of request
+- Integration data: Session-based access, not permanently stored separately
 
 ---
 
 ## Google API Disclosure
 
-Cortex uses Google APIs to access your Gmail, Calendar, and Drive data. Our use and transfer of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
+Cortex's use of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. We only request permissions necessary to provide our service and do not use Google data for advertising purposes.
 
 Specifically:
+
 - We only request access to the data necessary for the app's functionality
 - We do not use Google user data for serving advertisements
 - We do not allow humans to read your data unless required for security purposes, required by law, or with your explicit consent
 
 ---
 
-## User Control
+## Your Rights and Controls
 
-You have full control over your data:
+You have the right to:
 
-**Revoke Access:** Disconnect Google services at any time through the app settings or via [Google Account Permissions](https://myaccount.google.com/permissions)
+### Access Your Data
 
-**Delete Memories:** Delete individual memories or bulk delete from within the app
+- View all memories stored in your account
+- Export your data upon request
 
-**Delete Account:** Permanently delete your account and all associated data through the app or by contacting us
+### Modify Your Data
 
-**Export Data:** Request a full export of your data by emailing: support@cortexapp.com
+- Edit or delete individual memories
+- Update your account information
 
-**Notification Control:** Customize or disable all notifications through the app settings
+### Delete Your Data
 
----
+- Delete your entire account and all associated data
+- Request complete data deletion by contacting us
 
-## Data Retention
+### Revoke Integrations
 
-- **Active Accounts:** Your data is retained as long as your account is active
-- **Deleted Memories:** Permanently removed within 30 days of deletion
-- **Deleted Accounts:** All user data is permanently deleted within 30 days of account deletion
-- **Backups:** Encrypted backups are retained for up to 90 days for disaster recovery, then permanently deleted
+- Disconnect Google services at any time through the app settings
+- Revoke access via your Google Account security settings at myaccount.google.com/permissions
+
+### Opt Out
+
+- Disable push notifications
+- Disable specific notification types
+- Opt out of analytics
 
 ---
 
 ## Children's Privacy
 
-Cortex is not intended for users under 13 years old. We do not knowingly collect personal information from children under 13. If you believe a child under 13 has provided us with personal information, please contact us immediately.
+Cortex is not intended for children under 13 years of age. We do not knowingly collect personal information from children under 13. If you believe we have collected information from a child under 13, please contact us immediately at founders@plutas.in.
 
 ---
 
 ## International Data Transfers
 
-Your data may be processed in countries other than your country of residence. We ensure appropriate safeguards are in place to protect your data in accordance with this privacy policy and applicable laws.
+Your data may be processed in countries other than your own. We ensure appropriate safeguards are in place for international transfers in compliance with applicable data protection laws.
 
 ---
 
 ## Changes to This Policy
 
-If we make significant changes to this privacy policy, we will notify users via:
-- Email notification to your registered email address
-- In-app notification
-- Updated "Last updated" date at the top of this policy
+We may update this Privacy Policy from time to time. We will notify you of significant changes by:
+
+- Sending an email to your registered address
+- Displaying a notice in the app
+- Updating the Last Updated date
 
 We encourage you to review this policy periodically.
 
 ---
 
-## Your Rights
+## Data Protection Rights
 
-Depending on your location, you may have the following rights:
+Depending on your jurisdiction, you may have additional rights under GDPR, CCPA, or other privacy regulations, including:
 
-- **Access:** Request a copy of your personal data
-- **Correction:** Request correction of inaccurate data
-- **Deletion:** Request deletion of your data
-- **Portability:** Request your data in a portable format
-- **Objection:** Object to certain processing of your data
+- Right to access
+- Right to rectification
+- Right to erasure
+- Right to restrict processing
+- Right to data portability
+- Right to object
+- Rights related to automated decision-making
 
-To exercise any of these rights, contact us at support@cortexapp.com
-
----
-
-## Contact
-
-Have questions about this privacy policy or your data?
-
-**Email:** support@cortexapp.com
-
-We typically respond within 48 hours.
+To exercise any of these rights, contact us at founders@plutas.in.
 
 ---
 
-## Summary
+## Contact Us
 
-| What We Do | What We Don't Do |
-|------------|------------------|
-| Store your memories securely | Sell your data |
-| Use encryption for all data | Train AI on your data |
-| Give you full control | Share with third parties |
-| Be transparent about access | Access data without purpose |
-| Respect your preferences | Take actions without consent |
+If you have questions, concerns, or requests regarding this Privacy Policy or your data, please contact us:
 
----
+Email: founders@plutas.in
+Phone: +91 7780185418
 
-*We're building Cortex for transparency, control, and trust. Your memories are yours.*
+We will respond to your inquiry within 30 days.

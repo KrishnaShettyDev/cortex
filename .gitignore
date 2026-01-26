@@ -78,3 +78,13 @@ htmlcov/
 *.temp
 *.bak
 *.backup
+
+# Credentials
+google-services-key.json
+*.pem
+*.p12
+*.mobileprovision
+
+# Coverage
+coverage/
+*.lcov

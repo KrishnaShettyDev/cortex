@@ -24,3 +24,5 @@ export * from './DayBriefingScroll';
 export * from './CalendarSkeletonLoader';
 export * from './DateStripScroller';
 export * from './MeetingTypeConfig';
+export * from './AutonomousActionCard';
+export * from './AutonomousActionsList';

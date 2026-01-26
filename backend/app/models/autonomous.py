@@ -177,3 +177,117 @@ class AutoFollowUpRule(Base):
 
     # Relationships
     user = relationship("User", back_populates="auto_followup_rules")
+
+
+class AutonomousActionStatus(str, enum.Enum):
+    PENDING = "pending"  # Ready for user to approve/dismiss
+    APPROVED = "approved"  # User approved, awaiting execution
+    DISMISSED = "dismissed"  # User dismissed
+    EXPIRED = "expired"  # Expired without action
+    EXECUTED = "executed"  # Successfully executed
+    FAILED = "failed"  # Execution failed
+
+
+class AutonomousActionType(str, enum.Enum):
+    EMAIL_REPLY = "email_reply"
+    EMAIL_COMPOSE = "email_compose"
+    CALENDAR_CREATE = "calendar_create"
+    CALENDAR_RESCHEDULE = "calendar_reschedule"
+    CALENDAR_CANCEL = "calendar_cancel"
+    MEETING_PREP = "meeting_prep"
+    REMINDER_CREATE = "reminder_create"
+    TASK_CREATE = "task_create"
+    FOLLOWUP = "followup"
+
+
+class AutonomousAction(Base):
+    """
+    Iris-style autonomous action suggestions.
+
+    Cortex proactively generates actionable suggestions:
+    - "Reply to Sarah's urgent email" with pre-filled draft
+    - "Reschedule conflicting meeting" with suggested time
+    - "Block focus time" with calendar event ready
+
+    User sees card with one-tap approve/dismiss.
+    """
+    __tablename__ = "cortex_autonomous_actions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("cortex_users.id"), nullable=False)
+
+    # Action details
+    action_type = Column(String(50), nullable=False)  # email_reply, calendar_create, etc.
+    title = Column(String(255), nullable=False)  # Card title: "Reply to Sarah"
+    description = Column(Text)  # Card description/preview
+
+    # Pre-filled action payload - ready to execute
+    action_payload = Column(JSONB, nullable=False)
+    # Email: {thread_id, to, subject, body}
+    # Calendar: {title, start_time, end_time, attendees, location}
+    # Reminder: {title, due_at, notes}
+
+    # Context & reasoning
+    reason = Column(Text)  # Why suggested: "Sarah usually expects reply within 2h"
+    source_type = Column(String(50))  # "email", "calendar", "pattern", "memory"
+    source_id = Column(String(255))  # Reference to source (thread_id, event_id, etc.)
+
+    # Scoring
+    confidence_score = Column(Float, default=0.5)  # 0-1, higher = more confident
+    priority_score = Column(Float, default=50.0)  # 0-100, for ordering
+
+    # Status tracking
+    status = Column(String(20), default="pending")
+
+    # User feedback
+    user_feedback = Column(String(50))  # helpful, not_helpful, wrong_timing, incorrect
+    user_modification = Column(JSONB)  # If user edited before approving
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime)  # Auto-expire after X hours
+    surfaced_at = Column(DateTime)  # When shown to user
+    actioned_at = Column(DateTime)  # When user approved/dismissed
+    executed_at = Column(DateTime)  # When action was executed
+
+    # Error tracking
+    error_message = Column(Text)  # If execution failed
+
+    # Relationships
+    user = relationship("User", back_populates="autonomous_actions")
+    feedback_entries = relationship("ActionFeedback", back_populates="autonomous_action", cascade="all, delete-orphan")
+
+
+class ActionFeedback(Base):
+    """
+    Detailed feedback on autonomous actions for learning.
+
+    Tracks:
+    - What user modified before approving
+    - Why user dismissed
+    - Rating for executed actions
+    """
+    __tablename__ = "cortex_action_feedback"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("cortex_users.id"), nullable=False)
+    autonomous_action_id = Column(UUID(as_uuid=True), ForeignKey("cortex_autonomous_actions.id"), nullable=False)
+
+    # Feedback details
+    feedback_type = Column(String(30), nullable=False)  # approved, dismissed, modified, expired
+    rating = Column(Integer)  # 1-5 optional rating
+    comment = Column(Text)  # User comment
+
+    # Modification details
+    modification_summary = Column(Text)  # What user changed
+    original_payload = Column(JSONB)  # Original suggestion
+    modified_payload = Column(JSONB)  # User's modifications
+
+    # Dismiss reason (if dismissed)
+    dismiss_reason = Column(String(50))  # wrong_timing, not_relevant, incorrect, too_aggressive
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", back_populates="action_feedback")
+    autonomous_action = relationship("AutonomousAction", back_populates="feedback_entries")

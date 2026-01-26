@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 10.0.0"
+    "version": ">= 10.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
@@ -15,8 +16,13 @@
     },
     "preview": {
       "distribution": "internal",
+      "channel": "preview",
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "autoIncrement": true
+      },
+      "android": {
+        "autoIncrement": true
       },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://askcortex.plutas.in"
@@ -24,6 +30,8 @@
     },
     "production": {
       "distribution": "store",
+      "channel": "production",
+      "autoIncrement": true,
       "ios": {
         "resourceClass": "m-medium"
       },

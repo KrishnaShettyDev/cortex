@@ -11,7 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from app.config import get_settings
 from app.database import init_db
-from app.api import auth, memories, chat, integrations, upload, notifications, people, connections, feedback, reminders, advanced, reviews, context, emotions, autobiography, intentions, patterns, benchmark, smart_rescheduling
+from app.api import auth, memories, chat, integrations, upload, notifications, people, connections, feedback, reminders, advanced, reviews, context, emotions, autobiography, intentions, patterns, benchmark, smart_rescheduling, autonomous_actions
 from app.services.scheduler_service import scheduler_service
 from app.services.intelligence_implementations import set_composio_toolset
 from app.rate_limiter import limiter
@@ -370,6 +370,24 @@ async def lifespan(app: FastAPI):
         name="Scan and queue pattern warnings",
     )
 
+    # === AUTONOMOUS ACTIONS JOBS ===
+
+    # Generate autonomous actions - every 30 minutes
+    scheduler.add_job(
+        scheduler_service.generate_autonomous_actions,
+        CronTrigger(minute="10,40"),  # At 10 and 40 minutes past each hour
+        id="generate_autonomous_actions",
+        name="Generate autonomous action suggestions",
+    )
+
+    # Expire old autonomous actions - hourly
+    scheduler.add_job(
+        scheduler_service.expire_autonomous_actions,
+        CronTrigger(minute=55),  # At 55 minutes past each hour
+        id="expire_autonomous_actions",
+        name="Expire old autonomous actions",
+    )
+
     scheduler.start()
     logger.info("Notification scheduler started with proactive orchestrator, advanced memory, autonomous email, and relationship intelligence features")
 
@@ -436,6 +454,7 @@ app.include_router(intentions.router, prefix="/intentions", tags=["Prospective M
 app.include_router(patterns.router, prefix="/patterns", tags=["Behavioral Patterns"])
 app.include_router(benchmark.router, tags=["Benchmark"])
 app.include_router(smart_rescheduling.router, tags=["Smart Rescheduling"])
+app.include_router(autonomous_actions.router, tags=["Autonomous Actions"])
 
 
 @app.get("/health")

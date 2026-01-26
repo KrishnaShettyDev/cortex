@@ -399,3 +399,91 @@ export interface DailyBriefingResponse {
   has_urgent: boolean;
   generated_at: string;
 }
+
+// ==================== AUTONOMOUS ACTIONS ====================
+
+export type AutonomousActionType =
+  | 'email_reply'
+  | 'email_compose'
+  | 'calendar_create'
+  | 'calendar_reschedule'
+  | 'calendar_cancel'
+  | 'meeting_prep'
+  | 'reminder_create'
+  | 'task_create'
+  | 'followup';
+
+export interface EmailPayload {
+  thread_id: string;
+  to: string;
+  subject: string;
+  body: string;
+}
+
+export interface CalendarPayload {
+  event_id?: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  description?: string;
+  location?: string;
+  attendees?: string[];
+}
+
+export interface MeetingPrepPayload {
+  event_id: string;
+  event_title: string;
+  start_time: string;
+  attendees?: string[];
+}
+
+export type ActionPayload = EmailPayload | CalendarPayload | MeetingPrepPayload;
+
+export interface AutonomousAction {
+  id: string;
+  action_type: AutonomousActionType;
+  title: string;
+  description: string | null;
+  action_payload: ActionPayload;
+  reason: string | null;
+  confidence_score: number;
+  priority_score: number;
+  source_type: string | null;
+  source_id: string | null;
+  status: 'pending' | 'approved' | 'dismissed' | 'expired' | 'executed' | 'failed';
+  created_at: string;
+  expires_at: string | null;
+}
+
+export interface AutonomousActionsResponse {
+  actions: AutonomousAction[];
+  count: number;
+}
+
+export interface ActionExecutionResult {
+  success: boolean;
+  message: string;
+  event_id?: string;
+  event_url?: string;
+  message_id?: string;
+  thread_id?: string;
+}
+
+export interface ActionDismissResult {
+  success: boolean;
+  message: string;
+}
+
+export interface ActionFeedbackResult {
+  success: boolean;
+  message: string;
+}
+
+export interface ActionStatsResponse {
+  pending: number;
+  executed: number;
+  dismissed: number;
+  expired: number;
+  total: number;
+  approval_rate: number;
+}

@@ -70,4 +70,11 @@ export const queryKeys = {
     all: ['user'] as const,
     profile: () => ['user', 'profile'] as const,
   },
+  // Autonomous Actions
+  autonomousActions: {
+    all: ['autonomousActions'] as const,
+    pending: () => ['autonomousActions', 'pending'] as const,
+    detail: (id: string) => ['autonomousActions', 'detail', id] as const,
+    stats: () => ['autonomousActions', 'stats'] as const,
+  },
 };

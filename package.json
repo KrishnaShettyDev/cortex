@@ -1,0 +1,21 @@
+{
+  "name": "cortex-monorepo",
+  "private": true,
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0"
+  },
+  "lint-staged": {
+    "backend/**/*.py": [
+      "ruff check --fix",
+      "ruff format"
+    ],
+    "mobile/**/*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  }
+}

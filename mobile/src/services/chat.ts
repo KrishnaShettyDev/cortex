@@ -1,4 +1,4 @@
-import { api, StreamCallbacks, StatusUpdate } from './api';
+import { api, StreamCallbacks, StatusUpdate, ActionTaken } from './api';
 import {
   ChatResponse,
   ExecuteActionRequest,
@@ -22,6 +22,7 @@ export interface StreamingChatResponse {
   conversation_id: string;
   memories_used: MemoryReference[];
   pending_actions: PendingAction[];
+  actions_taken: ActionTaken[];
 }
 
 // Streaming chat callbacks matching what the UI needs
@@ -31,6 +32,7 @@ export interface ChatStreamCallbacks {
   onStatus?: (status: StatusUpdate) => void;
   onContent?: (content: string, fullContent: string) => void;
   onPendingActions?: (actions: PendingAction[]) => void;
+  onActionsTaken?: (actions: ActionTaken[]) => void;
   onComplete?: (response: StreamingChatResponse) => void;
   onError?: (error: string) => void;
 }
@@ -53,6 +55,7 @@ class ChatService {
     // Track state during streaming
     let memoriesUsed: MemoryReference[] = [];
     let pendingActions: PendingAction[] = [];
+    let actionsTaken: ActionTaken[] = [];
     let fullContent = '';
     let convId = conversationId || '';
 
@@ -86,6 +89,10 @@ class ChatService {
         pendingActions = actions;
         callbacks.onPendingActions?.(pendingActions);
       },
+      onActionsTaken: (actions) => {
+        actionsTaken = actions;
+        callbacks.onActionsTaken?.(actionsTaken);
+      },
       onDone: (data) => {
         convId = data.conversation_id;
         callbacks.onComplete?.({
@@ -93,6 +100,7 @@ class ChatService {
           conversation_id: convId,
           memories_used: memoriesUsed,
           pending_actions: pendingActions,
+          actions_taken: actionsTaken,
         });
       },
       onError: callbacks.onError,
