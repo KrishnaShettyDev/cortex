@@ -7,9 +7,10 @@
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { colors, borderRadius, spacing } from '../theme';
+import { colors, borderRadius, spacing, useTheme } from '../theme';
 
 export function LoadingBubble() {
+  const { colors: themeColors, isDark } = useTheme();
   const dots = [
     useRef(new Animated.Value(0.3)).current,
     useRef(new Animated.Value(0.3)).current,
@@ -44,14 +45,21 @@ export function LoadingBubble() {
 
   return (
     <View style={styles.container}>
-      <BlurView intensity={15} tint="dark" style={styles.blurContainer}>
-        <View style={styles.bubble}>
+      <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={styles.blurContainer}>
+        <View style={[
+          styles.bubble,
+          {
+            backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)',
+            borderColor: themeColors.glassBorder,
+          }
+        ]}>
           {dots.map((dot, index) => (
             <Animated.View
               key={index}
               style={[
                 styles.dot,
                 {
+                  backgroundColor: themeColors.accent,
                   opacity: dot,
                   transform: [{
                     scale: dot.interpolate({

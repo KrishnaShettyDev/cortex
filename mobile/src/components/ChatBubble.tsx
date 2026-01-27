@@ -11,7 +11,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Linking, Image, ActivityIndicator } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, borderRadius, spacing, typography } from '../theme';
+import { colors, borderRadius, spacing, typography, useTheme } from '../theme';
 import {
   ChatMessage,
   ActionTaken,
@@ -36,22 +36,23 @@ import {
 
 // ============ PHOTO MEMORY CARD ============
 function PhotoMemoryCard({ photoUrl }: { photoUrl: string }) {
+  const { colors: themeColors } = useTheme();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   if (error) {
     return (
-      <View style={[styles.photoMemoryCard, styles.photoMemoryError]}>
-        <Ionicons name="image-outline" size={24} color={colors.textTertiary} />
+      <View style={[styles.photoMemoryCard, styles.photoMemoryError, { backgroundColor: themeColors.bgTertiary }]}>
+        <Ionicons name="image-outline" size={24} color={themeColors.textTertiary} />
       </View>
     );
   }
 
   return (
-    <View style={styles.photoMemoryCard}>
+    <View style={[styles.photoMemoryCard, { backgroundColor: themeColors.bgSecondary, borderColor: themeColors.glassBorder }]}>
       {loading && (
-        <View style={styles.photoLoading}>
-          <ActivityIndicator size="small" color={colors.accent} />
+        <View style={[styles.photoLoading, { backgroundColor: themeColors.bgTertiary }]}>
+          <ActivityIndicator size="small" color={themeColors.accent} />
         </View>
       )}
       <Image
@@ -70,7 +71,7 @@ function PhotoMemoryCard({ photoUrl }: { photoUrl: string }) {
 }
 
 // ============ ACTION CARD (Completed actions) ============
-function ActionCard({ action }: { action: ActionTaken }) {
+function ActionCard({ action, colors }: { action: ActionTaken; colors: any }) {
   const getActionInfo = () => {
     switch (action.tool) {
       case 'create_calendar_event':
@@ -144,7 +145,7 @@ function ActionCard({ action }: { action: ActionTaken }) {
 
   return (
     <TouchableOpacity
-      style={[styles.actionCard, !isSuccess && styles.actionCardError]}
+      style={[styles.actionCard, { backgroundColor: colors.fill, borderColor: colors.glassBorder }, !isSuccess && styles.actionCardError]}
       onPress={handlePress}
       disabled={!action.result.event_url}
       activeOpacity={0.7}
@@ -153,8 +154,8 @@ function ActionCard({ action }: { action: ActionTaken }) {
         {renderIcon()}
       </View>
       <View style={styles.actionContent}>
-        <Text style={styles.actionTitle}>{isSuccess ? info.title : 'Action Failed'}</Text>
-        <Text style={styles.actionSubtitle} numberOfLines={1}>
+        <Text style={[styles.actionTitle, { color: colors.textPrimary }]}>{isSuccess ? info.title : 'Action Failed'}</Text>
+        <Text style={[styles.actionSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
           {isSuccess ? info.subtitle : action.result.message}
         </Text>
       </View>
@@ -238,7 +239,7 @@ function RichContentFromAction({ action }: { action: ActionTaken }) {
 // Actions that can be reviewed/edited before execution
 const REVIEWABLE_ACTIONS = ['send_email', 'create_calendar_event'];
 
-function PendingActionCard({ action, onReview }: { action: PendingAction; onReview?: () => void }) {
+function PendingActionCard({ action, onReview, colors }: { action: PendingAction; onReview?: () => void; colors: any }) {
   const isReviewable = REVIEWABLE_ACTIONS.includes(action.tool);
 
   const getActionInfo = () => {
@@ -311,7 +312,7 @@ function PendingActionCard({ action, onReview }: { action: PendingAction; onRevi
 
   return (
     <TouchableOpacity
-      style={styles.pendingActionCard}
+      style={[styles.pendingActionCard, { backgroundColor: colors.accent + '08', borderColor: colors.accent + '25' }]}
       onPress={isReviewable ? onReview : undefined}
       activeOpacity={isReviewable ? 0.7 : 1}
       disabled={!isReviewable}
@@ -320,14 +321,14 @@ function PendingActionCard({ action, onReview }: { action: PendingAction; onRevi
         {renderIcon()}
       </View>
       <View style={styles.actionContent}>
-        <Text style={styles.actionTitle}>{info.title}</Text>
-        <Text style={styles.actionSubtitle} numberOfLines={1}>
+        <Text style={[styles.actionTitle, { color: colors.textPrimary }]}>{info.title}</Text>
+        <Text style={[styles.actionSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
           {info.subtitle}
         </Text>
       </View>
       {isReviewable && (
-        <View style={styles.reviewButton}>
-          <Text style={styles.reviewButtonText}>Review</Text>
+        <View style={[styles.reviewButton, { backgroundColor: colors.accent + '20' }]}>
+          <Text style={[styles.reviewButtonText, { color: colors.accent }]}>Review</Text>
           <Ionicons name="chevron-forward" size={14} color={colors.accent} />
         </View>
       )}
@@ -363,6 +364,7 @@ interface ChatBubbleProps {
 }
 
 export function ChatBubble({ message, onReviewAction }: ChatBubbleProps) {
+  const { colors: themeColors, isDark } = useTheme();
   const isUser = message.role === 'user';
   const hasActions = message.actionsTaken && message.actionsTaken.length > 0;
   const hasPendingActions = message.pendingActions && message.pendingActions.length > 0;
@@ -387,8 +389,8 @@ export function ChatBubble({ message, onReviewAction }: ChatBubbleProps) {
   if (isUser) {
     return (
       <View style={styles.userContainer}>
-        <View style={styles.userBubble}>
-          <Text style={styles.userText}>{message.content}</Text>
+        <View style={[styles.userBubble, { backgroundColor: themeColors.accent + '25', borderColor: themeColors.accent + '40' }]}>
+          <Text style={[styles.userText, { color: themeColors.textPrimary }]}>{message.content}</Text>
         </View>
       </View>
     );
@@ -405,6 +407,7 @@ export function ChatBubble({ message, onReviewAction }: ChatBubbleProps) {
               key={action.action_id || index}
               action={action}
               onReview={() => onReviewAction?.(action)}
+              colors={themeColors}
             />
           ))}
         </View>
@@ -414,7 +417,7 @@ export function ChatBubble({ message, onReviewAction }: ChatBubbleProps) {
       {hasActions && !hasRichContent && (
         <View style={styles.actionsSection}>
           {message.actionsTaken!.map((action, index) => (
-            <ActionCard key={index} action={action} />
+            <ActionCard key={index} action={action} colors={themeColors} />
           ))}
         </View>
       )}
@@ -422,9 +425,9 @@ export function ChatBubble({ message, onReviewAction }: ChatBubbleProps) {
       {/* Message text with glassmorphic styling */}
       {message.content && (
         <View style={styles.assistantBubbleContainer}>
-          <BlurView intensity={15} tint="dark" style={styles.assistantBlur}>
-            <View style={styles.assistantBubble}>
-              <Text style={styles.assistantText}>{message.content}</Text>
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={styles.assistantBlur}>
+            <View style={[styles.assistantBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)', borderColor: themeColors.glassBorder }]}>
+              <Text style={[styles.assistantText, { color: themeColors.textPrimary }]}>{message.content}</Text>
             </View>
           </BlurView>
         </View>

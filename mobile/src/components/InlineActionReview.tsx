@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
 import { ServiceStatusPill } from './ServiceStatusPill';
 
@@ -47,6 +47,7 @@ export function InlineActionReview({
   onCancel,
   isLoading = false,
 }: InlineActionReviewProps) {
+  const { colors: themeColors } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
 
   // Email state
@@ -84,33 +85,33 @@ export function InlineActionReview({
       return (
         <View style={styles.editContent}>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>To:</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textSecondary }]}>To:</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary }]}
               value={emailTo}
               onChangeText={setEmailTo}
               placeholder="recipient@email.com"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
               keyboardType="email-address"
               autoCapitalize="none"
             />
           </View>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>Subject:</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textSecondary }]}>Subject:</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary }]}
               value={emailSubject}
               onChangeText={setEmailSubject}
               placeholder="Email subject"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </View>
           <TextInput
-            style={[styles.textInput, styles.bodyInput]}
+            style={[styles.textInput, styles.bodyInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary }]}
             value={emailBody}
             onChangeText={setEmailBody}
             placeholder="Email body"
-            placeholderTextColor={colors.textTertiary}
+            placeholderTextColor={themeColors.textTertiary}
             multiline
             textAlignVertical="top"
           />
@@ -123,15 +124,15 @@ export function InlineActionReview({
         <View style={styles.headerRow}>
           <GmailIcon size={22} />
           <View style={styles.headerText}>
-            <Text style={styles.actionTitle}>Send Email</Text>
-            <Text style={styles.recipientText}>To: {emailTo}</Text>
+            <Text style={[styles.actionTitle, { color: themeColors.textPrimary }]}>Send Email</Text>
+            <Text style={[styles.recipientText, { color: themeColors.textSecondary }]}>To: {emailTo}</Text>
           </View>
         </View>
 
-        <Text style={styles.subjectLine}>Subject: {emailSubject}</Text>
+        <Text style={[styles.subjectLine, { color: themeColors.textSecondary }]}>Subject: {emailSubject}</Text>
 
         <ScrollView style={styles.bodyScroll} nestedScrollEnabled>
-          <Text style={styles.bodyText}>{emailBody}</Text>
+          <Text style={[styles.bodyText, { color: themeColors.textPrimary }]}>{emailBody}</Text>
         </ScrollView>
       </View>
     );
@@ -142,33 +143,33 @@ export function InlineActionReview({
       return (
         <View style={styles.editContent}>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>Title:</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textSecondary }]}>Title:</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary }]}
               value={calendarTitle}
               onChangeText={setCalendarTitle}
               placeholder="Event title"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </View>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>When:</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textSecondary }]}>When:</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary }]}
               value={calendarDatetime}
               onChangeText={setCalendarDatetime}
               placeholder="Date and time"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </View>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>Location:</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textSecondary }]}>Location:</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary }]}
               value={calendarLocation}
               onChangeText={setCalendarLocation}
               placeholder="Location (optional)"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </View>
         </View>
@@ -180,20 +181,20 @@ export function InlineActionReview({
         <View style={styles.headerRow}>
           <GoogleCalendarIcon size={22} />
           <View style={styles.headerText}>
-            <Text style={styles.actionTitle}>Create Event</Text>
-            <Text style={styles.recipientText}>{calendarTitle}</Text>
+            <Text style={[styles.actionTitle, { color: themeColors.textPrimary }]}>Create Event</Text>
+            <Text style={[styles.recipientText, { color: themeColors.textSecondary }]}>{calendarTitle}</Text>
           </View>
         </View>
 
         <View style={styles.detailRow}>
-          <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
-          <Text style={styles.detailText}>{calendarDatetime}</Text>
+          <Ionicons name="time-outline" size={16} color={themeColors.textSecondary} />
+          <Text style={[styles.detailText, { color: themeColors.textSecondary }]}>{calendarDatetime}</Text>
         </View>
 
         {calendarLocation ? (
           <View style={styles.detailRow}>
-            <Ionicons name="location-outline" size={16} color={colors.textSecondary} />
-            <Text style={styles.detailText}>{calendarLocation}</Text>
+            <Ionicons name="location-outline" size={16} color={themeColors.textSecondary} />
+            <Text style={[styles.detailText, { color: themeColors.textSecondary }]}>{calendarLocation}</Text>
           </View>
         ) : null}
       </View>
@@ -210,23 +211,23 @@ export function InlineActionReview({
       />
 
       {/* Review Actions Card */}
-      <View style={styles.reviewCard}>
-        <Text style={styles.reviewHeader}>Review Actions</Text>
+      <View style={[styles.reviewCard, { backgroundColor: themeColors.bgTertiary }]}>
+        <Text style={[styles.reviewHeader, { color: themeColors.textPrimary }]}>Review Actions</Text>
 
-        <View style={styles.actionCard}>
+        <View style={[styles.actionCard, { backgroundColor: themeColors.bgSecondary, borderColor: themeColors.glassBorder }]}>
           {isEmail ? renderEmailContent() : renderCalendarContent()}
 
           {/* Edit Button */}
           <TouchableOpacity
-            style={styles.editButton}
+            style={[styles.editButton, { borderTopColor: themeColors.glassBorder, backgroundColor: themeColors.bgTertiary }]}
             onPress={() => setIsEditing(!isEditing)}
           >
             <Ionicons
               name={isEditing ? 'checkmark' : 'pencil'}
               size={16}
-              color={colors.textSecondary}
+              color={themeColors.textSecondary}
             />
-            <Text style={styles.editButtonText}>
+            <Text style={[styles.editButtonText, { color: themeColors.textSecondary }]}>
               {isEditing ? 'Done' : 'Edit'}
             </Text>
           </TouchableOpacity>
@@ -235,22 +236,22 @@ export function InlineActionReview({
         {/* Action Buttons */}
         <View style={styles.buttons}>
           <TouchableOpacity
-            style={styles.cancelButton}
+            style={[styles.cancelButton, { backgroundColor: themeColors.bgSecondary, borderColor: themeColors.glassBorder }]}
             onPress={onCancel}
             disabled={isLoading}
           >
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+            <Text style={[styles.cancelButtonText, { color: themeColors.textPrimary }]}>Cancel</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.confirmButton, isEditing && styles.confirmButtonDisabled]}
+            style={[styles.confirmButton, { backgroundColor: themeColors.bgSecondary, borderColor: themeColors.glassBorder }, isEditing && styles.confirmButtonDisabled]}
             onPress={handleConfirm}
             disabled={isLoading || isEditing}
           >
             {isLoading ? (
-              <ActivityIndicator size="small" color={colors.textPrimary} />
+              <ActivityIndicator size="small" color={themeColors.textPrimary} />
             ) : (
-              <Text style={[styles.confirmButtonText, isEditing && styles.confirmButtonTextDisabled]}>
+              <Text style={[styles.confirmButtonText, { color: themeColors.textPrimary }, isEditing && { color: themeColors.textSecondary }]}>
                 {isEmail ? 'Send' : 'Create'}
               </Text>
             )}

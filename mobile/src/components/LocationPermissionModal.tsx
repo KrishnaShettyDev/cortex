@@ -9,7 +9,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BottomSheet } from './BottomSheet';
-import { colors, gradients, spacing, borderRadius, typography, buttonStyles } from '../theme';
+import { colors, gradients, spacing, borderRadius, typography, buttonStyles, useTheme } from '../theme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -26,6 +26,8 @@ export function LocationPermissionModal({
   onEnableLocation,
   isLoading = false,
 }: LocationPermissionModalProps) {
+  const { colors: themeColors, gradients: themeGradients } = useTheme();
+
   const handleEnableLocation = async () => {
     await onEnableLocation();
     onClose();
@@ -37,28 +39,28 @@ export function LocationPermissionModal({
         {/* Icon with gradient background */}
         <View style={styles.iconContainer}>
           <LinearGradient
-            colors={gradients.primary}
+            colors={themeGradients.primary}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.iconGradient}
           >
-            <Ionicons name="location" size={36} color={colors.bgPrimary} />
+            <Ionicons name="location" size={36} color={themeColors.bgPrimary} />
           </LinearGradient>
         </View>
 
         {/* Title */}
-        <Text style={styles.title}>Enable Location</Text>
+        <Text style={[styles.title, { color: themeColors.textPrimary }]}>Enable Location</Text>
 
         {/* Description */}
-        <Text style={styles.description}>
+        <Text style={[styles.description, { color: themeColors.textSecondary }]}>
           To find places near you, Cortex needs your location. This helps us suggest restaurants,
           coffee shops, and venues nearby.
         </Text>
 
         {/* Privacy note */}
-        <View style={styles.privacyNote}>
-          <Ionicons name="shield-checkmark" size={16} color={colors.success} />
-          <Text style={styles.privacyText}>
+        <View style={[styles.privacyNote, { backgroundColor: themeColors.fill }]}>
+          <Ionicons name="shield-checkmark" size={16} color={themeColors.success} />
+          <Text style={[styles.privacyText, { color: themeColors.textSecondary }]}>
             Your location is only used when you search for places
           </Text>
         </View>
@@ -66,27 +68,27 @@ export function LocationPermissionModal({
         {/* Buttons */}
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={[buttonStyles.primary, styles.primaryButton]}
+            style={[buttonStyles.primary, styles.primaryButton, { backgroundColor: themeColors.accent }]}
             onPress={handleEnableLocation}
             disabled={isLoading}
           >
             <Ionicons
               name="navigate"
               size={20}
-              color={colors.bgPrimary}
+              color={themeColors.bgPrimary}
               style={styles.buttonIcon}
             />
-            <Text style={buttonStyles.primaryText}>
+            <Text style={[buttonStyles.primaryText, { color: themeColors.bgPrimary }]}>
               {isLoading ? 'Enabling...' : 'Enable Location'}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[buttonStyles.secondary, styles.secondaryButton]}
+            style={[buttonStyles.secondary, styles.secondaryButton, { backgroundColor: themeColors.fill }]}
             onPress={onClose}
             disabled={isLoading}
           >
-            <Text style={buttonStyles.secondaryText}>Not Now</Text>
+            <Text style={[buttonStyles.secondaryText, { color: themeColors.textPrimary }]}>Not Now</Text>
           </TouchableOpacity>
         </View>
       </View>

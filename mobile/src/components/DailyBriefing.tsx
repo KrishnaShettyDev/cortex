@@ -10,7 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { colors, gradients, spacing, borderRadius } from '../theme';
+import { colors, gradients, spacing, borderRadius, useTheme } from '../theme';
 import { chatService } from '../services';
 import { BriefingItem, DailyBriefingResponse } from '../types';
 import { logger } from '../utils/logger';
@@ -53,10 +53,10 @@ const getIconName = (type: BriefingItem['type']): keyof typeof Ionicons.glyphMap
 };
 
 // Get urgency color
-const getUrgencyColor = (score: number): string => {
-  if (score >= 80) return colors.error;
+const getUrgencyColor = (score: number, themeColors: { error: string; accent: string }): string => {
+  if (score >= 80) return themeColors.error;
   if (score >= 50) return '#F5A623'; // Orange/amber
-  return colors.accent;
+  return themeColors.accent;
 };
 
 // Briefing Item Row Component
@@ -64,8 +64,9 @@ const BriefingItemRow: React.FC<{
   item: BriefingItem;
   onPress: () => void;
 }> = ({ item, onPress }) => {
+  const { colors: themeColors } = useTheme();
   const serviceIcon = useServiceIcon(item.type);
-  const urgencyColor = getUrgencyColor(item.urgency_score);
+  const urgencyColor = getUrgencyColor(item.urgency_score, themeColors);
 
   const renderIcon = () => {
     if (serviceIcon === 'gmail') {
@@ -80,7 +81,7 @@ const BriefingItemRow: React.FC<{
 
   return (
     <TouchableOpacity
-      style={styles.itemRow}
+      style={[styles.itemRow, { borderBottomColor: themeColors.glassBorder }]}
       onPress={onPress}
       activeOpacity={0.7}
     >
@@ -88,14 +89,14 @@ const BriefingItemRow: React.FC<{
         {renderIcon()}
       </View>
       <View style={styles.itemContent}>
-        <Text style={styles.itemTitle} numberOfLines={1}>
+        <Text style={[styles.itemTitle, { color: themeColors.textPrimary }]} numberOfLines={1}>
           {item.title}
         </Text>
-        <Text style={styles.itemSubtitle} numberOfLines={1}>
+        <Text style={[styles.itemSubtitle, { color: themeColors.textSecondary }]} numberOfLines={1}>
           {item.subtitle}
         </Text>
       </View>
-      <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+      <Ionicons name="chevron-forward" size={16} color={themeColors.textTertiary} />
     </TouchableOpacity>
   );
 };
@@ -105,6 +106,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
   onActionPress,
   variant = 'card',
 }) => {
+  const { colors: themeColors, gradients: themeGradients } = useTheme();
   const [briefing, setBriefing] = useState<DailyBriefingResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -165,22 +167,22 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
         activeOpacity={0.8}
       >
         <LinearGradient
-          colors={briefing?.has_urgent ? ['#F5A62320', '#F5A62310'] : [colors.accent + '20', colors.accent + '10']}
-          style={styles.pillGradient}
+          colors={briefing?.has_urgent ? ['#F5A62320', '#F5A62310'] : [themeColors.accent + '20', themeColors.accent + '10']}
+          style={[styles.pillGradient, { borderColor: themeColors.glassBorder }]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
         >
           <Ionicons
             name={briefing?.has_urgent ? 'alert-circle' : 'sparkles'}
             size={16}
-            color={briefing?.has_urgent ? '#F5A623' : colors.accent}
+            color={briefing?.has_urgent ? '#F5A623' : themeColors.accent}
           />
-          <Text style={styles.pillText}>
+          <Text style={[styles.pillText, { color: themeColors.textPrimary }]}>
             {urgentCount > 0
               ? `${urgentCount} urgent ${urgentCount === 1 ? 'item' : 'items'} need attention`
               : `${totalCount} ${totalCount === 1 ? 'thing' : 'things'} to review`}
           </Text>
-          <Ionicons name="chevron-forward" size={14} color={colors.textTertiary} />
+          <Ionicons name="chevron-forward" size={14} color={themeColors.textTertiary} />
         </LinearGradient>
       </TouchableOpacity>
     );
@@ -188,7 +190,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
 
   // Card variant - full expandable briefing
   return (
-    <View style={styles.cardContainer}>
+    <View style={[styles.cardContainer, { backgroundColor: themeColors.bgSecondary, borderColor: themeColors.glassBorder }]}>
       {/* Header */}
       <TouchableOpacity
         style={styles.cardHeader}
@@ -196,13 +198,13 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
         activeOpacity={0.8}
       >
         <View style={styles.headerLeft}>
-          <View style={styles.headerIcon}>
-            <Ionicons name="sunny-outline" size={20} color={colors.textPrimary} />
+          <View style={[styles.headerIcon, { backgroundColor: themeColors.bgTertiary }]}>
+            <Ionicons name="sunny-outline" size={20} color={themeColors.textPrimary} />
           </View>
           <View>
-            <Text style={styles.headerTitle}>Your Day</Text>
+            <Text style={[styles.headerTitle, { color: themeColors.textPrimary }]}>Your Day</Text>
             {!isExpanded && briefing && (
-              <Text style={styles.headerSubtitle}>
+              <Text style={[styles.headerSubtitle, { color: themeColors.textSecondary }]}>
                 {briefing.total_count} {briefing.total_count === 1 ? 'item' : 'items'} to review
               </Text>
             )}
@@ -211,7 +213,7 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
         <Ionicons
           name={isExpanded ? 'chevron-up' : 'chevron-down'}
           size={20}
-          color={colors.textSecondary}
+          color={themeColors.textSecondary}
         />
       </TouchableOpacity>
 
@@ -230,8 +232,8 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
       >
         {isLoading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={colors.accent} />
-            <Text style={styles.loadingText}>Loading your briefing...</Text>
+            <ActivityIndicator size="small" color={themeColors.accent} />
+            <Text style={[styles.loadingText, { color: themeColors.textSecondary }]}>Loading your briefing...</Text>
           </View>
         ) : (
           <View style={styles.itemsList}>
@@ -250,10 +252,10 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
                 onPress={() => onActionPress("Show me everything that needs my attention today")}
                 activeOpacity={0.7}
               >
-                <Text style={styles.seeAllText}>
+                <Text style={[styles.seeAllText, { color: themeColors.accent }]}>
                   +{briefing.total_count - briefing.items.length} more
                 </Text>
-                <Ionicons name="arrow-forward" size={14} color={colors.accent} />
+                <Ionicons name="arrow-forward" size={14} color={themeColors.accent} />
               </TouchableOpacity>
             )}
           </View>

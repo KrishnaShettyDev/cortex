@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 
 interface AccountSwitcherProps {
   email?: string;
@@ -9,6 +9,8 @@ interface AccountSwitcherProps {
 }
 
 export function AccountSwitcher({ email, onPress }: AccountSwitcherProps) {
+  const { colors: themeColors } = useTheme();
+
   const truncateEmail = (email: string, maxLength: number = 18) => {
     if (email.length <= maxLength) return email;
     const atIndex = email.indexOf('@');
@@ -22,17 +24,20 @@ export function AccountSwitcher({ email, onPress }: AccountSwitcherProps) {
 
   return (
     <TouchableOpacity
-      style={styles.container}
+      style={[
+        styles.container,
+        { backgroundColor: themeColors.glassBackground, borderColor: themeColors.glassBorder }
+      ]}
       onPress={onPress}
       activeOpacity={0.7}
     >
-      <Text style={styles.email} numberOfLines={1}>
+      <Text style={[styles.email, { color: themeColors.textPrimary }]} numberOfLines={1}>
         {displayEmail}
       </Text>
       <Ionicons
         name="chevron-down"
         size={14}
-        color={colors.textSecondary}
+        color={themeColors.textSecondary}
       />
     </TouchableOpacity>
   );

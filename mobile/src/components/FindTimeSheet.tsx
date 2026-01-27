@@ -11,7 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { BottomSheet } from './BottomSheet';
-import { colors, gradients, spacing, borderRadius } from '../theme';
+import { colors, gradients, spacing, borderRadius, useTheme } from '../theme';
 import { integrationsService, TimeSlot } from '../services/integrations';
 import { ParsedEvent } from './EventConfirmationModal';
 import { logger } from '../utils/logger';
@@ -52,6 +52,7 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
   selectedDate,
   onSlotSelected,
 }) => {
+  const { colors: themeColors, gradients: themeGradients } = useTheme();
   const [duration, setDuration] = useState(30);
   const [dateRange, setDateRange] = useState<'today' | 'tomorrow' | 'week'>('today');
   const [timeRange, setTimeRange] = useState({ start: 9, end: 18 });
@@ -185,23 +186,24 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerIcon}>
-            <Ionicons name="time-outline" size={24} color="#4285F4" />
+            <Ionicons name="time-outline" size={24} color={themeColors.accent} />
           </View>
-          <Text style={styles.headerTitle}>Find Free Time</Text>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons name="close" size={24} color={colors.textSecondary} />
+          <Text style={[styles.headerTitle, { color: themeColors.textPrimary }]}>Find Free Time</Text>
+          <TouchableOpacity style={[styles.closeButton, { backgroundColor: themeColors.bgTertiary }]} onPress={onClose}>
+            <Ionicons name="close" size={24} color={themeColors.textSecondary} />
           </TouchableOpacity>
         </View>
 
         {/* Duration Selection */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Duration needed</Text>
+          <Text style={[styles.sectionLabel, { color: themeColors.textTertiary }]}>Duration needed</Text>
           <View style={styles.chipRow}>
             {DURATION_OPTIONS.map((option) => (
               <TouchableOpacity
                 key={option.value}
                 style={[
                   styles.chip,
+                  { backgroundColor: themeColors.bgTertiary },
                   duration === option.value && styles.chipSelected,
                 ]}
                 onPress={() => {
@@ -212,6 +214,7 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
                 <Text
                   style={[
                     styles.chipText,
+                    { color: themeColors.textSecondary },
                     duration === option.value && styles.chipTextSelected,
                   ]}
                 >
@@ -224,13 +227,14 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
 
         {/* Date Range Selection */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>When</Text>
+          <Text style={[styles.sectionLabel, { color: themeColors.textTertiary }]}>When</Text>
           <View style={styles.chipRow}>
             {DATE_RANGE_OPTIONS.map((option) => (
               <TouchableOpacity
                 key={option.value}
                 style={[
                   styles.chip,
+                  { backgroundColor: themeColors.bgTertiary },
                   dateRange === option.value && styles.chipSelected,
                 ]}
                 onPress={() => {
@@ -241,6 +245,7 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
                 <Text
                   style={[
                     styles.chipText,
+                    { color: themeColors.textSecondary },
                     dateRange === option.value && styles.chipTextSelected,
                   ]}
                 >
@@ -253,7 +258,7 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
 
         {/* Time Range Selection */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Time of day</Text>
+          <Text style={[styles.sectionLabel, { color: themeColors.textTertiary }]}>Time of day</Text>
           <View style={styles.timeRangeRow}>
             {TIME_RANGE_OPTIONS.map((option) => {
               const isSelected =
@@ -264,6 +269,7 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
                   key={option.label}
                   style={[
                     styles.timeChip,
+                    { backgroundColor: themeColors.bgTertiary },
                     isSelected && styles.timeChipSelected,
                   ]}
                   onPress={() => {
@@ -274,11 +280,12 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
                   <Ionicons
                     name={option.icon as any}
                     size={16}
-                    color={isSelected ? '#4285F4' : colors.textSecondary}
+                    color={isSelected ? themeColors.accent : themeColors.textSecondary}
                   />
                   <Text
                     style={[
                       styles.timeChipText,
+                      { color: themeColors.textSecondary },
                       isSelected && styles.timeChipTextSelected,
                     ]}
                   >
@@ -297,7 +304,7 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
           disabled={isSearching}
         >
           <LinearGradient
-            colors={gradients.primary}
+            colors={themeGradients.primary}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={styles.searchGradient}
@@ -318,18 +325,18 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
           <View style={styles.resultsSection}>
             {error ? (
               <View style={styles.errorContainer}>
-                <Ionicons name="alert-circle-outline" size={24} color={colors.error} />
-                <Text style={styles.errorText}>{error}</Text>
+                <Ionicons name="alert-circle-outline" size={24} color={themeColors.error} />
+                <Text style={[styles.errorText, { color: themeColors.error }]}>{error}</Text>
               </View>
             ) : freeSlots.length === 0 ? (
               <View style={styles.emptyContainer}>
-                <Ionicons name="calendar-outline" size={24} color={colors.textTertiary} />
-                <Text style={styles.emptyText}>No available slots found</Text>
-                <Text style={styles.emptySubtext}>Try a different time range or date</Text>
+                <Ionicons name="calendar-outline" size={24} color={themeColors.textTertiary} />
+                <Text style={[styles.emptyText, { color: themeColors.textSecondary }]}>No available slots found</Text>
+                <Text style={[styles.emptySubtext, { color: themeColors.textTertiary }]}>Try a different time range or date</Text>
               </View>
             ) : (
               <>
-                <Text style={styles.resultsTitle}>
+                <Text style={[styles.resultsTitle, { color: themeColors.textPrimary }]}>
                   {freeSlots.length} slot{freeSlots.length !== 1 ? 's' : ''} available
                 </Text>
                 <ScrollView
@@ -338,34 +345,34 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
                 >
                   {Object.entries(groupedSlots).map(([dateKey, slots]) => (
                     <View key={dateKey}>
-                      <Text style={styles.dateHeader}>
+                      <Text style={[styles.dateHeader, { color: themeColors.textSecondary }]}>
                         {formatSlotDate(slots[0])}
                       </Text>
                       {slots.map((slot, index) => (
                         <TouchableOpacity
                           key={`${slot.start}-${index}`}
-                          style={styles.slotItem}
+                          style={[styles.slotItem, { backgroundColor: themeColors.bgTertiary }]}
                           onPress={() => handleSlotPress(slot)}
                         >
                           <View style={styles.slotTimeContainer}>
                             <Ionicons
                               name="time-outline"
                               size={16}
-                              color={colors.textSecondary}
+                              color={themeColors.textSecondary}
                             />
-                            <Text style={styles.slotTime}>
+                            <Text style={[styles.slotTime, { color: themeColors.textPrimary }]}>
                               {formatSlotTime(slot)}
                             </Text>
                           </View>
-                          <View style={styles.slotDuration}>
-                            <Text style={styles.slotDurationText}>
+                          <View style={[styles.slotDuration, { backgroundColor: themeColors.bgSecondary }]}>
+                            <Text style={[styles.slotDurationText, { color: themeColors.textTertiary }]}>
                               {slot.duration_minutes} min
                             </Text>
                           </View>
                           <Ionicons
                             name="add-circle-outline"
                             size={24}
-                            color="#4285F4"
+                            color={themeColors.accent}
                           />
                         </TouchableOpacity>
                       ))}

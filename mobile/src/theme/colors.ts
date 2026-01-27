@@ -1,136 +1,173 @@
-// Cortex Theme System - iOS-Style
+/**
+ * Cortex Theme Colors - Apple Blue Design System
+ *
+ * Based on Apple Human Interface Guidelines
+ * Primary accent: Apple Blue (#007AFF light / #0A84FF dark)
+ */
 
-export type ThemeMode = 'dark' | 'light';
+export type ThemeMode = 'system' | 'light' | 'dark';
+export type ResolvedTheme = 'light' | 'dark';
 
-// Dark Theme Colors
+// ============================================================================
+// LIGHT MODE
+// ============================================================================
+export const lightColors = {
+  // Backgrounds
+  bgPrimary: '#FAFAFA',
+  bgSecondary: '#FFFFFF',
+  bgTertiary: '#F2F2F7',
+  bgElevated: '#FFFFFF',
+
+  // Text
+  textPrimary: '#1A1A1A',
+  textSecondary: '#6B6B6B',
+  textTertiary: '#8E8E93',
+  textQuaternary: '#C7C7CC',
+
+  // Apple Blue Accent
+  accent: '#007AFF',
+  accentLight: 'rgba(0, 122, 255, 0.12)',
+  accentMuted: 'rgba(0, 122, 255, 0.06)',
+  accentPressed: '#0056B3',
+
+  // Fills (iOS-style layered fills)
+  fill: 'rgba(0, 0, 0, 0.04)',
+  fillSecondary: 'rgba(0, 0, 0, 0.06)',
+  fillTertiary: 'rgba(0, 0, 0, 0.08)',
+
+  // Separators & Borders
+  separator: '#E5E5E5',
+  separatorOpaque: '#C6C6C8',
+  glassBorder: 'rgba(0, 0, 0, 0.06)',
+  glassBackground: 'rgba(0, 0, 0, 0.03)',
+  glassHighlight: 'rgba(0, 0, 0, 0.08)',
+  glassBlur: 25,
+
+  // System Colors
+  success: '#34C759',
+  error: '#FF3B30',
+  warning: '#FF9500',
+  info: '#007AFF',
+
+  // Service Colors (unchanged - brand recognition)
+  gmail: '#EA4335',
+  calendar: '#4285F4',
+  google: '#4285F4',
+  microsoft: '#00A4EF',
+  whatsapp: '#25D366',
+
+  // Shadows
+  shadowColor: '#000000',
+
+  // Legacy aliases (for backwards compatibility)
+  accentMint: '#34C759',
+  accentPeach: '#FF9500',
+  accentSky: '#007AFF',
+  gradientStart: '#007AFF',
+  gradientMid: '#5AC8FA',
+  gradientEnd: '#007AFF',
+};
+
+// ============================================================================
+// DARK MODE
+// ============================================================================
 export const darkColors = {
-  // Backgrounds - deeper, richer dark
-  bgPrimary: '#0A0A0A',
-  bgSecondary: '#121212',
-  bgTertiary: '#1C1C1E',
+  // Backgrounds - true black for OLED
+  bgPrimary: '#000000',
+  bgSecondary: '#1C1C1E',
+  bgTertiary: '#2C2C2E',
+  bgElevated: '#1C1C1E',
 
   // Text
   textPrimary: '#FFFFFF',
   textSecondary: '#8E8E93',
   textTertiary: '#48484A',
+  textQuaternary: '#3A3A3C',
 
-  // Gradient accent (rainbow-ish)
-  gradientStart: '#7DD3C0',    // Mint
-  gradientMid: '#A78BFA',       // Purple
-  gradientEnd: '#F472B6',       // Pink
-  accent: '#A78BFA',            // Primary purple
+  // Apple Blue Accent (darker variant for dark mode)
+  accent: '#0A84FF',
+  accentLight: 'rgba(10, 132, 255, 0.15)',
+  accentMuted: 'rgba(10, 132, 255, 0.08)',
+  accentPressed: '#409CFF',
 
-  // Legacy accent colors (for compatibility)
-  accentMint: '#7DD3C0',
-  accentLavender: '#A78BFA',
-  accentPeach: '#F472B6',
-  accentSky: '#A8D4E6',
+  // Fills (iOS-style layered fills)
+  fill: 'rgba(255, 255, 255, 0.04)',
+  fillSecondary: 'rgba(255, 255, 255, 0.08)',
+  fillTertiary: 'rgba(255, 255, 255, 0.12)',
 
-  // Glass effects - enhanced
-  glassBackground: 'rgba(255, 255, 255, 0.06)',
-  glassBorder: 'rgba(255, 255, 255, 0.12)',
-  glassHighlight: 'rgba(255, 255, 255, 0.18)',
-  glassBlur: 20,
+  // Separators & Borders
+  separator: '#2C2C2E',
+  separatorOpaque: '#38383A',
+  glassBorder: 'rgba(255, 255, 255, 0.08)',
+  glassBackground: 'rgba(255, 255, 255, 0.04)',
+  glassHighlight: 'rgba(255, 255, 255, 0.12)',
+  glassBlur: 25,
 
-  // Status
-  success: '#34C759',
+  // System Colors (adjusted for dark mode)
+  success: '#30D158',
   error: '#FF453A',
-  warning: '#FFD60A',
+  warning: '#FF9F0A',
+  info: '#0A84FF',
 
-  // Service colors
+  // Service Colors (unchanged)
   gmail: '#EA4335',
   calendar: '#4285F4',
   google: '#4285F4',
   microsoft: '#00A4EF',
+  whatsapp: '#25D366',
 
   // Shadows
   shadowColor: '#000000',
+
+  // Legacy aliases
+  accentMint: '#30D158',
+  accentPeach: '#FF9F0A',
+  accentSky: '#0A84FF',
+  gradientStart: '#0A84FF',
+  gradientMid: '#5AC8FA',
+  gradientEnd: '#0A84FF',
 };
 
-// Light Theme Colors
-export const lightColors = {
-  // Backgrounds - clean, bright
-  bgPrimary: '#FFFFFF',
-  bgSecondary: '#F2F2F7',
-  bgTertiary: '#E5E5EA',
-
-  // Text
-  textPrimary: '#000000',
-  textSecondary: '#3C3C43',
-  textTertiary: '#8E8E93',
-
-  // Gradient accent (same rainbow)
-  gradientStart: '#7DD3C0',
-  gradientMid: '#A78BFA',
-  gradientEnd: '#F472B6',
-  accent: '#A78BFA',
-
-  // Legacy accent colors
-  accentMint: '#7DD3C0',
-  accentLavender: '#A78BFA',
-  accentPeach: '#F472B6',
-  accentSky: '#A8D4E6',
-
-  // Glass effects - adapted for light
-  glassBackground: 'rgba(0, 0, 0, 0.04)',
-  glassBorder: 'rgba(0, 0, 0, 0.08)',
-  glassHighlight: 'rgba(0, 0, 0, 0.12)',
-  glassBlur: 20,
-
-  // Status
-  success: '#34C759',
-  error: '#FF3B30',
-  warning: '#FFCC00',
-
-  // Service colors
-  gmail: '#EA4335',
-  calendar: '#4285F4',
-  google: '#4285F4',
-  microsoft: '#00A4EF',
-
-  // Shadows
-  shadowColor: '#000000',
-};
-
-// Default export for backward compatibility (dark theme)
+// ============================================================================
+// DEFAULT EXPORT (for backwards compatibility - will be replaced by context)
+// ============================================================================
 export const colors = darkColors;
 
-// Get colors for a specific theme
-export function getThemeColors(mode: ThemeMode) {
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+export function getThemeColors(mode: ResolvedTheme) {
   return mode === 'light' ? lightColors : darkColors;
 }
 
-// Gradient color arrays - typed for LinearGradient compatibility
+// ============================================================================
+// GRADIENTS
+// ============================================================================
 type GradientColors = [string, string, ...string[]];
 
-export const darkGradients: {
-  primary: GradientColors;
-  subtle: GradientColors;
-  glass: GradientColors;
-  accent: GradientColors;
-} = {
-  primary: ['#7DD3C0', '#A78BFA', '#F472B6'],
-  subtle: ['rgba(167, 139, 250, 0.3)', 'rgba(244, 114, 182, 0.3)'],
-  glass: ['rgba(255, 255, 255, 0.1)', 'rgba(255, 255, 255, 0.05)'],
-  accent: ['#A78BFA', '#F472B6'],
+export const lightGradients = {
+  primary: ['#007AFF', '#5AC8FA'] as GradientColors,
+  subtle: ['rgba(0, 122, 255, 0.15)', 'rgba(90, 200, 250, 0.15)'] as GradientColors,
+  glass: ['rgba(255, 255, 255, 0.8)', 'rgba(255, 255, 255, 0.6)'] as GradientColors,
+  accent: ['#007AFF', '#5AC8FA'] as GradientColors,
 };
 
-export const lightGradients: {
-  primary: GradientColors;
-  subtle: GradientColors;
-  glass: GradientColors;
-  accent: GradientColors;
-} = {
-  primary: ['#7DD3C0', '#A78BFA', '#F472B6'],
-  subtle: ['rgba(167, 139, 250, 0.2)', 'rgba(244, 114, 182, 0.2)'],
-  glass: ['rgba(0, 0, 0, 0.05)', 'rgba(0, 0, 0, 0.02)'],
-  accent: ['#A78BFA', '#F472B6'],
+export const darkGradients = {
+  primary: ['#0A84FF', '#5AC8FA'] as GradientColors,
+  subtle: ['rgba(10, 132, 255, 0.2)', 'rgba(90, 200, 250, 0.2)'] as GradientColors,
+  glass: ['rgba(255, 255, 255, 0.06)', 'rgba(255, 255, 255, 0.02)'] as GradientColors,
+  accent: ['#0A84FF', '#5AC8FA'] as GradientColors,
 };
 
-// Default gradients (dark)
+// Default gradients (dark mode)
 export const gradients = darkGradients;
 
-// Get gradients for a specific theme
-export function getThemeGradients(mode: ThemeMode) {
+export function getThemeGradients(mode: ResolvedTheme) {
   return mode === 'light' ? lightGradients : darkGradients;
 }
+
+// ============================================================================
+// TYPE EXPORTS
+// ============================================================================
+export type ThemeColors = typeof lightColors;
+export type ThemeGradients = typeof lightGradients;

@@ -3,15 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
   Dimensions,
   Animated,
   ActivityIndicator,
 } from 'react-native';
-import Constants from 'expo-constants';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -31,15 +27,13 @@ const triggerHaptic = async (type: 'success' | 'error') => {
     // Haptics not available, ignore silently
   }
 };
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { GradientIcon } from '../src/components';
 import { useAuth } from '../src/context/AuthContext';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../src/lib/analytics';
-import { colors, gradients, spacing, borderRadius, typography, shadows } from '../src/theme';
-import { GOOGLE_CLIENT_ID, ENABLE_DEV_LOGIN } from '../src/config/env';
+import { colors, spacing, borderRadius } from '../src/theme';
+import { GOOGLE_CLIENT_ID } from '../src/config/env';
 import { PRIVACY_POLICY_URL, TERMS_OF_SERVICE_URL } from '../src/legal';
 
 // Error message mapping for user-friendly messages
@@ -76,15 +70,9 @@ WebBrowser.maybeCompleteAuthSession();
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Check if running in Expo Go
-const isExpoGo = Constants.appOwnership === 'expo';
-
 export default function AuthScreen() {
-  const { signInWithApple, signInWithGoogle, devSignIn, isLoading, error, clearError } = useAuth();
+  const { signInWithApple, signInWithGoogle, isLoading, error, clearError } = useAuth();
   const posthog = usePostHog();
-  const [showDevLogin, setShowDevLogin] = useState(false);
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
   const [isAppleLoading, setIsAppleLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -120,38 +108,16 @@ export default function AuthScreen() {
     setLocalError(getErrorMessage(message));
   }, []);
 
-  // For Expo Go: We need to add the exp:// redirect URI to the iOS OAuth client
-  // in Google Cloud Console since Expo Go doesn't support custom schemes
-  // For production builds: Use the appropriate native client IDs
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     iosClientId: GOOGLE_CLIENT_ID.ios,
     androidClientId: GOOGLE_CLIENT_ID.android,
     webClientId: GOOGLE_CLIENT_ID.web,
   });
 
-  // Debug: Log the request details
-  useEffect(() => {
-    if (request) {
-      console.log('=== Google OAuth Debug ===');
-      console.log('Is Expo Go:', isExpoGo);
-      console.log('Request URL:', request.url);
-      console.log('Redirect URI from request:', request.redirectUri);
-      console.log('Client ID:', request.clientId);
-      console.log('========================');
-    }
-  }, [request]);
-
   // Handle Google Sign In response
   useEffect(() => {
-    console.log('=== Google Auth Response ===');
-    console.log('Response type:', response?.type);
-    console.log('Response params:', (response as any)?.params);
-    console.log('============================');
-
     if (response?.type === 'success') {
-      // Get id_token from authentication response
       const idToken = (response as any).params?.id_token;
-      console.log('Got ID token:', idToken ? 'yes' : 'no');
       if (idToken) {
         handleGoogleToken(idToken);
       } else {
@@ -160,12 +126,9 @@ export default function AuthScreen() {
       }
     } else if (response?.type === 'error') {
       setIsGoogleLoading(false);
-      console.log('Google Auth Error:', response.error);
       showError(response.error?.message || 'Google Sign In failed');
     } else if (response?.type === 'dismiss') {
       setIsGoogleLoading(false);
-      // Don't show error for user-initiated dismissal
-      console.log('User dismissed the auth flow');
     }
   }, [response, showError]);
 
@@ -237,175 +200,79 @@ export default function AuthScreen() {
     }
   };
 
-  const handleDevSignIn = async () => {
-    dismissError();
-    if (!email) {
-      showError('Please enter an email');
-      return;
-    }
-    try {
-      await devSignIn(email, name || undefined);
-      posthog?.capture(ANALYTICS_EVENTS.SIGN_IN, { provider: 'dev' });
-      triggerHaptic('success');
-      router.replace('/(main)/chat');
-    } catch (e: any) {
-      posthog?.capture(ANALYTICS_EVENTS.SIGN_IN_FAILED, { provider: 'dev', error: e.message });
-      showError(e.message || 'Dev sign in failed');
-    }
-  };
-
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.content}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.logoContainer}>
-            <GradientIcon size={100} />
-          </View>
-          <Text style={styles.title}>Meet Cortex</Text>
-          <Text style={styles.subtitle}>Your AI-powered second brain</Text>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <View style={styles.content}>
+        {/* Top Section - Logo and Brand */}
+        <View style={styles.brandSection}>
+          <GradientIcon size={80} variant="solid" />
+          <Text style={styles.brandName}>Cortex</Text>
+          <Text style={styles.tagline}>Your AI-powered second brain</Text>
         </View>
 
-        {/* Auth Buttons */}
-        <View style={styles.authContainer}>
-          {!showDevLogin ? (
-            <>
-              {/* Apple Sign In */}
-              <TouchableOpacity
-                style={[styles.appleButton, isAppleLoading && styles.buttonLoading]}
-                onPress={handleAppleSignIn}
-                disabled={isLoading || isAppleLoading}
-                activeOpacity={0.8}
-              >
-                {isAppleLoading ? (
-                  <ActivityIndicator size="small" color="#000" />
-                ) : (
-                  <>
-                    <Ionicons name="logo-apple" size={20} color="#000" />
-                    <Text style={styles.appleButtonText}>Sign in with Apple</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+        {/* Auth Buttons Section */}
+        <View style={styles.authSection}>
+          {/* Apple Sign In */}
+          <TouchableOpacity
+            style={[styles.appleButton, isAppleLoading && styles.buttonDisabled]}
+            onPress={handleAppleSignIn}
+            disabled={isLoading || isAppleLoading}
+            activeOpacity={0.8}
+          >
+            {isAppleLoading ? (
+              <ActivityIndicator size="small" color="#000" />
+            ) : (
+              <>
+                <Ionicons name="logo-apple" size={20} color="#000" />
+                <Text style={styles.appleButtonText}>Continue with Apple</Text>
+              </>
+            )}
+          </TouchableOpacity>
 
-              {/* Google Sign In */}
-              <TouchableOpacity
-                style={[
-                  styles.googleButton,
-                  (!request || isGoogleLoading) && styles.googleButtonDisabled
-                ]}
-                onPress={handleGoogleSignIn}
-                disabled={isLoading || isGoogleLoading || !request}
-                activeOpacity={0.8}
-              >
-                {isGoogleLoading ? (
-                  <ActivityIndicator size="small" color={colors.textPrimary} />
-                ) : (
-                  <>
-                    <Ionicons name="logo-google" size={18} color={colors.google} />
-                    <Text style={styles.googleButtonText}>Continue with Google</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+          {/* Google Sign In */}
+          <TouchableOpacity
+            style={[styles.googleButton, (!request || isGoogleLoading) && styles.buttonDisabled]}
+            onPress={handleGoogleSignIn}
+            disabled={isLoading || isGoogleLoading || !request}
+            activeOpacity={0.8}
+          >
+            {isGoogleLoading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="logo-google" size={18} color="#fff" />
+                <Text style={styles.googleButtonText}>Continue with Google</Text>
+              </>
+            )}
+          </TouchableOpacity>
 
-              {/* Dev Login Toggle - Only shown in development */}
-              {ENABLE_DEV_LOGIN && (
-                <TouchableOpacity
-                  style={styles.devButton}
-                  onPress={() => setShowDevLogin(true)}
-                >
-                  <Text style={styles.devButtonText}>Dev Login</Text>
-                </TouchableOpacity>
-              )}
-            </>
-          ) : ENABLE_DEV_LOGIN ? (
-            <View style={styles.devLoginCard}>
-              <BlurView intensity={20} style={StyleSheet.absoluteFill} tint="dark" />
-              <View style={styles.devLoginContent}>
-                <Text style={styles.devLoginTitle}>Development Login</Text>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Email"
-                    placeholderTextColor={colors.textTertiary}
-                    value={email}
-                    onChangeText={setEmail}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                  />
-                </View>
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Name (optional)"
-                    placeholderTextColor={colors.textTertiary}
-                    value={name}
-                    onChangeText={setName}
-                  />
-                </View>
-                <TouchableOpacity
-                  style={styles.signInButton}
-                  onPress={handleDevSignIn}
-                  disabled={isLoading}
-                  activeOpacity={0.8}
-                >
-                  <LinearGradient
-                    colors={gradients.accent}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                    style={styles.gradientButton}
-                  >
-                    <Text style={styles.signInButtonText}>
-                      {isLoading ? 'Signing in...' : 'Sign In'}
-                    </Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.backButton}
-                  onPress={() => setShowDevLogin(false)}
-                >
-                  <Text style={styles.backButtonText}>Back</Text>
+          {/* Error Banner */}
+          {displayError && (
+            <Animated.View style={[styles.errorBanner, { opacity: errorOpacity }]}>
+              <View style={styles.errorContent}>
+                <Ionicons name="alert-circle" size={18} color={colors.error} />
+                <Text style={styles.errorText}>{getErrorMessage(displayError)}</Text>
+                <TouchableOpacity onPress={dismissError} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Ionicons name="close" size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
-            </View>
-          ) : null}
+            </Animated.View>
+          )}
         </View>
 
-        {/* Error Banner */}
-        {displayError && (
-          <Animated.View style={[styles.errorBanner, { opacity: errorOpacity }]}>
-            <View style={styles.errorContent}>
-              <Ionicons name="alert-circle" size={20} color={colors.error} style={styles.errorIcon} />
-              <Text style={styles.errorText}>{getErrorMessage(displayError)}</Text>
-              <TouchableOpacity onPress={dismissError} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                <Ionicons name="close" size={20} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
-        )}
-
-        {/* Footer */}
+        {/* Footer - Privacy & Terms */}
         <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            By continuing, you agree to our{' '}
-            <Text
-              style={styles.linkText}
-              onPress={() => WebBrowser.openBrowserAsync(TERMS_OF_SERVICE_URL)}
-            >
-              Terms of Service
-            </Text>
-            {' '}and{' '}
-            <Text
-              style={styles.linkText}
-              onPress={() => WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL)}
-            >
-              Privacy Policy
-            </Text>
-          </Text>
+          <View style={styles.footerLinks}>
+            <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(PRIVACY_POLICY_URL)}>
+              <Text style={styles.footerLink}>Privacy policy</Text>
+            </TouchableOpacity>
+            <Text style={styles.footerDot}>·</Text>
+            <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(TERMS_OF_SERVICE_URL)}>
+              <Text style={styles.footerLink}>Terms of service</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -413,41 +280,45 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#0A0A0A',
   },
   content: {
     flex: 1,
-    paddingHorizontal: spacing.lg,
-    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
   },
-  header: {
+  // Brand Section
+  brandSection: {
+    flex: 1,
     alignItems: 'center',
-    marginBottom: spacing.xxl,
+    justifyContent: 'center',
+    paddingBottom: 40,
   },
-  logoContainer: {
-    ...shadows.glow,
+  brandName: {
+    fontSize: 42,
+    fontWeight: '300',
+    color: '#FFFFFF',
+    marginTop: spacing.lg,
+    letterSpacing: 1,
+    fontFamily: 'System', // Will use system serif on iOS
+    fontStyle: 'normal',
   },
-  title: {
-    ...typography.h1,
-    marginTop: spacing.xl,
-  },
-  subtitle: {
-    ...typography.bodySmall,
+  tagline: {
+    fontSize: 16,
+    color: colors.textSecondary,
     marginTop: spacing.sm,
-    textAlign: 'center',
+    letterSpacing: 0.3,
   },
-  authContainer: {
+  // Auth Section
+  authSection: {
+    paddingBottom: spacing.xl,
     gap: spacing.md,
-    maxWidth: 400,
-    width: '100%',
-    alignSelf: 'center',
   },
   appleButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-    paddingVertical: spacing.md + 2,
+    paddingVertical: 16,
     borderRadius: borderRadius.lg,
     gap: spacing.sm,
   },
@@ -460,118 +331,58 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.glassBackground,
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: colors.glassBorder,
-    paddingVertical: spacing.md + 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    paddingVertical: 16,
     borderRadius: borderRadius.lg,
     gap: spacing.sm,
   },
   googleButtonText: {
-    color: colors.textPrimary,
+    color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '600',
   },
-  googleButtonDisabled: {
-    opacity: 0.5,
+  buttonDisabled: {
+    opacity: 0.6,
   },
-  devButton: {
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-  },
-  devButtonText: {
-    color: colors.textTertiary,
-    fontSize: 14,
-  },
-  devLoginCard: {
-    backgroundColor: colors.glassBackground,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    borderRadius: borderRadius.xl,
-    overflow: 'hidden',
-  },
-  devLoginContent: {
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  devLoginTitle: {
-    ...typography.h3,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
-  },
-  inputContainer: {
-    backgroundColor: colors.bgTertiary,
-    borderRadius: borderRadius.md,
-    overflow: 'hidden',
-  },
-  input: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    color: colors.textPrimary,
-    fontSize: 16,
-  },
-  signInButton: {
-    marginTop: spacing.sm,
-    borderRadius: borderRadius.lg,
-    overflow: 'hidden',
-  },
-  gradientButton: {
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  signInButtonText: {
-    color: colors.textPrimary,
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  backButton: {
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-  },
-  backButtonText: {
-    color: colors.textSecondary,
-    fontSize: 15,
-  },
-  buttonLoading: {
-    opacity: 0.7,
-  },
+  // Error Banner
   errorBanner: {
-    marginTop: spacing.lg,
     backgroundColor: 'rgba(239, 68, 68, 0.1)',
     borderWidth: 1,
     borderColor: 'rgba(239, 68, 68, 0.3)',
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm + 2,
-    maxWidth: 400,
-    width: '100%',
-    alignSelf: 'center',
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
   },
   errorContent: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  errorIcon: {
-    marginRight: spacing.sm,
+    gap: spacing.sm,
   },
   errorText: {
     flex: 1,
     color: colors.error,
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 18,
   },
+  // Footer
   footer: {
-    position: 'absolute',
-    bottom: spacing.xl,
-    left: spacing.lg,
-    right: spacing.lg,
+    paddingBottom: spacing.lg,
   },
-  footerText: {
-    ...typography.caption,
-    textAlign: 'center',
+  footerLinks: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.md,
   },
-  linkText: {
-    color: colors.accent,
-    textDecorationLine: 'underline',
+  footerLink: {
+    color: colors.textTertiary,
+    fontSize: 14,
+  },
+  footerDot: {
+    color: colors.textTertiary,
+    fontSize: 14,
   },
 });

@@ -1,3 +1,10 @@
+/**
+ * DayBriefingScroll - iOS-style day overview
+ *
+ * Compact, minimal horizontal scroll of your day's items.
+ * Clean Apple aesthetic with subtle interactions.
+ */
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -9,8 +16,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { colors, gradients, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 import { chatService } from '../services';
 import { BriefingItem, DailyBriefingResponse } from '../types';
 import { logger } from '../utils/logger';
@@ -18,70 +24,66 @@ import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
 import { Skeleton } from './Skeleton';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH * 0.42;
-const CARD_MARGIN = spacing.sm;
+const CARD_WIDTH = SCREEN_WIDTH * 0.38;
+const CARD_HEIGHT = 88;
+const NOW_WIDTH = 64;
+const CARD_GAP = spacing.sm;
 
 interface DayBriefingScrollProps {
   onItemPress: (actionPrompt: string) => void;
 }
-
-// Time of day for greeting
-const getTimeOfDay = (): 'morning' | 'afternoon' | 'evening' => {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'morning';
-  if (hour < 17) return 'afternoon';
-  return 'evening';
-};
 
 // Get icon for item type
 const getItemIcon = (type: BriefingItem['type']): keyof typeof Ionicons.glyphMap => {
   switch (type) {
     case 'calendar':
     case 'meeting':
-      return 'calendar-outline';
+      return 'calendar';
     case 'email':
-      return 'mail-outline';
+      return 'mail';
     case 'reminder':
-      return 'alarm-outline';
+      return 'alarm';
     case 'deadline':
-      return 'time-outline';
+      return 'time';
     case 'pattern':
-      return 'analytics-outline';
+      return 'analytics';
     case 'memory':
-      return 'bulb-outline';
+      return 'bulb';
     default:
-      return 'ellipse-outline';
+      return 'ellipse';
   }
 };
 
 // Get accent color based on urgency
-const getUrgencyAccent = (score: number): string => {
-  if (score >= 80) return colors.error;
-  if (score >= 50) return '#F5A623';
-  return colors.accent;
+const getUrgencyColor = (score: number, themeColors: typeof colors): string => {
+  if (score >= 80) return themeColors.error;
+  if (score >= 50) return themeColors.warning;
+  return themeColors.accent;
 };
 
-// Individual time block card
+// Individual time block card - iOS style
 const TimeBlockCard: React.FC<{
   item: BriefingItem;
   onPress: () => void;
   index: number;
-}> = ({ item, onPress, index }) => {
+  themeColors: typeof colors;
+}> = ({ item, onPress, index, themeColors }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(20)).current;
+  const scaleAnim = useRef(new Animated.Value(0.95)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 300,
-        delay: index * 50,
+        duration: 250,
+        delay: index * 40,
         useNativeDriver: true,
       }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 300,
-        delay: index * 50,
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        tension: 100,
+        friction: 10,
+        delay: index * 40,
         useNativeDriver: true,
       }),
     ]).start();
@@ -89,22 +91,12 @@ const TimeBlockCard: React.FC<{
 
   const isCalendar = item.type === 'calendar' || item.type === 'meeting';
   const isEmail = item.type === 'email';
-  const accentColor = getUrgencyAccent(item.urgency_score);
+  const accentColor = getUrgencyColor(item.urgency_score, themeColors);
 
   const renderIcon = () => {
-    if (isEmail) {
-      return <GmailIcon size={18} />;
-    }
-    if (isCalendar) {
-      return <GoogleCalendarIcon size={18} />;
-    }
-    return (
-      <Ionicons
-        name={getItemIcon(item.type)}
-        size={18}
-        color={accentColor}
-      />
-    );
+    if (isEmail) return <GmailIcon size={16} />;
+    if (isCalendar) return <GoogleCalendarIcon size={16} />;
+    return <Ionicons name={getItemIcon(item.type)} size={16} color={accentColor} />;
   };
 
   return (
@@ -113,105 +105,82 @@ const TimeBlockCard: React.FC<{
         styles.cardWrapper,
         {
           opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
+          transform: [{ scale: scaleAnim }],
         },
       ]}
     >
       <TouchableOpacity
-        style={styles.card}
+        style={[styles.card, { backgroundColor: themeColors.fill }]}
         onPress={onPress}
         activeOpacity={0.7}
       >
-        {/* Accent bar at top */}
-        <View style={[styles.accentBar, { backgroundColor: accentColor }]} />
-
-        {/* Card content */}
         <View style={styles.cardContent}>
-          {/* Icon and type */}
+          {/* Icon + urgency indicator */}
           <View style={styles.cardHeader}>
-            <View style={[styles.iconContainer, { backgroundColor: accentColor + '20' }]}>
+            <View style={[styles.iconWrap, { backgroundColor: themeColors.fillSecondary }]}>
               {renderIcon()}
             </View>
             {item.urgency_score >= 70 && (
-              <View style={styles.urgentBadge}>
-                <Text style={styles.urgentText}>Urgent</Text>
-              </View>
+              <View style={[styles.urgentDot, { backgroundColor: accentColor }]} />
             )}
           </View>
 
           {/* Title */}
-          <Text style={styles.cardTitle} numberOfLines={2}>
+          <Text style={[styles.cardTitle, { color: themeColors.textPrimary }]} numberOfLines={2}>
             {item.title}
           </Text>
 
-          {/* Subtitle / Time */}
-          <Text style={styles.cardSubtitle} numberOfLines={1}>
+          {/* Time/Subtitle */}
+          <Text style={[styles.cardSubtitle, { color: themeColors.textSecondary }]} numberOfLines={1}>
             {item.subtitle}
           </Text>
-
-          {/* Action hint */}
-          <View style={styles.actionHint}>
-            <Text style={styles.actionText}>Tap to act</Text>
-            <Ionicons name="chevron-forward" size={12} color={colors.textTertiary} />
-          </View>
         </View>
       </TouchableOpacity>
     </Animated.View>
   );
 };
 
-// Now card - shows current time context
-const NowCard: React.FC<{ onPress: () => void }> = ({ onPress }) => {
-  const timeOfDay = getTimeOfDay();
+// Now card - minimal time display
+const NowCard: React.FC<{ onPress: () => void; themeColors: typeof colors }> = ({ onPress, themeColors }) => {
   const hour = new Date().getHours();
   const minute = new Date().getMinutes();
-  const timeString = `${hour % 12 || 12}:${minute.toString().padStart(2, '0')} ${hour >= 12 ? 'PM' : 'AM'}`;
+  const timeString = `${hour % 12 || 12}:${minute.toString().padStart(2, '0')}`;
+  const ampm = hour >= 12 ? 'PM' : 'AM';
 
   return (
     <TouchableOpacity
-      style={styles.nowCard}
+      style={[styles.nowCard, { backgroundColor: themeColors.fill }]}
       onPress={onPress}
-      activeOpacity={0.8}
+      activeOpacity={0.7}
     >
-      <LinearGradient
-        colors={gradients.subtle}
-        style={styles.nowCardGradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-      >
-        <View style={styles.nowCardContent}>
-          <Text style={styles.nowLabel}>Now</Text>
-          <Text style={styles.nowTime}>{timeString}</Text>
-          <View style={styles.nowDivider} />
-          <Text style={styles.nowHint}>What's next?</Text>
-        </View>
-      </LinearGradient>
+      <Text style={[styles.nowLabel, { color: themeColors.textTertiary }]}>Now</Text>
+      <Text style={[styles.nowTime, { color: themeColors.textPrimary }]}>{timeString}</Text>
+      <Text style={[styles.nowAmPm, { color: themeColors.textTertiary }]}>{ampm}</Text>
     </TouchableOpacity>
   );
 };
 
-// Empty state when no items
-const EmptyState: React.FC<{ onPress: () => void }> = ({ onPress }) => (
+// Empty state
+const EmptyState: React.FC<{ onPress: () => void; themeColors: typeof colors }> = ({ onPress, themeColors }) => (
   <TouchableOpacity
-    style={styles.emptyCard}
+    style={[styles.emptyCard, { backgroundColor: themeColors.fill }]}
     onPress={onPress}
     activeOpacity={0.7}
   >
-    <Ionicons name="checkmark-circle-outline" size={32} color={colors.success} />
-    <Text style={styles.emptyTitle}>All clear</Text>
-    <Text style={styles.emptySubtitle}>Nothing needs attention</Text>
+    <Ionicons name="checkmark-circle" size={18} color={themeColors.success} />
+    <Text style={[styles.emptyText, { color: themeColors.textSecondary }]}>All clear</Text>
   </TouchableOpacity>
 );
 
-// Skeleton card for loading state
-const SkeletonTimeCard: React.FC<{ index: number }> = ({ index }) => {
+// Skeleton loading
+const SkeletonCard: React.FC<{ index: number }> = ({ index }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
       toValue: 1,
-      duration: 300,
-      delay: index * 80,
+      duration: 200,
+      delay: index * 60,
       useNativeDriver: true,
     }).start();
   }, []);
@@ -219,44 +188,21 @@ const SkeletonTimeCard: React.FC<{ index: number }> = ({ index }) => {
   return (
     <Animated.View style={[styles.cardWrapper, { opacity: fadeAnim }]}>
       <View style={styles.skeletonCard}>
-        {/* Accent bar skeleton */}
-        <Skeleton width="100%" height={3} borderRadius={0} />
-
-        <View style={styles.skeletonContent}>
-          {/* Icon placeholder */}
-          <View style={styles.skeletonHeader}>
-            <Skeleton width={32} height={32} borderRadius={8} />
-          </View>
-
-          {/* Title placeholder */}
-          <Skeleton width="85%" height={14} borderRadius={4} style={{ marginTop: spacing.sm }} />
-
-          {/* Subtitle placeholder */}
-          <Skeleton width="60%" height={12} borderRadius={4} style={{ marginTop: spacing.xs }} />
-
-          {/* Action hint placeholder */}
-          <View style={styles.skeletonFooter}>
-            <Skeleton width={50} height={10} borderRadius={4} />
-          </View>
-        </View>
+        <Skeleton width={20} height={20} borderRadius={6} />
+        <Skeleton width="80%" height={13} borderRadius={4} style={{ marginTop: spacing.sm }} />
+        <Skeleton width="50%" height={11} borderRadius={4} style={{ marginTop: spacing.xs }} />
       </View>
     </Animated.View>
   );
 };
 
-// Skeleton now card
-const SkeletonNowCard: React.FC = () => (
-  <View style={styles.skeletonNowCard}>
-    <View style={styles.skeletonNowContent}>
-      <Skeleton width={30} height={10} borderRadius={4} />
-      <Skeleton width={50} height={16} borderRadius={4} style={{ marginTop: spacing.xs }} />
-      <View style={styles.skeletonNowDivider} />
-      <Skeleton width={55} height={10} borderRadius={4} />
-    </View>
+const SkeletonNow: React.FC = () => (
+  <View style={styles.skeletonNow}>
+    <Skeleton width={24} height={10} borderRadius={4} />
+    <Skeleton width={32} height={16} borderRadius={4} style={{ marginTop: spacing.xs }} />
   </View>
 );
 
-// Loading skeleton row
 const LoadingSkeleton: React.FC = () => (
   <ScrollView
     horizontal
@@ -264,10 +210,10 @@ const LoadingSkeleton: React.FC = () => (
     contentContainerStyle={styles.scrollContent}
     scrollEnabled={false}
   >
-    <SkeletonNowCard />
-    <SkeletonTimeCard index={0} />
-    <SkeletonTimeCard index={1} />
-    <SkeletonTimeCard index={2} />
+    <SkeletonNow />
+    <SkeletonCard index={0} />
+    <SkeletonCard index={1} />
+    <SkeletonCard index={2} />
   </ScrollView>
 );
 
@@ -275,10 +221,10 @@ const LoadingSkeleton: React.FC = () => (
 export const DayBriefingScroll: React.FC<DayBriefingScrollProps> = ({
   onItemPress,
 }) => {
+  const { colors: themeColors } = useTheme();
   const [briefing, setBriefing] = useState<DailyBriefingResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const scrollViewRef = useRef<ScrollView>(null);
 
   const fetchBriefing = useCallback(async () => {
     try {
@@ -298,63 +244,50 @@ export const DayBriefingScroll: React.FC<DayBriefingScrollProps> = ({
     fetchBriefing();
   }, [fetchBriefing]);
 
-  const handleNowPress = () => {
-    onItemPress("What should I focus on right now?");
-  };
+  const handleNowPress = () => onItemPress("What should I focus on right now?");
+  const handleItemPress = (item: BriefingItem) => onItemPress(item.action_prompt);
+  const handleEmptyPress = () => onItemPress("How's my day looking?");
 
-  const handleItemPress = (item: BriefingItem) => {
-    onItemPress(item.action_prompt);
-  };
-
-  const handleEmptyPress = () => {
-    onItemPress("How's my day looking?");
-  };
-
-  // Loading state with skeletons
+  // Loading
   if (isLoading) {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
-          <Skeleton width={70} height={15} borderRadius={4} />
+          <Skeleton width={60} height={13} borderRadius={4} />
         </View>
         <LoadingSkeleton />
       </View>
     );
   }
 
-  // Error state - hide component
-  if (error) {
-    return null;
-  }
+  // Error - hide
+  if (error) return null;
 
   const items = briefing?.items || [];
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* Section header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Your Day</Text>
+        <Text style={[styles.headerTitle, { color: themeColors.textTertiary }]}>Your Day</Text>
         {briefing && briefing.total_count > 0 && (
-          <View style={styles.countBadge}>
-            <Text style={styles.countText}>{briefing.total_count}</Text>
+          <View style={[styles.countBadge, { backgroundColor: themeColors.accentMuted }]}>
+            <Text style={[styles.countText, { color: themeColors.accent }]}>{briefing.total_count}</Text>
           </View>
         )}
       </View>
 
       {/* Horizontal scroll */}
       <ScrollView
-        ref={scrollViewRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         decelerationRate="fast"
-        snapToInterval={CARD_WIDTH + CARD_MARGIN}
+        snapToInterval={CARD_WIDTH + CARD_GAP}
         snapToAlignment="start"
       >
-        {/* Now card always first */}
-        <NowCard onPress={handleNowPress} />
+        <NowCard onPress={handleNowPress} themeColors={themeColors} />
 
-        {/* Items or empty state */}
         {items.length > 0 ? (
           items.map((item, index) => (
             <TimeBlockCard
@@ -362,13 +295,13 @@ export const DayBriefingScroll: React.FC<DayBriefingScrollProps> = ({
               item={item}
               onPress={() => handleItemPress(item)}
               index={index}
+              themeColors={themeColors}
             />
           ))
         ) : (
-          <EmptyState onPress={handleEmptyPress} />
+          <EmptyState onPress={handleEmptyPress} themeColors={themeColors} />
         )}
 
-        {/* End padding for scroll */}
         <View style={{ width: spacing.lg }} />
       </ScrollView>
     </View>
@@ -383,22 +316,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: spacing.sm,
-    gap: spacing.sm,
+    gap: spacing.xs,
   },
   headerTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    letterSpacing: 0.3,
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.textTertiary,
+    letterSpacing: -0.08,
   },
   countBadge: {
-    backgroundColor: colors.accent + '30',
-    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.accentMuted,
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: borderRadius.sm,
+    borderRadius: borderRadius.full,
   },
   countText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: colors.accent,
   },
@@ -406,28 +339,22 @@ const styles = StyleSheet.create({
     paddingRight: spacing.md,
   },
 
-  // Card wrapper for animation
+  // Card wrapper
   cardWrapper: {
-    marginRight: CARD_MARGIN,
+    marginRight: CARD_GAP,
   },
 
   // Time block card
   card: {
     width: CARD_WIDTH,
-    height: 140,
-    backgroundColor: colors.bgSecondary,
+    height: CARD_HEIGHT,
+    backgroundColor: colors.fill,
     borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
     overflow: 'hidden',
-  },
-  accentBar: {
-    height: 3,
-    width: '100%',
   },
   cardContent: {
     flex: 1,
-    padding: spacing.sm,
+    padding: spacing.md,
     justifyContent: 'space-between',
   },
   cardHeader: {
@@ -435,157 +362,99 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  iconContainer: {
-    width: 32,
-    height: 32,
+  iconWrap: {
+    width: 28,
+    height: 28,
     borderRadius: 8,
+    backgroundColor: colors.fillSecondary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  urgentBadge: {
-    backgroundColor: colors.error + '30',
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-    borderRadius: borderRadius.sm,
-  },
-  urgentText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: colors.error,
+  urgentDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   cardTitle: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.textPrimary,
     lineHeight: 18,
+    letterSpacing: -0.15,
   },
   cardSubtitle: {
     fontSize: 12,
+    fontWeight: '400',
     color: colors.textSecondary,
-  },
-  actionHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-  },
-  actionText: {
-    fontSize: 11,
-    color: colors.textTertiary,
+    letterSpacing: -0.08,
   },
 
   // Now card
   nowCard: {
-    width: 90,
-    height: 140,
-    marginRight: CARD_MARGIN,
+    width: NOW_WIDTH,
+    height: CARD_HEIGHT,
+    marginRight: CARD_GAP,
+    backgroundColor: colors.fill,
     borderRadius: borderRadius.lg,
-    overflow: 'hidden',
-  },
-  nowCardGradient: {
-    flex: 1,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-  },
-  nowCardContent: {
-    flex: 1,
-    padding: spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: spacing.md,
   },
   nowLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '500',
+    color: colors.textTertiary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   nowTime: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '600',
     color: colors.textPrimary,
-    marginTop: spacing.xs,
+    marginTop: 2,
+    letterSpacing: -0.5,
   },
-  nowDivider: {
-    width: 24,
-    height: 1,
-    backgroundColor: colors.glassBorder,
-    marginVertical: spacing.sm,
-  },
-  nowHint: {
+  nowAmPm: {
     fontSize: 10,
-    color: colors.accent,
-    textAlign: 'center',
+    fontWeight: '500',
+    color: colors.textSecondary,
+    marginTop: 1,
   },
 
   // Empty state
   emptyCard: {
-    width: CARD_WIDTH * 1.5,
-    height: 140,
-    backgroundColor: colors.bgSecondary,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.md,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginTop: spacing.sm,
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
-
-  // Skeleton styles
-  skeletonCard: {
     width: CARD_WIDTH,
-    height: 140,
-    backgroundColor: colors.bgSecondary,
+    height: CARD_HEIGHT,
+    backgroundColor: colors.fill,
     borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    overflow: 'hidden',
-  },
-  skeletonContent: {
-    flex: 1,
-    padding: spacing.sm,
-  },
-  skeletonHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
   },
-  skeletonFooter: {
-    position: 'absolute',
-    bottom: spacing.sm,
-    left: spacing.sm,
+  emptyText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.textSecondary,
   },
-  skeletonNowCard: {
-    width: 90,
-    height: 140,
-    marginRight: CARD_MARGIN,
-    backgroundColor: colors.bgSecondary,
+
+  // Skeletons
+  skeletonCard: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    backgroundColor: colors.fill,
     borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    overflow: 'hidden',
+    padding: spacing.md,
+    justifyContent: 'space-between',
   },
-  skeletonNowContent: {
-    flex: 1,
-    padding: spacing.sm,
+  skeletonNow: {
+    width: NOW_WIDTH,
+    height: CARD_HEIGHT,
+    marginRight: CARD_GAP,
+    backgroundColor: colors.fill,
+    borderRadius: borderRadius.lg,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  skeletonNowDivider: {
-    width: 24,
-    height: 1,
-    backgroundColor: colors.glassBorder,
-    marginVertical: spacing.sm,
   },
 });
 

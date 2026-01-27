@@ -9,7 +9,7 @@ import {
   Pressable,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { colors, borderRadius, sheetHandle } from '../theme';
+import { colors, borderRadius, sheetHandle, useTheme } from '../theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -28,8 +28,10 @@ export function BottomSheet({
   children,
   height = SCREEN_HEIGHT * 0.6,
   showHandle = true,
-  backgroundColor = colors.bgSecondary,
+  backgroundColor,
 }: BottomSheetProps) {
+  const { colors: themeColors, isDark } = useTheme();
+  const effectiveBackgroundColor = backgroundColor ?? themeColors.bgSecondary;
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const [shouldRender, setShouldRender] = useState(visible);
@@ -152,7 +154,7 @@ export function BottomSheet({
           ]}
           pointerEvents="none"
         >
-          <BlurView intensity={20} style={StyleSheet.absoluteFill} tint="dark" />
+          <BlurView intensity={20} style={StyleSheet.absoluteFill} tint={isDark ? 'dark' : 'light'} />
         </Animated.View>
 
         {/* Tap-to-close area - fills space above the sheet, only active when interactive */}
@@ -169,14 +171,14 @@ export function BottomSheet({
             styles.sheet,
             {
               height: sheetHeight,
-              backgroundColor,
+              backgroundColor: effectiveBackgroundColor,
               transform: [{ translateY }],
             },
             height === 'auto' && styles.sheetAuto,
           ]}
         >
           <View {...panResponder.panHandlers}>
-            {showHandle && <View style={styles.handle} />}
+            {showHandle && <View style={[styles.handle, { backgroundColor: themeColors.textTertiary }]} />}
           </View>
           <View style={height === 'auto' ? styles.contentAuto : styles.content}>{children}</View>
         </Animated.View>

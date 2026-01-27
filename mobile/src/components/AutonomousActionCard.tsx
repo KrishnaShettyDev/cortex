@@ -28,7 +28,7 @@ import {
   MeetingPrepPayload,
 } from '../types';
 import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
-import { colors, spacing, borderRadius, gradients } from '../theme';
+import { colors, spacing, borderRadius, gradients, useTheme } from '../theme';
 
 interface AutonomousActionCardProps {
   action: AutonomousAction;
@@ -43,6 +43,7 @@ export function AutonomousActionCard({
   onDismiss,
   isLoading = false,
 }: AutonomousActionCardProps) {
+  const { colors: themeColors, gradients: themeGradients, isDark } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
   const [editedPayload, setEditedPayload] = useState<Record<string, unknown>>(
     action.action_payload as Record<string, unknown>
@@ -78,7 +79,7 @@ export function AutonomousActionCard({
       case 'meeting_prep':
         return <GoogleCalendarIcon size={24} />;
       default:
-        return <Ionicons name="flash" size={24} color={colors.accent} />;
+        return <Ionicons name="flash" size={24} color={themeColors.accent} />;
     }
   };
 
@@ -107,10 +108,10 @@ export function AutonomousActionCard({
     const confidence = action.confidence_score;
     const color =
       confidence >= 0.7
-        ? colors.success
+        ? themeColors.success
         : confidence >= 0.4
-        ? colors.warning
-        : colors.textTertiary;
+        ? themeColors.warning
+        : themeColors.textTertiary;
 
     return (
       <View style={styles.confidenceContainer}>
@@ -130,41 +131,41 @@ export function AutonomousActionCard({
       return (
         <View style={styles.editContent}>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>To</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>To</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
               value={editedPayload.to as string}
               onChangeText={(text) =>
                 setEditedPayload({ ...editedPayload, to: text })
               }
               placeholder="recipient@email.com"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
               keyboardType="email-address"
               autoCapitalize="none"
             />
           </View>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>Subject</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Subject</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
               value={editedPayload.subject as string}
               onChangeText={(text) =>
                 setEditedPayload({ ...editedPayload, subject: text })
               }
               placeholder="Email subject"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </View>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>Body</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Body</Text>
             <TextInput
-              style={[styles.textInput, styles.multilineInput]}
+              style={[styles.textInput, styles.multilineInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
               value={editedPayload.body as string}
               onChangeText={(text) =>
                 setEditedPayload({ ...editedPayload, body: text })
               }
               placeholder="Email body"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
               multiline
               numberOfLines={4}
             />
@@ -175,9 +176,9 @@ export function AutonomousActionCard({
 
     return (
       <View style={styles.previewContent}>
-        <Text style={styles.previewLabel}>To: {payload.to}</Text>
-        <Text style={styles.previewSubject}>{payload.subject}</Text>
-        <Text style={styles.previewBody} numberOfLines={3}>
+        <Text style={[styles.previewLabel, { color: themeColors.textSecondary }]}>To: {payload.to}</Text>
+        <Text style={[styles.previewSubject, { color: themeColors.textPrimary }]}>{payload.subject}</Text>
+        <Text style={[styles.previewBody, { color: themeColors.textSecondary }]} numberOfLines={3}>
           {payload.body}
         </Text>
       </View>
@@ -192,27 +193,27 @@ export function AutonomousActionCard({
       return (
         <View style={styles.editContent}>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>Title</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Title</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
               value={editedPayload.title as string}
               onChangeText={(text) =>
                 setEditedPayload({ ...editedPayload, title: text })
               }
               placeholder="Event title"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </View>
           <View style={styles.editField}>
-            <Text style={styles.fieldLabel}>Location (optional)</Text>
+            <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Location (optional)</Text>
             <TextInput
-              style={styles.textInput}
+              style={[styles.textInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
               value={(editedPayload.location as string) || ''}
               onChangeText={(text) =>
                 setEditedPayload({ ...editedPayload, location: text })
               }
               placeholder="Add location"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </View>
         </View>
@@ -221,12 +222,12 @@ export function AutonomousActionCard({
 
     return (
       <View style={styles.previewContent}>
-        <Text style={styles.previewSubject}>{payload.title}</Text>
-        <Text style={styles.previewLabel}>
+        <Text style={[styles.previewSubject, { color: themeColors.textPrimary }]}>{payload.title}</Text>
+        <Text style={[styles.previewLabel, { color: themeColors.textSecondary }]}>
           {new Date(payload.start_time).toLocaleString()}
         </Text>
         {payload.location && (
-          <Text style={styles.previewBody}>{payload.location}</Text>
+          <Text style={[styles.previewBody, { color: themeColors.textSecondary }]}>{payload.location}</Text>
         )}
       </View>
     );
@@ -238,12 +239,12 @@ export function AutonomousActionCard({
 
     return (
       <View style={styles.previewContent}>
-        <Text style={styles.previewSubject}>{payload.event_title}</Text>
-        <Text style={styles.previewLabel}>
+        <Text style={[styles.previewSubject, { color: themeColors.textPrimary }]}>{payload.event_title}</Text>
+        <Text style={[styles.previewLabel, { color: themeColors.textSecondary }]}>
           {new Date(payload.start_time).toLocaleString()}
         </Text>
         {payload.attendees && payload.attendees.length > 0 && (
-          <Text style={styles.previewBody}>
+          <Text style={[styles.previewBody, { color: themeColors.textSecondary }]}>
             {payload.attendees.length} attendee{payload.attendees.length > 1 ? 's' : ''}
           </Text>
         )}
@@ -266,7 +267,7 @@ export function AutonomousActionCard({
       default:
         return (
           <View style={styles.previewContent}>
-            <Text style={styles.previewBody}>{action.description}</Text>
+            <Text style={[styles.previewBody, { color: themeColors.textSecondary }]}>{action.description}</Text>
           </View>
         );
     }
@@ -280,15 +281,15 @@ export function AutonomousActionCard({
     action.action_type === 'calendar_create';
 
   return (
-    <BlurView intensity={20} tint="dark" style={styles.container}>
+    <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={[styles.container, { borderColor: themeColors.glassBorder }]}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.iconContainer}>{renderIcon()}</View>
+        <View style={[styles.iconContainer, { backgroundColor: themeColors.fill }]}>{renderIcon()}</View>
         <View style={styles.headerText}>
-          <Text style={styles.title} numberOfLines={1}>
+          <Text style={[styles.title, { color: themeColors.textPrimary }]} numberOfLines={1}>
             {action.title}
           </Text>
-          <Text style={styles.reason} numberOfLines={1}>
+          <Text style={[styles.reason, { color: themeColors.textSecondary }]} numberOfLines={1}>
             {action.reason || 'Suggested action'}
           </Text>
         </View>
@@ -299,14 +300,14 @@ export function AutonomousActionCard({
       <View style={styles.content}>{renderContent()}</View>
 
       {/* Actions */}
-      <View style={styles.actions}>
+      <View style={[styles.actions, { borderTopColor: themeColors.glassBorder }]}>
         {canEdit && (
           <TouchableOpacity
             style={styles.editButton}
             onPress={toggleEdit}
             disabled={isLoading}
           >
-            <Text style={styles.editText}>{isEditing ? 'Done' : 'Edit'}</Text>
+            <Text style={[styles.editText, { color: themeColors.accent }]}>{isEditing ? 'Done' : 'Edit'}</Text>
           </TouchableOpacity>
         )}
 
@@ -315,18 +316,18 @@ export function AutonomousActionCard({
           onPress={handleDismiss}
           disabled={isLoading}
         >
-          <Text style={styles.dismissText}>Dismiss</Text>
+          <Text style={[styles.dismissText, { color: themeColors.textSecondary }]}>Dismiss</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.approveButton, isEditing && styles.approveButtonDisabled]}
+          style={[styles.approveButton, { backgroundColor: themeColors.accent }, isEditing && styles.approveButtonDisabled]}
           onPress={handleApprove}
           disabled={isLoading}
         >
           {isLoading ? (
-            <ActivityIndicator size="small" color={colors.bgPrimary} />
+            <ActivityIndicator size="small" color={themeColors.bgPrimary} />
           ) : (
-            <Text style={styles.approveText}>{getApproveText()}</Text>
+            <Text style={[styles.approveText, { color: themeColors.bgPrimary }]}>{getApproveText()}</Text>
           )}
         </TouchableOpacity>
       </View>

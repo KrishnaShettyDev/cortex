@@ -359,7 +359,7 @@ export default function NotificationSettingsScreen() {
             <View style={styles.separator} />
             <SettingRow
               icon="mail-outline"
-              iconColor={colors.email}
+              iconColor={colors.gmail}
               title="Urgent email alerts"
               subtitle="Important emails that need attention"
               value={notificationSettings.emailAlerts}

@@ -16,7 +16,7 @@ import { useBiometric } from '../src/hooks/useBiometric';
 import { useOffline } from '../src/hooks/useOffline';
 import { useNotifications } from '../src/hooks/useNotifications';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
-import { colors, spacing, typography } from '../src/theme';
+import { colors, spacing, typography, ThemeProvider, useTheme } from '../src/theme';
 import { backgroundSyncService } from '../src/services/backgroundSync';
 import { POSTHOG_API_KEY, POSTHOG_HOST } from '../src/config/env';
 
@@ -80,6 +80,7 @@ function OfflineBanner() {
 function RootLayoutNav() {
   const { isLoading, user } = useAuth();
   const { isBiometricEnabled, isUnlocked, setUnlocked } = useAppStore();
+  const { colors: themeColors, isDark } = useTheme();
   const [dbReady, setDbReady] = useState(false);
 
   // Initialize push notifications
@@ -143,7 +144,7 @@ function RootLayoutNav() {
 
   // Show loading screen
   if (isLoading || !dbReady) {
-    return <View style={styles.loadingScreen} />;
+    return <View style={[styles.loadingScreen, { backgroundColor: themeColors.bgPrimary }]} />;
   }
 
   // Show biometric lock screen
@@ -153,12 +154,12 @@ function RootLayoutNav() {
 
   return (
     <>
-      <StatusBar style="light" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <OfflineBanner />
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: colors.bgPrimary },
+          contentStyle: { backgroundColor: themeColors.bgPrimary },
           animation: 'fade',
         }}
       >
@@ -182,7 +183,9 @@ export default function RootLayout() {
         >
           <QueryClientProvider client={queryClient}>
             <AuthProvider>
-              <RootLayoutNav />
+              <ThemeProvider>
+                <RootLayoutNav />
+              </ThemeProvider>
             </AuthProvider>
           </QueryClientProvider>
         </PostHogProvider>

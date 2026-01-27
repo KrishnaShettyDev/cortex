@@ -42,7 +42,7 @@ import { InsightsPillRow } from '../../src/components/InsightCards';
 import { useAuth } from '../../src/context/AuthContext';
 import { chatService, speechService, api, StatusUpdate } from '../../src/services';
 import { ChatMessage, PendingAction, MemoryReference, ProactiveInsightsResponse, ActionTaken } from '../../src/types';
-import { colors, gradients, spacing, borderRadius } from '../../src/theme';
+import { colors, spacing, borderRadius, useTheme } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { useChatSuggestions, useGreeting } from '../../src/hooks/useChat';
 import { useAppStore } from '../../src/stores/appStore';
@@ -54,6 +54,7 @@ export default function ChatScreen() {
   const { user } = useAuth();
   const posthog = usePostHog();
   const insets = useSafeAreaInsets();
+  const { colors, gradients, isDark } = useTheme();
   const {
     chatDraft,
     setChatDraft,
@@ -560,7 +561,7 @@ export default function ChatScreen() {
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <Text style={styles.greetingText}>
+      <Text style={[styles.greetingText, { color: colors.textPrimary }]}>
         {getGreeting()}
       </Text>
       {/* Autonomous Actions - Iris-style proactive suggestions */}
@@ -680,6 +681,7 @@ export default function ChatScreen() {
         {showTimestamp && (
           <Text style={[
             styles.messageTimestamp,
+            { color: colors.textTertiary },
             isUser && styles.messageTimestampRight
           ]}>
             {formatTimestamp(new Date(item.timestamp))}
@@ -694,7 +696,7 @@ export default function ChatScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.bgPrimary }]} edges={['top']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}
@@ -720,7 +722,7 @@ export default function ChatScreen() {
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             activeOpacity={0.7}
           >
-            <Text style={styles.clearText}>Clear</Text>
+            <Text style={[styles.clearText, { color: colors.accent }]}>Clear</Text>
           </TouchableOpacity>
         </View>
 
@@ -750,6 +752,7 @@ export default function ChatScreen() {
               refreshing={isRefreshing}
               onRefresh={handleRefresh}
               tintColor={colors.accent}
+              colors={[colors.accent]}
             />
           }
           {...{ estimatedItemSize: 100 } as any}
@@ -765,7 +768,7 @@ export default function ChatScreen() {
               )}
               {/* Streaming content as it arrives */}
               {streamingContent && (
-                <Text style={styles.streamingText}>{streamingContent}</Text>
+                <Text style={[styles.streamingText, { color: colors.textPrimary }]}>{streamingContent}</Text>
               )}
               {/* Inline action review */}
               {actionToReview && (
@@ -785,20 +788,20 @@ export default function ChatScreen() {
 
         {/* Recording indicator */}
         {isRecording && (
-          <View style={styles.recordingIndicator}>
-            <View style={styles.recordingDot} />
-            <Text style={styles.recordingText}>Recording... Tap mic to stop</Text>
+          <View style={[styles.recordingIndicator, { backgroundColor: colors.fill }]}>
+            <View style={[styles.recordingDot, { backgroundColor: colors.error }]} />
+            <Text style={[styles.recordingText, { color: colors.error }]}>Recording... Tap mic to stop</Text>
           </View>
         )}
 
         {/* Transcribing indicator - Glassmorphic iOS style */}
         {isTranscribing && (
-          <BlurView intensity={80} tint="dark" style={styles.transcribingContainer}>
-            <View style={styles.transcribingContent}>
-              <View style={styles.transcribingPulse}>
-                <Animated.View style={[styles.transcribingDot, { transform: [{ scale: pulseAnim }] }]} />
+          <BlurView intensity={80} tint={isDark ? 'dark' : 'light'} style={styles.transcribingContainer}>
+            <View style={[styles.transcribingContent, { backgroundColor: colors.fill }]}>
+              <View style={[styles.transcribingPulse, { backgroundColor: colors.accentLight }]}>
+                <Animated.View style={[styles.transcribingDot, { backgroundColor: colors.accent, transform: [{ scale: pulseAnim }] }]} />
               </View>
-              <Text style={styles.transcribingText}>Transcribing...</Text>
+              <Text style={[styles.transcribingText, { color: colors.textPrimary }]}>Transcribing...</Text>
             </View>
           </BlurView>
         )}
@@ -814,14 +817,15 @@ export default function ChatScreen() {
         )}
 
         {/* Input Bar with FAB */}
-        <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
+        <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, spacing.sm), backgroundColor: colors.bgPrimary }]}>
           <View style={styles.inputRow}>
             <View style={[
               styles.inputWrapper,
-              isFocused && styles.inputWrapperFocused
+              { backgroundColor: colors.fill },
+              isFocused && { backgroundColor: colors.fillSecondary }
             ]}>
               <TextInput
-                style={styles.input}
+                style={[styles.input, { color: colors.textPrimary }]}
                 placeholder="Ask Cortex..."
                 placeholderTextColor={colors.textTertiary}
                 value={inputText}
@@ -837,7 +841,7 @@ export default function ChatScreen() {
               <TouchableOpacity
                 style={[
                   styles.inlineButton,
-                  isRecording && styles.recordingButton,
+                  isRecording && [styles.recordingButton, { shadowColor: colors.error }],
                 ]}
                 onPress={handleSendPress}
                 disabled={isLoading}
@@ -855,7 +859,7 @@ export default function ChatScreen() {
                   ) : (
                     <View style={[
                       styles.micButton,
-                      isRecording && styles.micButtonRecording
+                      isRecording && [styles.micButtonRecording, { backgroundColor: colors.error }]
                     ]}>
                       <Ionicons
                         name={isRecording ? 'stop' : 'mic'}
@@ -883,16 +887,15 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   keyboardView: {
     flex: 1,
   },
-  // Header - Iris style
+  // Header - minimal iOS style
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     gap: spacing.sm,
   },
@@ -900,9 +903,9 @@ const styles = StyleSheet.create({
     padding: spacing.xs,
   },
   clearText: {
-    color: colors.textSecondary,
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '400',
+    letterSpacing: -0.41,
   },
   // Messages list
   messagesList: {
@@ -914,40 +917,39 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   messageTimestamp: {
-    fontSize: 11,
-    color: colors.textTertiary,
+    fontSize: 12,
     marginBottom: spacing.sm,
-    letterSpacing: 0.3,
+    letterSpacing: -0.08,
   },
   messageTimestampRight: {
     textAlign: 'right',
   },
-  // Empty state - Iris style
+  // Empty state - clean iOS style
   emptyState: {
     paddingTop: spacing.sm,
   },
   greetingText: {
-    fontSize: 24,
-    fontWeight: '400',
-    color: colors.textPrimary,
-    lineHeight: 32,
-    marginBottom: spacing.md,
+    fontSize: 28,
+    fontWeight: '300',
+    lineHeight: 34,
+    marginBottom: spacing.xl,
+    letterSpacing: 0.36,
   },
   insightsContainer: {
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
     marginBottom: spacing.xl,
   },
   briefingPillContainer: {
     marginBottom: spacing.sm,
   },
-  // Suggest button container - fixed position above input
+  // Suggest button
   suggestButtonContainer: {
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
   },
-  // Suggestions overlay - appears above the suggest button
+  // Suggestions overlay
   suggestionsOverlay: {
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
     paddingBottom: spacing.sm,
     gap: spacing.sm,
     alignItems: 'flex-start',
@@ -956,27 +958,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.bgSecondary,
+    paddingVertical: spacing.md,
     gap: spacing.sm,
+    marginHorizontal: spacing.lg,
+    borderRadius: borderRadius.lg,
+    marginBottom: spacing.sm,
   },
   recordingDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: colors.error,
   },
   recordingText: {
-    color: colors.error,
-    fontSize: 14,
+    fontSize: 15,
+    fontWeight: '500',
+    letterSpacing: -0.24,
   },
   transcribingContainer: {
     marginHorizontal: spacing.lg,
     marginVertical: spacing.sm,
     borderRadius: borderRadius.lg,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
   },
   transcribingContent: {
     flexDirection: 'row',
@@ -985,13 +987,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     gap: spacing.sm,
-    backgroundColor: colors.glassBackground,
   },
   transcribingPulse: {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: colors.accent + '30',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -999,19 +999,16 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.accent,
   },
   transcribingText: {
-    color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '500',
-    letterSpacing: 0.3,
+    letterSpacing: -0.24,
   },
-  // Input container with FAB
+  // Input container - iOS style
   inputContainer: {
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
-    backgroundColor: '#000000',
   },
   inputRow: {
     flexDirection: 'row',
@@ -1022,54 +1019,45 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.bgTertiary,
-    borderRadius: borderRadius.full,
-    paddingLeft: spacing.md,
+    borderRadius: 24,
+    paddingLeft: spacing.lg,
     paddingRight: spacing.xs,
     paddingVertical: spacing.xs,
     minHeight: 48,
     gap: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-  },
-  inputWrapperFocused: {
-    borderColor: colors.accent,
   },
   input: {
     flex: 1,
-    color: colors.textPrimary,
-    fontSize: 16,
+    fontSize: 17,
+    letterSpacing: -0.41,
     maxHeight: 100,
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.sm,
   },
   inlineButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     overflow: 'hidden',
   },
   inlineButtonGradient: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
   micButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
   },
-  micButtonRecording: {
-    backgroundColor: colors.error,
-  },
+  micButtonRecording: {},
   recordingButton: {
-    shadowColor: colors.error,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.4,
     shadowRadius: 8,
   },
   // Footer
@@ -1080,8 +1068,8 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   streamingText: {
-    fontSize: 16,
+    fontSize: 17,
     lineHeight: 24,
-    color: colors.textPrimary,
+    letterSpacing: -0.41,
   },
 });

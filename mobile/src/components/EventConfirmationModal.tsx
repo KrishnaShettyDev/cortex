@@ -15,7 +15,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { colors, gradients, spacing, borderRadius } from '../theme';
+import { colors, gradients, spacing, borderRadius, useTheme } from '../theme';
 
 export interface ParsedEvent {
   title: string;
@@ -43,6 +43,7 @@ export const EventConfirmationModal: React.FC<EventConfirmationModalProps> = ({
   onConfirm,
   onCancel,
 }) => {
+  const { colors: themeColors, gradients: themeGradients } = useTheme();
   const [editMode, setEditMode] = useState(false);
   const [editedEvent, setEditedEvent] = useState<ParsedEvent | null>(null);
 
@@ -106,11 +107,11 @@ export const EventConfirmationModal: React.FC<EventConfirmationModalProps> = ({
         style={styles.container}
       >
         <Pressable style={styles.overlay} onPress={onCancel}>
-          <Pressable style={styles.content} onPress={(e) => e.stopPropagation()}>
+          <Pressable style={[styles.content, { backgroundColor: themeColors.bgSecondary }]} onPress={(e) => e.stopPropagation()}>
             {isLoading ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color={colors.accent} />
-                <Text style={styles.loadingText}>Parsing your event...</Text>
+                <ActivityIndicator size="large" color={themeColors.accent} />
+                <Text style={[styles.loadingText, { color: themeColors.textSecondary }]}>Parsing your event...</Text>
               </View>
             ) : (
               <ScrollView showsVerticalScrollIndicator={false}>
@@ -119,11 +120,11 @@ export const EventConfirmationModal: React.FC<EventConfirmationModalProps> = ({
                   <View style={styles.headerIcon}>
                     <Ionicons name="calendar" size={24} color="#4285F4" />
                   </View>
-                  <Text style={styles.headerTitle}>
+                  <Text style={[styles.headerTitle, { color: themeColors.textPrimary }]}>
                     {editMode ? 'Edit Event' : 'Create Event'}
                   </Text>
-                  <TouchableOpacity style={styles.closeButton} onPress={onCancel}>
-                    <Ionicons name="close" size={24} color={colors.textSecondary} />
+                  <TouchableOpacity style={[styles.closeButton, { backgroundColor: themeColors.bgTertiary }]} onPress={onCancel}>
+                    <Ionicons name="close" size={24} color={themeColors.textSecondary} />
                   </TouchableOpacity>
                 </View>
 
@@ -132,51 +133,51 @@ export const EventConfirmationModal: React.FC<EventConfirmationModalProps> = ({
                   // Edit Mode
                   <View style={styles.editForm}>
                     <View style={styles.formField}>
-                      <Text style={styles.fieldLabel}>Title</Text>
+                      <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Title</Text>
                       <TextInput
-                        style={styles.textInput}
+                        style={[styles.textInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary, borderColor: themeColors.glassBorder }]}
                         value={editedEvent?.title}
                         onChangeText={(text) =>
                           setEditedEvent((prev) => prev ? { ...prev, title: text } : null)
                         }
                         placeholder="Event title"
-                        placeholderTextColor={colors.textTertiary}
+                        placeholderTextColor={themeColors.textTertiary}
                       />
                     </View>
 
                     <View style={styles.formField}>
-                      <Text style={styles.fieldLabel}>Date & Time</Text>
-                      <Text style={styles.dateTimePreview}>
+                      <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Date & Time</Text>
+                      <Text style={[styles.dateTimePreview, { color: themeColors.textPrimary, backgroundColor: themeColors.bgTertiary }]}>
                         {formatDate(startDate)}, {formatTime(startDate)} - {formatTime(endDate)}
                       </Text>
-                      <Text style={styles.dateTimeHint}>
+                      <Text style={[styles.dateTimeHint, { color: themeColors.textTertiary }]}>
                         Tap "Edit" on calendar to change time
                       </Text>
                     </View>
 
                     <View style={styles.formField}>
-                      <Text style={styles.fieldLabel}>Location (optional)</Text>
+                      <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Location (optional)</Text>
                       <TextInput
-                        style={styles.textInput}
+                        style={[styles.textInput, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary, borderColor: themeColors.glassBorder }]}
                         value={editedEvent?.location || ''}
                         onChangeText={(text) =>
                           setEditedEvent((prev) => prev ? { ...prev, location: text || undefined } : null)
                         }
                         placeholder="Add location"
-                        placeholderTextColor={colors.textTertiary}
+                        placeholderTextColor={themeColors.textTertiary}
                       />
                     </View>
 
                     <View style={styles.formField}>
-                      <Text style={styles.fieldLabel}>Description (optional)</Text>
+                      <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Description (optional)</Text>
                       <TextInput
-                        style={[styles.textInput, styles.textArea]}
+                        style={[styles.textInput, styles.textArea, { backgroundColor: themeColors.bgTertiary, color: themeColors.textPrimary, borderColor: themeColors.glassBorder }]}
                         value={editedEvent?.description || ''}
                         onChangeText={(text) =>
                           setEditedEvent((prev) => prev ? { ...prev, description: text || undefined } : null)
                         }
                         placeholder="Add description"
-                        placeholderTextColor={colors.textTertiary}
+                        placeholderTextColor={themeColors.textTertiary}
                         multiline
                         numberOfLines={3}
                       />
@@ -185,34 +186,34 @@ export const EventConfirmationModal: React.FC<EventConfirmationModalProps> = ({
                 ) : (
                   // Preview Mode
                   <View style={styles.preview}>
-                    <Text style={styles.eventTitle}>{displayEvent.title}</Text>
+                    <Text style={[styles.eventTitle, { color: themeColors.textPrimary }]}>{displayEvent.title}</Text>
 
                     <View style={styles.detailRow}>
-                      <Ionicons name="time-outline" size={18} color={colors.textSecondary} />
-                      <Text style={styles.detailText}>
+                      <Ionicons name="time-outline" size={18} color={themeColors.textSecondary} />
+                      <Text style={[styles.detailText, { color: themeColors.textSecondary }]}>
                         {formatDate(startDate)}, {formatTime(startDate)} - {formatTime(endDate)}
                       </Text>
                     </View>
 
                     {displayEvent.location && (
                       <View style={styles.detailRow}>
-                        <Ionicons name="location-outline" size={18} color={colors.textSecondary} />
-                        <Text style={styles.detailText}>{displayEvent.location}</Text>
+                        <Ionicons name="location-outline" size={18} color={themeColors.textSecondary} />
+                        <Text style={[styles.detailText, { color: themeColors.textSecondary }]}>{displayEvent.location}</Text>
                       </View>
                     )}
 
                     {displayEvent.attendees && displayEvent.attendees.length > 0 && (
                       <View style={styles.detailRow}>
-                        <Ionicons name="people-outline" size={18} color={colors.textSecondary} />
-                        <Text style={styles.detailText}>
+                        <Ionicons name="people-outline" size={18} color={themeColors.textSecondary} />
+                        <Text style={[styles.detailText, { color: themeColors.textSecondary }]}>
                           {displayEvent.attendees.map((a) => a.name || a.email).join(', ')}
                         </Text>
                       </View>
                     )}
 
                     {displayEvent.description && (
-                      <View style={styles.descriptionContainer}>
-                        <Text style={styles.descriptionText}>{displayEvent.description}</Text>
+                      <View style={[styles.descriptionContainer, { backgroundColor: themeColors.bgTertiary }]}>
+                        <Text style={[styles.descriptionText, { color: themeColors.textSecondary }]}>{displayEvent.description}</Text>
                       </View>
                     )}
                   </View>
@@ -221,16 +222,16 @@ export const EventConfirmationModal: React.FC<EventConfirmationModalProps> = ({
                 {/* Actions */}
                 <View style={styles.actions}>
                   <TouchableOpacity
-                    style={styles.editButton}
+                    style={[styles.editButton, { backgroundColor: themeColors.bgTertiary }]}
                     onPress={toggleEditMode}
                     disabled={isCreating}
                   >
                     <Ionicons
                       name={editMode ? 'eye-outline' : 'create-outline'}
                       size={18}
-                      color={colors.textPrimary}
+                      color={themeColors.textPrimary}
                     />
-                    <Text style={styles.editButtonText}>
+                    <Text style={[styles.editButtonText, { color: themeColors.textPrimary }]}>
                       {editMode ? 'Preview' : 'Edit'}
                     </Text>
                   </TouchableOpacity>
@@ -241,17 +242,17 @@ export const EventConfirmationModal: React.FC<EventConfirmationModalProps> = ({
                     disabled={isCreating}
                   >
                     <LinearGradient
-                      colors={gradients.primary}
+                      colors={themeGradients.primary}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 0 }}
                       style={styles.confirmGradient}
                     >
                       {isCreating ? (
-                        <ActivityIndicator size="small" color="#fff" />
+                        <ActivityIndicator size="small" color={themeColors.bgPrimary} />
                       ) : (
                         <>
-                          <Ionicons name="checkmark" size={18} color="#fff" />
-                          <Text style={styles.confirmButtonText}>Create Event</Text>
+                          <Ionicons name="checkmark" size={18} color={themeColors.bgPrimary} />
+                          <Text style={[styles.confirmButtonText, { color: themeColors.bgPrimary }]}>Create Event</Text>
                         </>
                       )}
                     </LinearGradient>

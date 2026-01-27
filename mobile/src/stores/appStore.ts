@@ -97,7 +97,7 @@ const initialState = {
   lastConversationId: null,
   chatMessages: [] as ChatMessage[],
   hasSeenOnboarding: false,
-  themeMode: 'dark' as ThemeMode,
+  themeMode: 'system' as ThemeMode,
   isApiHealthy: true,
   lastHealthCheckAt: null,
   notificationSettings: {

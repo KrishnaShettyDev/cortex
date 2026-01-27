@@ -19,7 +19,7 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.cortex.app",
+      "bundleIdentifier": "com.askcortex.app",
       "usesAppleSignIn": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Cortex needs microphone access to record voice memories.",

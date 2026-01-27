@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 import { StatusUpdate } from '../services/chat';
 
 interface ReasoningStepsProps {
@@ -13,6 +13,8 @@ interface ReasoningStepsProps {
  * Shows a list of steps with the current step having a spinner.
  */
 export function ReasoningSteps({ steps }: ReasoningStepsProps) {
+  const { colors: themeColors } = useTheme();
+
   if (steps.length === 0) return null;
 
   // Get icon for step type
@@ -47,12 +49,12 @@ export function ReasoningSteps({ steps }: ReasoningStepsProps) {
             {/* Icon or spinner */}
             <View style={styles.iconContainer}>
               {isLast && !isComplete ? (
-                <ActivityIndicator size="small" color={colors.accent} />
+                <ActivityIndicator size="small" color={themeColors.accent} />
               ) : (
                 <Ionicons
                   name={getStepIcon(step) as any}
                   size={14}
-                  color={isComplete ? colors.textTertiary : colors.accent}
+                  color={isComplete ? themeColors.textTertiary : themeColors.accent}
                 />
               )}
             </View>
@@ -61,8 +63,9 @@ export function ReasoningSteps({ steps }: ReasoningStepsProps) {
             <Text
               style={[
                 styles.stepText,
-                isComplete && styles.stepTextComplete,
-                isLast && !isComplete && styles.stepTextActive,
+                { color: themeColors.textSecondary },
+                isComplete && { color: themeColors.textTertiary },
+                isLast && !isComplete && { color: themeColors.textPrimary },
               ]}
             >
               {step.message}

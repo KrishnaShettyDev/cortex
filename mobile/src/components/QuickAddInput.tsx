@@ -10,7 +10,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { colors, gradients, spacing, borderRadius } from '../theme';
+import { colors, gradients, spacing, borderRadius, useTheme } from '../theme';
 import { chatService } from '../services/chat';
 import { integrationsService, CreateCalendarEventRequest } from '../services/integrations';
 import { EventConfirmationModal, ParsedEvent } from './EventConfirmationModal';
@@ -26,6 +26,7 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
   selectedDate,
   onEventCreated,
 }) => {
+  const { colors: themeColors, gradients: themeGradients } = useTheme();
   const [inputText, setInputText] = useState('');
   const [isParsing, setIsParsing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -145,20 +146,20 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
 
   return (
     <>
-      <View style={styles.container}>
-        <View style={styles.inputWrapper}>
+      <View style={[styles.container, { backgroundColor: themeColors.bgPrimary, borderTopColor: themeColors.glassBorder }]}>
+        <View style={[styles.inputWrapper, { backgroundColor: themeColors.bgSecondary, borderColor: themeColors.glassBorder }]}>
           <Ionicons
             name="calendar-outline"
             size={20}
-            color={colors.textTertiary}
+            color={themeColors.textTertiary}
             style={styles.inputIcon}
           />
           <TextInput
-            style={styles.input}
+            style={[styles.input, { color: themeColors.textPrimary }]}
             value={inputText}
             onChangeText={setInputText}
             placeholder="Add event... &quot;Meeting at 3pm&quot;"
-            placeholderTextColor={colors.textTertiary}
+            placeholderTextColor={themeColors.textTertiary}
             editable={!isParsing}
             returnKeyType="send"
             onSubmitEditing={handleSend}
@@ -166,7 +167,7 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
           {isParsing && (
             <ActivityIndicator
               size="small"
-              color={colors.accent}
+              color={themeColors.accent}
               style={styles.loadingIndicator}
             />
           )}
@@ -180,8 +181,8 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
           <LinearGradient
             colors={
               inputText.trim() && !isParsing
-                ? gradients.primary
-                : [colors.bgTertiary, colors.bgTertiary]
+                ? themeGradients.primary
+                : [themeColors.bgTertiary, themeColors.bgTertiary]
             }
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
@@ -190,7 +191,7 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
             <Ionicons
               name="arrow-up"
               size={20}
-              color={inputText.trim() && !isParsing ? '#fff' : colors.textTertiary}
+              color={inputText.trim() && !isParsing ? '#fff' : themeColors.textTertiary}
             />
           </LinearGradient>
         </TouchableOpacity>

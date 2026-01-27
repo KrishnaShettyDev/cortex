@@ -22,7 +22,7 @@ const DEV_CONFIG = {
     android: '266293132252-tu55j8qrfi96n15jntgbinpnj3cnh9si.apps.googleusercontent.com',
     web: '266293132252-ce19t4pktv5t8o5k34rito52r4opi7rk.apps.googleusercontent.com',
   },
-  ENABLE_DEV_LOGIN: true,
+  ENABLE_DEV_LOGIN: false, // Disabled for production
 };
 
 // Production configuration - values come from EAS build env or secrets

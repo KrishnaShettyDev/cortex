@@ -1,8 +1,8 @@
 /**
- * ActionReviewModal - Full action review and approval
+ * ActionReviewModal - iOS-style action review sheet
  *
- * Shows complete action details with Edit option.
- * User can approve or dismiss from here.
+ * Clean bottom sheet for reviewing and approving actions.
+ * Native iOS aesthetic with smooth interactions.
  */
 
 import React, { useState } from 'react';
@@ -19,14 +19,13 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import {
   AutonomousAction,
   EmailPayload,
   CalendarPayload,
 } from '../types';
 import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, sheetHandle, useTheme } from '../theme';
 
 interface ActionReviewModalProps {
   action: AutonomousAction | null;
@@ -45,6 +44,7 @@ export function ActionReviewModal({
   onDismiss,
   isLoading = false,
 }: ActionReviewModalProps) {
+  const { colors: themeColors, isDark } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
   const [editedPayload, setEditedPayload] = useState<Record<string, unknown>>({});
 
@@ -71,27 +71,19 @@ export function ActionReviewModal({
     onClose();
   };
 
-  // Get action type label
+  // Action type helpers
   const getActionTypeLabel = () => {
     switch (action.action_type) {
-      case 'email_reply':
-        return 'Reply to Email';
-      case 'email_compose':
-        return 'Send Email';
-      case 'followup':
-        return 'Follow Up';
-      case 'calendar_create':
-        return 'Create Event';
-      case 'calendar_reschedule':
-        return 'Reschedule Event';
-      case 'meeting_prep':
-        return 'Meeting Prep';
-      default:
-        return 'Action';
+      case 'email_reply': return 'Reply';
+      case 'email_compose': return 'New Email';
+      case 'followup': return 'Follow Up';
+      case 'calendar_create': return 'New Event';
+      case 'calendar_reschedule': return 'Reschedule';
+      case 'meeting_prep': return 'Prep Notes';
+      default: return 'Action';
     }
   };
 
-  // Get approve button text
   const getApproveText = () => {
     switch (action.action_type) {
       case 'email_reply':
@@ -103,101 +95,111 @@ export function ActionReviewModal({
       case 'calendar_reschedule':
         return 'Reschedule';
       case 'meeting_prep':
-        return 'Got it';
+        return 'Done';
       default:
         return 'Approve';
     }
   };
 
-  // Render icon
   const renderIcon = () => {
+    const size = 18;
     switch (action.action_type) {
       case 'email_reply':
       case 'email_compose':
       case 'followup':
-        return <GmailIcon size={20} />;
+        return <GmailIcon size={size} />;
       case 'calendar_create':
       case 'calendar_reschedule':
       case 'meeting_prep':
-        return <GoogleCalendarIcon size={20} />;
+        return <GoogleCalendarIcon size={size} />;
       default:
-        return <Ionicons name="flash" size={20} color={colors.accent} />;
+        return <Ionicons name="flash" size={size} color={themeColors.accent} />;
     }
   };
 
-  // Render email content
+  // Email content renderer
   const renderEmailContent = () => {
     const payload = (isEditing ? editedPayload : action.action_payload) as EmailPayload;
 
     return (
-      <View style={styles.emailContent}>
-        <View style={styles.emailHeader}>
-          {renderIcon()}
-          <Text style={styles.actionTypeLabel}>{getActionTypeLabel()}</Text>
+      <View style={styles.contentSection}>
+        {/* To field */}
+        <View style={[styles.fieldRow, { borderBottomColor: themeColors.separator }]}>
+          <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>To</Text>
+          <Text style={[styles.fieldValue, { color: themeColors.textPrimary }]} numberOfLines={1}>{payload.to}</Text>
         </View>
 
-        <Text style={styles.emailTo}>To: {payload.to}</Text>
-
+        {/* Subject */}
         {payload.subject && (
-          <View style={styles.replyingTo}>
-            <Text style={styles.replyingToLabel}>Replying to:</Text>
-            <Text style={styles.replyingToSubject}>{payload.subject}</Text>
+          <View style={[styles.fieldRow, { borderBottomColor: themeColors.separator }]}>
+            <Text style={[styles.fieldLabel, { color: themeColors.textTertiary }]}>Re</Text>
+            <Text style={[styles.fieldValue, { color: themeColors.textPrimary }]} numberOfLines={2}>{payload.subject}</Text>
           </View>
         )}
 
-        {isEditing ? (
-          <TextInput
-            style={styles.bodyInput}
-            value={editedPayload.body as string}
-            onChangeText={(text) => setEditedPayload({ ...editedPayload, body: text })}
-            multiline
-            placeholder="Email body"
-            placeholderTextColor={colors.textTertiary}
-            autoFocus
-          />
-        ) : (
-          <Text style={styles.emailBody}>{payload.body}</Text>
-        )}
+        {/* Body */}
+        <View style={styles.bodySection}>
+          {isEditing ? (
+            <TextInput
+              style={[styles.bodyInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
+              value={editedPayload.body as string}
+              onChangeText={(text) => setEditedPayload({ ...editedPayload, body: text })}
+              multiline
+              placeholder="Email body"
+              placeholderTextColor={themeColors.textTertiary}
+              autoFocus
+            />
+          ) : (
+            <Text style={[styles.bodyText, { color: themeColors.textPrimary }]}>{payload.body}</Text>
+          )}
+        </View>
       </View>
     );
   };
 
-  // Render calendar content
+  // Calendar content renderer
   const renderCalendarContent = () => {
     const payload = (isEditing ? editedPayload : action.action_payload) as CalendarPayload;
 
     return (
-      <View style={styles.emailContent}>
-        <View style={styles.emailHeader}>
-          {renderIcon()}
-          <Text style={styles.actionTypeLabel}>{getActionTypeLabel()}</Text>
-        </View>
-
+      <View style={styles.contentSection}>
         {isEditing ? (
           <>
             <TextInput
-              style={styles.titleInput}
+              style={[styles.titleInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
               value={editedPayload.title as string}
               onChangeText={(text) => setEditedPayload({ ...editedPayload, title: text })}
               placeholder="Event title"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
             <TextInput
-              style={styles.locationInput}
+              style={[styles.locationInput, { color: themeColors.textPrimary, backgroundColor: themeColors.fill }]}
               value={(editedPayload.location as string) || ''}
               onChangeText={(text) => setEditedPayload({ ...editedPayload, location: text })}
               placeholder="Location (optional)"
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor={themeColors.textTertiary}
             />
           </>
         ) : (
           <>
-            <Text style={styles.eventTitle}>{payload.title}</Text>
-            <Text style={styles.eventTime}>
-              {new Date(payload.start_time).toLocaleString()}
-            </Text>
+            <Text style={[styles.eventTitle, { color: themeColors.textPrimary }]}>{payload.title}</Text>
+            <View style={styles.eventMeta}>
+              <Ionicons name="time-outline" size={14} color={themeColors.textSecondary} />
+              <Text style={[styles.eventTime, { color: themeColors.textSecondary }]}>
+                {new Date(payload.start_time).toLocaleString(undefined, {
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}
+              </Text>
+            </View>
             {payload.location && (
-              <Text style={styles.eventLocation}>{payload.location}</Text>
+              <View style={styles.eventMeta}>
+                <Ionicons name="location-outline" size={14} color={themeColors.textSecondary} />
+                <Text style={[styles.eventLocation, { color: themeColors.textSecondary }]}>{payload.location}</Text>
+              </View>
             )}
           </>
         )}
@@ -205,7 +207,7 @@ export function ActionReviewModal({
     );
   };
 
-  // Render content based on action type
+  // Content based on action type
   const renderContent = () => {
     switch (action.action_type) {
       case 'email_reply':
@@ -217,12 +219,8 @@ export function ActionReviewModal({
         return renderCalendarContent();
       default:
         return (
-          <View style={styles.emailContent}>
-            <View style={styles.emailHeader}>
-              {renderIcon()}
-              <Text style={styles.actionTypeLabel}>{getActionTypeLabel()}</Text>
-            </View>
-            <Text style={styles.emailBody}>{action.description}</Text>
+          <View style={styles.contentSection}>
+            <Text style={[styles.bodyText, { color: themeColors.textPrimary }]}>{action.description}</Text>
           </View>
         );
     }
@@ -246,77 +244,64 @@ export function ActionReviewModal({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.modalContainer}
       >
+        {/* Backdrop */}
         <TouchableOpacity
           style={styles.backdrop}
           activeOpacity={1}
           onPress={onClose}
         />
 
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <Ionicons name="settings-outline" size={18} color={colors.textSecondary} />
-              <Text style={styles.headerTitle}>Action Confirmation Required</Text>
-            </View>
-            <TouchableOpacity onPress={handleApprove} disabled={isLoading}>
-              {isLoading ? (
-                <ActivityIndicator size="small" color={colors.accent} />
-              ) : (
-                <Ionicons name="checkmark" size={24} color={colors.accent} />
-              )}
-            </TouchableOpacity>
-          </View>
+        {/* Sheet */}
+        <View style={[styles.sheet, { backgroundColor: themeColors.bgElevated }]}>
+          {/* Handle */}
+          <View style={sheetHandle} />
 
-          {/* Review Actions Label */}
-          <Text style={styles.reviewLabel}>Review Actions</Text>
+          {/* Header */}
+          <View style={[styles.header, { borderBottomColor: themeColors.separator }]}>
+            <View style={styles.headerLeft}>
+              {renderIcon()}
+              <Text style={[styles.headerTitle, { color: themeColors.textPrimary }]}>{getActionTypeLabel()}</Text>
+            </View>
+            {canEdit && (
+              <TouchableOpacity
+                style={styles.editButton}
+                onPress={() => setIsEditing(!isEditing)}
+              >
+                <Text style={[styles.editButtonText, { color: themeColors.accent }]}>
+                  {isEditing ? 'Done' : 'Edit'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
 
           {/* Content */}
           <ScrollView
             style={styles.scrollView}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
-            <View style={styles.contentCard}>
-              {renderContent()}
-
-              {/* Edit Button */}
-              {canEdit && (
-                <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={() => setIsEditing(!isEditing)}
-                >
-                  <Ionicons
-                    name={isEditing ? 'checkmark' : 'pencil-outline'}
-                    size={16}
-                    color={colors.textSecondary}
-                  />
-                  <Text style={styles.editButtonText}>
-                    {isEditing ? 'Done' : 'Edit'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
+            {renderContent()}
           </ScrollView>
 
-          {/* Bottom Actions */}
-          <View style={styles.bottomActions}>
+          {/* Actions */}
+          <View style={[styles.actions, { borderTopColor: themeColors.separator }]}>
             <TouchableOpacity
               style={styles.dismissButton}
               onPress={handleDismiss}
               disabled={isLoading}
             >
-              <Text style={styles.dismissText}>Dismiss</Text>
+              <Text style={[styles.dismissText, { color: themeColors.textSecondary }]}>Dismiss</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.approveButton}
+              style={[styles.approveButton, { backgroundColor: themeColors.accent }, isLoading && styles.approveButtonLoading]}
               onPress={handleApprove}
               disabled={isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator size="small" color={colors.bgPrimary} />
+                <ActivityIndicator size="small" color={themeColors.bgPrimary} />
               ) : (
-                <Text style={styles.approveText}>{getApproveText()}</Text>
+                <Text style={[styles.approveText, { color: themeColors.bgPrimary }]}>{getApproveText()}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -333,14 +318,14 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
-  modalContent: {
-    backgroundColor: colors.bgSecondary,
+  sheet: {
+    backgroundColor: colors.bgElevated,
     borderTopLeftRadius: borderRadius.xl,
     borderTopRightRadius: borderRadius.xl,
-    maxHeight: '85%',
-    paddingBottom: 34, // Safe area
+    maxHeight: '80%',
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
   },
   header: {
     flexDirection: 'row',
@@ -348,8 +333,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.glassBorder,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -357,150 +342,148 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   headerTitle: {
-    fontSize: 15,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  reviewLabel: {
     fontSize: 17,
     fontWeight: '600',
     color: colors.textPrimary,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    letterSpacing: -0.41,
+  },
+  editButton: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  editButtonText: {
+    fontSize: 17,
+    fontWeight: '400',
+    color: colors.accent,
+    letterSpacing: -0.41,
   },
   scrollView: {
     paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
   },
-  contentCard: {
-    backgroundColor: colors.glassBackground,
-    borderRadius: borderRadius.lg,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    padding: spacing.md,
-    marginBottom: spacing.md,
+  contentSection: {
+    marginBottom: spacing.lg,
   },
-  emailContent: {},
-  emailHeader: {
+  fieldRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    alignItems: 'flex-start',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.separator,
   },
-  actionTypeLabel: {
+  fieldLabel: {
+    width: 32,
     fontSize: 15,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  emailTo: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  replyingTo: {
-    marginBottom: spacing.md,
-  },
-  replyingToLabel: {
-    fontSize: 13,
+    fontWeight: '400',
     color: colors.textTertiary,
+    letterSpacing: -0.24,
   },
-  replyingToSubject: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  emailBody: {
+  fieldValue: {
+    flex: 1,
     fontSize: 15,
+    fontWeight: '400',
     color: colors.textPrimary,
-    lineHeight: 22,
+    letterSpacing: -0.24,
+  },
+  bodySection: {
+    marginTop: spacing.md,
+  },
+  bodyText: {
+    fontSize: 17,
+    fontWeight: '400',
+    color: colors.textPrimary,
+    lineHeight: 24,
+    letterSpacing: -0.41,
   },
   bodyInput: {
-    fontSize: 15,
+    fontSize: 17,
+    fontWeight: '400',
     color: colors.textPrimary,
-    lineHeight: 22,
+    lineHeight: 24,
+    letterSpacing: -0.41,
     minHeight: 120,
     textAlignVertical: 'top',
-    padding: spacing.sm,
-    backgroundColor: colors.bgTertiary,
+    padding: spacing.md,
+    backgroundColor: colors.fill,
     borderRadius: borderRadius.md,
-    marginTop: spacing.sm,
   },
   eventTitle: {
-    fontSize: 17,
+    fontSize: 20,
     fontWeight: '600',
     color: colors.textPrimary,
-    marginBottom: spacing.xs,
+    letterSpacing: 0.38,
+    marginBottom: spacing.sm,
   },
-  eventTime: {
-    fontSize: 14,
-    color: colors.textSecondary,
-  },
-  eventLocation: {
-    fontSize: 14,
-    color: colors.textTertiary,
+  eventMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
     marginTop: spacing.xs,
   },
+  eventTime: {
+    fontSize: 15,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    letterSpacing: -0.24,
+  },
+  eventLocation: {
+    fontSize: 15,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    letterSpacing: -0.24,
+  },
   titleInput: {
-    fontSize: 17,
+    fontSize: 20,
     fontWeight: '600',
     color: colors.textPrimary,
-    padding: spacing.sm,
-    backgroundColor: colors.bgTertiary,
+    padding: spacing.md,
+    backgroundColor: colors.fill,
     borderRadius: borderRadius.md,
     marginBottom: spacing.sm,
   },
   locationInput: {
-    fontSize: 14,
+    fontSize: 15,
+    fontWeight: '400',
     color: colors.textPrimary,
-    padding: spacing.sm,
-    backgroundColor: colors.bgTertiary,
+    padding: spacing.md,
+    backgroundColor: colors.fill,
     borderRadius: borderRadius.md,
   },
-  editButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    marginTop: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.bgTertiary,
-    borderRadius: borderRadius.md,
-  },
-  editButtonText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    fontWeight: '500',
-  },
-  bottomActions: {
+  actions: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     gap: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.glassBorder,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.separator,
   },
   dismissButton: {
+    paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
   },
   dismissText: {
-    fontSize: 16,
+    fontSize: 17,
+    fontWeight: '400',
     color: colors.textSecondary,
-    fontWeight: '500',
+    letterSpacing: -0.41,
   },
   approveButton: {
     backgroundColor: colors.accent,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm + 2,
-    borderRadius: borderRadius.full,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xxl,
+    borderRadius: borderRadius.lg,
     minWidth: 100,
     alignItems: 'center',
   },
+  approveButtonLoading: {
+    opacity: 0.7,
+  },
   approveText: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
-    color: colors.bgPrimary,
+    color: '#FFFFFF',
+    letterSpacing: -0.41,
   },
 });

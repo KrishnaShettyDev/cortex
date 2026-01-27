@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
 
 type ServiceType = 'gmail' | 'calendar' | 'action';
@@ -19,6 +19,8 @@ export function ServiceStatusPill({
   isLoading = false,
   isComplete = false,
 }: ServiceStatusPillProps) {
+  const { colors: themeColors } = useTheme();
+
   const renderIcon = () => {
     switch (service) {
       case 'gmail':
@@ -26,23 +28,23 @@ export function ServiceStatusPill({
       case 'calendar':
         return <GoogleCalendarIcon size={20} />;
       case 'action':
-        return <Ionicons name="settings-outline" size={18} color={colors.textSecondary} />;
+        return <Ionicons name="settings-outline" size={18} color={themeColors.textSecondary} />;
       default:
-        return <Ionicons name="ellipse" size={18} color={colors.textSecondary} />;
+        return <Ionicons name="ellipse" size={18} color={themeColors.textSecondary} />;
     }
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: themeColors.bgTertiary }]}>
       <View style={styles.iconContainer}>
         {renderIcon()}
       </View>
-      <Text style={styles.text}>{text}</Text>
+      <Text style={[styles.text, { color: themeColors.textPrimary }]}>{text}</Text>
       <View style={styles.statusIcon}>
         {isLoading ? (
-          <ActivityIndicator size="small" color={colors.textSecondary} />
+          <ActivityIndicator size="small" color={themeColors.textSecondary} />
         ) : isComplete ? (
-          <Ionicons name="checkmark" size={18} color={colors.success} />
+          <Ionicons name="checkmark" size={18} color={themeColors.success} />
         ) : null}
       </View>
     </View>
@@ -56,12 +58,14 @@ interface ThinkingStatusProps {
 }
 
 export function ThinkingStatus({ text, onCancel }: ThinkingStatusProps) {
+  const { colors: themeColors } = useTheme();
+
   return (
     <View style={styles.thinkingContainer}>
-      <View style={styles.bulletPoint} />
-      <Text style={styles.thinkingText}>{text}</Text>
+      <View style={[styles.bulletPoint, { backgroundColor: themeColors.textSecondary }]} />
+      <Text style={[styles.thinkingText, { color: themeColors.textSecondary }]}>{text}</Text>
       {onCancel && (
-        <Text style={styles.cancelText} onPress={onCancel}>Cancel</Text>
+        <Text style={[styles.cancelText, { color: themeColors.textSecondary }]} onPress={onCancel}>Cancel</Text>
       )}
     </View>
   );
@@ -69,11 +73,13 @@ export function ThinkingStatus({ text, onCancel }: ThinkingStatusProps) {
 
 // Loading dots indicator
 export function LoadingDots() {
+  const { colors: themeColors } = useTheme();
+
   return (
     <View style={styles.dotsContainer}>
-      <View style={styles.dot} />
-      <View style={styles.dot} />
-      <View style={[styles.dot, styles.dotActive]} />
+      <View style={[styles.dot, { backgroundColor: themeColors.textTertiary }]} />
+      <View style={[styles.dot, { backgroundColor: themeColors.textTertiary }]} />
+      <View style={[styles.dot, styles.dotActive, { backgroundColor: themeColors.textSecondary }]} />
     </View>
   );
 }

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet, Animated, ViewStyle, DimensionValue } from 'react-native';
-import { colors, borderRadius, spacing } from '../theme';
+import { colors, borderRadius, spacing, useTheme } from '../theme';
 
 interface SkeletonProps {
   width?: number | string;
@@ -16,6 +16,7 @@ export const Skeleton: React.FC<SkeletonProps> = ({
   borderRadius: radius = borderRadius.sm,
   style,
 }) => {
+  const { colors: themeColors } = useTheme();
   const shimmerAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -51,6 +52,7 @@ export const Skeleton: React.FC<SkeletonProps> = ({
           height,
           borderRadius: radius,
           opacity,
+          backgroundColor: themeColors.bgTertiary,
         },
         style,
       ]}
@@ -81,8 +83,9 @@ export const SkeletonText: React.FC<{
 
 // Card placeholder
 export const SkeletonCard: React.FC<{ style?: ViewStyle }> = ({ style }) => {
+  const { colors: themeColors } = useTheme();
   return (
-    <View style={[styles.card, style]}>
+    <View style={[styles.card, { backgroundColor: themeColors.fill, borderColor: themeColors.glassBorder }, style]}>
       <View style={styles.cardHeader}>
         <Skeleton width={40} height={40} borderRadius={20} />
         <View style={styles.cardHeaderText}>
@@ -119,8 +122,9 @@ export const SkeletonChatMessage: React.FC<{
 
 // Memory card placeholder
 export const SkeletonMemory: React.FC<{ style?: ViewStyle }> = ({ style }) => {
+  const { colors: themeColors } = useTheme();
   return (
-    <View style={[styles.memoryCard, style]}>
+    <View style={[styles.memoryCard, { backgroundColor: themeColors.fill, borderColor: themeColors.glassBorder }, style]}>
       <View style={styles.memoryHeader}>
         <Skeleton width={80} height={20} borderRadius={borderRadius.full} />
         <Skeleton width={60} height={14} />

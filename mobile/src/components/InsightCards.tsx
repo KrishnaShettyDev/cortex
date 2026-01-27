@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 import {
   RelationshipInsight,
   IntentionInsight,
@@ -23,18 +23,24 @@ interface InsightPillProps {
 }
 
 export function InsightPill({ icon, iconColor, text, subtext, urgent, onPress }: InsightPillProps) {
+  const { colors: themeColors } = useTheme();
+
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.7}
-      style={[styles.pill, urgent && styles.pillUrgent]}
+      style={[
+        styles.pill,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder },
+        urgent && styles.pillUrgent
+      ]}
     >
       <View style={[styles.pillIcon, { backgroundColor: iconColor + '20' }]}>
         <Ionicons name={icon} size={14} color={iconColor} />
       </View>
       <View style={styles.pillContent}>
-        <Text style={styles.pillText} numberOfLines={1}>{text}</Text>
-        {subtext && <Text style={styles.pillSubtext} numberOfLines={1}>{subtext}</Text>}
+        <Text style={[styles.pillText, { color: themeColors.textPrimary }]} numberOfLines={1}>{text}</Text>
+        {subtext && <Text style={[styles.pillSubtext, { color: themeColors.textSecondary }]} numberOfLines={1}>{subtext}</Text>}
       </View>
       {urgent && <View style={styles.urgentDot} />}
     </TouchableOpacity>
@@ -50,34 +56,39 @@ interface RelationshipCardProps {
 }
 
 export function RelationshipCard({ insight, onPress, onAction }: RelationshipCardProps) {
+  const { colors: themeColors } = useTheme();
   const isUrgent = insight.days_since_contact > 30;
 
   return (
     <TouchableOpacity
-      style={[styles.card, isUrgent && styles.cardUrgent]}
+      style={[
+        styles.card,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder },
+        isUrgent && styles.cardUrgent
+      ]}
       onPress={onPress}
       activeOpacity={0.8}
     >
       <View style={styles.cardHeader}>
-        <View style={[styles.cardIcon, { backgroundColor: colors.warning + '20' }]}>
-          <Ionicons name="heart-outline" size={18} color={colors.warning} />
+        <View style={[styles.cardIcon, { backgroundColor: themeColors.warning + '20' }]}>
+          <Ionicons name="heart-outline" size={18} color={themeColors.warning} />
         </View>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>Reconnect with {insight.name}</Text>
-          <Text style={styles.cardSubtitle}>
+          <Text style={[styles.cardTitle, { color: themeColors.textPrimary }]}>Reconnect with {insight.name}</Text>
+          <Text style={[styles.cardSubtitle, { color: themeColors.textSecondary }]}>
             {insight.days_since_contact} days since contact
           </Text>
         </View>
       </View>
 
-      <View style={styles.healthBar}>
-        <View style={[styles.healthFill, { width: `${insight.health_score}%` }]} />
+      <View style={[styles.healthBar, { backgroundColor: themeColors.bgSecondary }]}>
+        <View style={[styles.healthFill, { width: `${insight.health_score}%`, backgroundColor: themeColors.success }]} />
       </View>
 
       {onAction && (
-        <TouchableOpacity style={styles.cardAction} onPress={onAction}>
-          <Ionicons name="chatbubble-outline" size={14} color={colors.accent} />
-          <Text style={styles.cardActionText}>Send a message</Text>
+        <TouchableOpacity style={[styles.cardAction, { borderTopColor: themeColors.glassBorder }]} onPress={onAction}>
+          <Ionicons name="chatbubble-outline" size={14} color={themeColors.accent} />
+          <Text style={[styles.cardActionText, { color: themeColors.accent }]}>Send a message</Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -92,6 +103,7 @@ interface ImportantDateCardProps {
 }
 
 export function ImportantDateCard({ insight, onPress }: ImportantDateCardProps) {
+  const { colors: themeColors } = useTheme();
   const isToday = insight.days_until === 0;
   const isTomorrow = insight.days_until === 1;
 
@@ -112,17 +124,21 @@ export function ImportantDateCard({ insight, onPress }: ImportantDateCardProps) 
 
   return (
     <TouchableOpacity
-      style={[styles.card, isToday && styles.cardUrgent]}
+      style={[
+        styles.card,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder },
+        isToday && styles.cardUrgent
+      ]}
       onPress={onPress}
       activeOpacity={0.8}
     >
       <View style={styles.cardHeader}>
-        <View style={[styles.cardIcon, { backgroundColor: colors.accentPeach + '20' }]}>
-          <Ionicons name={getIcon()} size={18} color={colors.accentPeach} />
+        <View style={[styles.cardIcon, { backgroundColor: themeColors.accentPeach + '20' }]}>
+          <Ionicons name={getIcon()} size={18} color={themeColors.accentPeach} />
         </View>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>{insight.person_name}'s {insight.date_label}</Text>
-          <Text style={[styles.cardSubtitle, isToday && styles.urgentText]}>
+          <Text style={[styles.cardTitle, { color: themeColors.textPrimary }]}>{insight.person_name}'s {insight.date_label}</Text>
+          <Text style={[styles.cardSubtitle, { color: themeColors.textSecondary }, isToday && { color: themeColors.warning, fontWeight: '500' }]}>
             {getDaysText()}
             {insight.years && ` - turning ${insight.years}`}
           </Text>
@@ -130,7 +146,7 @@ export function ImportantDateCard({ insight, onPress }: ImportantDateCardProps) 
       </View>
 
       {insight.notes && (
-        <Text style={styles.cardNote} numberOfLines={2}>
+        <Text style={[styles.cardNote, { color: themeColors.textSecondary }]} numberOfLines={2}>
           {insight.notes}
         </Text>
       )}
@@ -147,23 +163,29 @@ interface IntentionCardProps {
 }
 
 export function IntentionCard({ insight, onPress, onComplete }: IntentionCardProps) {
+  const { colors: themeColors } = useTheme();
+
   return (
     <TouchableOpacity
-      style={[styles.card, insight.is_overdue && styles.cardUrgent]}
+      style={[
+        styles.card,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder },
+        insight.is_overdue && styles.cardUrgent
+      ]}
       onPress={onPress}
       activeOpacity={0.8}
     >
       <View style={styles.cardHeader}>
-        <View style={[styles.cardIcon, { backgroundColor: colors.accentMint + '20' }]}>
-          <Ionicons name="flag-outline" size={18} color={colors.accentMint} />
+        <View style={[styles.cardIcon, { backgroundColor: themeColors.accentMint + '20' }]}>
+          <Ionicons name="flag-outline" size={18} color={themeColors.accentMint} />
         </View>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle} numberOfLines={2}>{insight.description}</Text>
+          <Text style={[styles.cardTitle, { color: themeColors.textPrimary }]} numberOfLines={2}>{insight.description}</Text>
           {insight.target_person && (
-            <Text style={styles.cardSubtitle}>For {insight.target_person}</Text>
+            <Text style={[styles.cardSubtitle, { color: themeColors.textSecondary }]}>For {insight.target_person}</Text>
           )}
           {insight.is_overdue && insight.days_overdue && (
-            <Text style={[styles.cardSubtitle, styles.urgentText]}>
+            <Text style={[styles.cardSubtitle, { color: themeColors.warning, fontWeight: '500' }]}>
               {insight.days_overdue} days overdue
             </Text>
           )}
@@ -171,9 +193,9 @@ export function IntentionCard({ insight, onPress, onComplete }: IntentionCardPro
       </View>
 
       {onComplete && (
-        <TouchableOpacity style={styles.cardAction} onPress={onComplete}>
-          <Ionicons name="checkmark-circle-outline" size={14} color={colors.success} />
-          <Text style={[styles.cardActionText, { color: colors.success }]}>Mark done</Text>
+        <TouchableOpacity style={[styles.cardAction, { borderTopColor: themeColors.glassBorder }]} onPress={onComplete}>
+          <Ionicons name="checkmark-circle-outline" size={14} color={themeColors.success} />
+          <Text style={[styles.cardActionText, { color: themeColors.success }]}>Mark done</Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -189,24 +211,30 @@ interface PromiseCardProps {
 }
 
 export function PromiseCard({ insight, onPress, onFulfill }: PromiseCardProps) {
+  const { colors: themeColors } = useTheme();
+
   return (
     <TouchableOpacity
-      style={[styles.card, insight.is_overdue && styles.cardUrgent]}
+      style={[
+        styles.card,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder },
+        insight.is_overdue && styles.cardUrgent
+      ]}
       onPress={onPress}
       activeOpacity={0.8}
     >
       <View style={styles.cardHeader}>
-        <View style={[styles.cardIcon, { backgroundColor: colors.accentSky + '20' }]}>
-          <Ionicons name="hand-left-outline" size={18} color={colors.accentSky} />
+        <View style={[styles.cardIcon, { backgroundColor: themeColors.accentSky + '20' }]}>
+          <Ionicons name="hand-left-outline" size={18} color={themeColors.accentSky} />
         </View>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>Promise to {insight.person_name}</Text>
-          <Text style={styles.cardSubtitle} numberOfLines={2}>{insight.description}</Text>
+          <Text style={[styles.cardTitle, { color: themeColors.textPrimary }]}>Promise to {insight.person_name}</Text>
+          <Text style={[styles.cardSubtitle, { color: themeColors.textSecondary }]} numberOfLines={2}>{insight.description}</Text>
           {insight.is_overdue && (
-            <Text style={[styles.cardSubtitle, styles.urgentText]}>Overdue</Text>
+            <Text style={[styles.cardSubtitle, { color: themeColors.warning, fontWeight: '500' }]}>Overdue</Text>
           )}
           {!insight.is_overdue && insight.days_until_due !== null && insight.days_until_due <= 3 && (
-            <Text style={styles.cardSubtitle}>
+            <Text style={[styles.cardSubtitle, { color: themeColors.textSecondary }]}>
               Due in {insight.days_until_due} day{insight.days_until_due !== 1 ? 's' : ''}
             </Text>
           )}
@@ -214,9 +242,9 @@ export function PromiseCard({ insight, onPress, onFulfill }: PromiseCardProps) {
       </View>
 
       {onFulfill && (
-        <TouchableOpacity style={styles.cardAction} onPress={onFulfill}>
-          <Ionicons name="checkmark-circle-outline" size={14} color={colors.success} />
-          <Text style={[styles.cardActionText, { color: colors.success }]}>Mark fulfilled</Text>
+        <TouchableOpacity style={[styles.cardAction, { borderTopColor: themeColors.glassBorder }]} onPress={onFulfill}>
+          <Ionicons name="checkmark-circle-outline" size={14} color={themeColors.success} />
+          <Text style={[styles.cardActionText, { color: themeColors.success }]}>Mark fulfilled</Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -232,30 +260,36 @@ interface PatternCardProps {
 }
 
 export function PatternCard({ insight, onPress, onDismiss }: PatternCardProps) {
+  const { colors: themeColors } = useTheme();
+
   return (
     <TouchableOpacity
-      style={[styles.card, styles.cardWarning]}
+      style={[
+        styles.card,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder },
+        styles.cardWarning
+      ]}
       onPress={onPress}
       activeOpacity={0.8}
     >
       <View style={styles.cardHeader}>
-        <View style={[styles.cardIcon, { backgroundColor: colors.error + '20' }]}>
-          <Ionicons name="warning-outline" size={18} color={colors.error} />
+        <View style={[styles.cardIcon, { backgroundColor: themeColors.error + '20' }]}>
+          <Ionicons name="warning-outline" size={18} color={themeColors.error} />
         </View>
         <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>Pattern Alert</Text>
-          <Text style={[styles.cardSubtitle, { color: colors.error }]}>{insight.name}</Text>
+          <Text style={[styles.cardTitle, { color: themeColors.textPrimary }]}>Pattern Alert</Text>
+          <Text style={[styles.cardSubtitle, { color: themeColors.error }]}>{insight.name}</Text>
         </View>
       </View>
 
       {insight.warning_message && (
-        <Text style={styles.cardNote}>{insight.warning_message}</Text>
+        <Text style={[styles.cardNote, { color: themeColors.textSecondary }]}>{insight.warning_message}</Text>
       )}
 
       {onDismiss && (
-        <TouchableOpacity style={styles.cardAction} onPress={onDismiss}>
-          <Ionicons name="close-circle-outline" size={14} color={colors.textSecondary} />
-          <Text style={styles.cardActionText}>Dismiss</Text>
+        <TouchableOpacity style={[styles.cardAction, { borderTopColor: themeColors.glassBorder }]} onPress={onDismiss}>
+          <Ionicons name="close-circle-outline" size={14} color={themeColors.textSecondary} />
+          <Text style={[styles.cardActionText, { color: themeColors.accent }]}>Dismiss</Text>
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -348,13 +382,14 @@ interface InsightsPillRowProps {
 }
 
 export function InsightsPillRow({ insights, onPress }: InsightsPillRowProps) {
+  const { colors: themeColors } = useTheme();
   const pills: { icon: keyof typeof Ionicons.glyphMap; color: string; text: string; urgent: boolean }[] = [];
 
   // Add upcoming dates
   insights.upcoming_dates.slice(0, 1).forEach((d) => {
     pills.push({
       icon: 'gift-outline',
-      color: colors.accentPeach,
+      color: themeColors.accentPeach,
       text: `${d.person_name}'s ${d.date_label} ${d.days_until === 0 ? 'today!' : `in ${d.days_until}d`}`,
       urgent: d.days_until <= 1,
     });
@@ -364,7 +399,7 @@ export function InsightsPillRow({ insights, onPress }: InsightsPillRowProps) {
   insights.neglected_relationships.slice(0, 1).forEach((r) => {
     pills.push({
       icon: 'heart-outline',
-      color: colors.warning,
+      color: themeColors.warning,
       text: `Reconnect with ${r.name}`,
       urgent: r.days_since_contact > 30,
     });
@@ -374,7 +409,7 @@ export function InsightsPillRow({ insights, onPress }: InsightsPillRowProps) {
   insights.pattern_warnings.slice(0, 1).forEach((p) => {
     pills.push({
       icon: 'warning-outline',
-      color: colors.error,
+      color: themeColors.error,
       text: p.name,
       urgent: true,
     });
@@ -395,8 +430,11 @@ export function InsightsPillRow({ insights, onPress }: InsightsPillRowProps) {
         />
       ))}
       {insights.total_attention_needed > pills.length && (
-        <TouchableOpacity style={styles.moreButton} onPress={onPress}>
-          <Text style={styles.moreButtonText}>
+        <TouchableOpacity
+          style={[styles.moreButton, { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder }]}
+          onPress={onPress}
+        >
+          <Text style={[styles.moreButtonText, { color: themeColors.textSecondary }]}>
             +{insights.total_attention_needed - pills.length} more
           </Text>
         </TouchableOpacity>

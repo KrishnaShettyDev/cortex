@@ -8,7 +8,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Linking, Image } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, borderRadius, spacing } from '../theme';
+import { colors, borderRadius, spacing, useTheme } from '../theme';
 import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
 
 // ============ EMAIL CARD ============
@@ -30,6 +30,8 @@ interface EmailCardProps {
 }
 
 export function EmailCard({ email, onPress }: EmailCardProps) {
+  const { colors: themeColors, isDark } = useTheme();
+
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '';
     const date = new Date(dateStr);
@@ -59,30 +61,30 @@ export function EmailCard({ email, onPress }: EmailCardProps) {
       onPress={onPress}
       activeOpacity={0.7}
     >
-      <BlurView intensity={20} tint="dark" style={styles.blurContainer}>
-        <View style={styles.cardContent}>
+      <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={[styles.blurContainer, { borderColor: themeColors.glassBorder }]}>
+        <View style={[styles.cardContent, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)' }]}>
           {/* Header with icon and date */}
           <View style={styles.cardHeader}>
             <View style={styles.serviceIconContainer}>
               <GmailIcon size={18} />
             </View>
-            <Text style={styles.dateText}>{formatDate(email.date)}</Text>
-            {email.is_unread && <View style={styles.unreadDot} />}
+            <Text style={[styles.dateText, { color: themeColors.textTertiary }]}>{formatDate(email.date)}</Text>
+            {email.is_unread && <View style={[styles.unreadDot, { backgroundColor: themeColors.accent }]} />}
           </View>
 
           {/* Sender */}
-          <Text style={styles.senderText} numberOfLines={1}>
+          <Text style={[styles.senderText, { color: themeColors.textPrimary }]} numberOfLines={1}>
             {getSenderName(email.from)}
           </Text>
 
           {/* Subject */}
-          <Text style={styles.subjectText} numberOfLines={1}>
+          <Text style={[styles.subjectText, { color: themeColors.textPrimary }]} numberOfLines={1}>
             {email.subject || '(no subject)'}
           </Text>
 
           {/* Snippet */}
           {email.snippet && (
-            <Text style={styles.snippetText} numberOfLines={2}>
+            <Text style={[styles.snippetText, { color: themeColors.textSecondary }]} numberOfLines={2}>
               {email.snippet}
             </Text>
           )}
@@ -100,6 +102,7 @@ interface EmailListProps {
 }
 
 export function EmailList({ emails, onEmailPress, maxItems = 3 }: EmailListProps) {
+  const { colors: themeColors } = useTheme();
   const displayEmails = emails.slice(0, maxItems);
   const remaining = emails.length - maxItems;
 
@@ -113,7 +116,7 @@ export function EmailList({ emails, onEmailPress, maxItems = 3 }: EmailListProps
         />
       ))}
       {remaining > 0 && (
-        <Text style={styles.remainingText}>+{remaining} more emails</Text>
+        <Text style={[styles.remainingText, { color: themeColors.textTertiary }]}>+{remaining} more emails</Text>
       )}
     </View>
   );
@@ -138,6 +141,8 @@ interface CalendarEventCardProps {
 }
 
 export function CalendarEventCard({ event, onPress }: CalendarEventCardProps) {
+  const { colors: themeColors, isDark } = useTheme();
+
   const formatTime = (timeStr?: string) => {
     if (!timeStr) return '';
     const date = new Date(timeStr);
@@ -189,19 +194,19 @@ export function CalendarEventCard({ event, onPress }: CalendarEventCardProps) {
       onPress={handlePress}
       activeOpacity={0.7}
     >
-      <BlurView intensity={20} tint="dark" style={styles.blurContainer}>
-        <View style={styles.cardContent}>
+      <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={[styles.blurContainer, { borderColor: themeColors.glassBorder }]}>
+        <View style={[styles.cardContent, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : 'rgba(0, 0, 0, 0.02)' }]}>
           {/* Time bar */}
           <View style={styles.eventTimeBar}>
-            <View style={[styles.eventTimeDot, { backgroundColor: colors.calendar }]} />
-            <Text style={styles.eventTimeText}>{formatDateRange()}</Text>
-            <Text style={styles.eventDateBadge}>{getEventDate()}</Text>
+            <View style={[styles.eventTimeDot, { backgroundColor: themeColors.calendar }]} />
+            <Text style={[styles.eventTimeText, { color: themeColors.textPrimary }]}>{formatDateRange()}</Text>
+            <Text style={[styles.eventDateBadge, { color: themeColors.textSecondary, backgroundColor: themeColors.bgTertiary }]}>{getEventDate()}</Text>
           </View>
 
           {/* Title with calendar icon */}
           <View style={styles.eventTitleRow}>
             <GoogleCalendarIcon size={16} />
-            <Text style={styles.eventTitleText} numberOfLines={2}>
+            <Text style={[styles.eventTitleText, { color: themeColors.textPrimary }]} numberOfLines={2}>
               {event.title}
             </Text>
           </View>
@@ -209,8 +214,8 @@ export function CalendarEventCard({ event, onPress }: CalendarEventCardProps) {
           {/* Location */}
           {event.location && (
             <View style={styles.eventDetailRow}>
-              <Ionicons name="location-outline" size={14} color={colors.textTertiary} />
-              <Text style={styles.eventDetailText} numberOfLines={1}>
+              <Ionicons name="location-outline" size={14} color={themeColors.textTertiary} />
+              <Text style={[styles.eventDetailText, { color: themeColors.textSecondary }]} numberOfLines={1}>
                 {event.location}
               </Text>
             </View>
@@ -219,8 +224,8 @@ export function CalendarEventCard({ event, onPress }: CalendarEventCardProps) {
           {/* Attendees */}
           {event.attendees && event.attendees.length > 0 && (
             <View style={styles.eventDetailRow}>
-              <Ionicons name="people-outline" size={14} color={colors.textTertiary} />
-              <Text style={styles.eventDetailText} numberOfLines={1}>
+              <Ionicons name="people-outline" size={14} color={themeColors.textTertiary} />
+              <Text style={[styles.eventDetailText, { color: themeColors.textSecondary }]} numberOfLines={1}>
                 {event.attendees.length} attendee{event.attendees.length > 1 ? 's' : ''}
               </Text>
             </View>
@@ -239,6 +244,7 @@ interface CalendarEventListProps {
 }
 
 export function CalendarEventList({ events, onEventPress, maxItems = 3 }: CalendarEventListProps) {
+  const { colors: themeColors } = useTheme();
   const displayEvents = events.slice(0, maxItems);
   const remaining = events.length - maxItems;
 
@@ -252,7 +258,7 @@ export function CalendarEventList({ events, onEventPress, maxItems = 3 }: Calend
         />
       ))}
       {remaining > 0 && (
-        <Text style={styles.remainingText}>+{remaining} more events</Text>
+        <Text style={[styles.remainingText, { color: themeColors.textTertiary }]}>+{remaining} more events</Text>
       )}
     </View>
   );
@@ -272,6 +278,7 @@ interface FreeTimeSlotsProps {
 }
 
 export function FreeTimeSlots({ slots, onSlotPress, maxItems = 4 }: FreeTimeSlotsProps) {
+  const { colors: themeColors } = useTheme();
   const displaySlots = slots.slice(0, maxItems);
   const remaining = slots.length - maxItems;
 
@@ -298,10 +305,10 @@ export function FreeTimeSlots({ slots, onSlotPress, maxItems = 4 }: FreeTimeSlot
   };
 
   return (
-    <View style={styles.slotsContainer}>
+    <View style={[styles.slotsContainer, { backgroundColor: themeColors.fill, borderColor: themeColors.glassBorder }]}>
       <View style={styles.slotsHeader}>
-        <Ionicons name="time-outline" size={16} color={colors.accent} />
-        <Text style={styles.slotsTitle}>Available Times</Text>
+        <Ionicons name="time-outline" size={16} color={themeColors.accent} />
+        <Text style={[styles.slotsTitle, { color: themeColors.textPrimary }]}>Available Times</Text>
       </View>
       <View style={styles.slotsGrid}>
         {displaySlots.map((slot, index) => {
@@ -309,18 +316,18 @@ export function FreeTimeSlots({ slots, onSlotPress, maxItems = 4 }: FreeTimeSlot
           return (
             <TouchableOpacity
               key={index}
-              style={styles.slotChip}
+              style={[styles.slotChip, { backgroundColor: themeColors.accent + '15', borderColor: themeColors.accent + '30' }]}
               onPress={() => onSlotPress?.(slot)}
               activeOpacity={0.7}
             >
-              <Text style={styles.slotDate}>{dateStr}</Text>
-              <Text style={styles.slotTime}>{timeRange}</Text>
+              <Text style={[styles.slotDate, { color: themeColors.textSecondary }]}>{dateStr}</Text>
+              <Text style={[styles.slotTime, { color: themeColors.accent }]}>{timeRange}</Text>
             </TouchableOpacity>
           );
         })}
       </View>
       {remaining > 0 && (
-        <Text style={styles.remainingText}>+{remaining} more slots</Text>
+        <Text style={[styles.remainingText, { color: themeColors.textTertiary }]}>+{remaining} more slots</Text>
       )}
     </View>
   );
@@ -343,6 +350,7 @@ interface PlacesListProps {
 }
 
 export function PlacesList({ places, onPlacePress, maxItems = 3 }: PlacesListProps) {
+  const { colors: themeColors } = useTheme();
   const displayPlaces = places.slice(0, maxItems);
   const remaining = places.length - maxItems;
 
@@ -351,30 +359,30 @@ export function PlacesList({ places, onPlacePress, maxItems = 3 }: PlacesListPro
       {displayPlaces.map((place, index) => (
         <TouchableOpacity
           key={index}
-          style={styles.placeCard}
+          style={[styles.placeCard, { backgroundColor: themeColors.fill, borderColor: themeColors.glassBorder }]}
           onPress={() => onPlacePress?.(place)}
           activeOpacity={0.7}
         >
-          <View style={styles.placeIconContainer}>
-            <Ionicons name="location" size={18} color={colors.success} />
+          <View style={[styles.placeIconContainer, { backgroundColor: themeColors.success + '20' }]}>
+            <Ionicons name="location" size={18} color={themeColors.success} />
           </View>
           <View style={styles.placeContent}>
-            <Text style={styles.placeName} numberOfLines={1}>{place.name}</Text>
+            <Text style={[styles.placeName, { color: themeColors.textPrimary }]} numberOfLines={1}>{place.name}</Text>
             {place.address && (
-              <Text style={styles.placeAddress} numberOfLines={1}>{place.address}</Text>
+              <Text style={[styles.placeAddress, { color: themeColors.textSecondary }]} numberOfLines={1}>{place.address}</Text>
             )}
             {place.rating && (
               <View style={styles.placeRating}>
                 <Ionicons name="star" size={12} color="#FFD700" />
-                <Text style={styles.placeRatingText}>{place.rating.toFixed(1)}</Text>
+                <Text style={[styles.placeRatingText, { color: themeColors.textSecondary }]}>{place.rating.toFixed(1)}</Text>
               </View>
             )}
           </View>
-          <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+          <Ionicons name="chevron-forward" size={16} color={themeColors.textTertiary} />
         </TouchableOpacity>
       ))}
       {remaining > 0 && (
-        <Text style={styles.remainingText}>+{remaining} more places</Text>
+        <Text style={[styles.remainingText, { color: themeColors.textTertiary }]}>+{remaining} more places</Text>
       )}
     </View>
   );

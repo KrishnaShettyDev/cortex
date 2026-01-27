@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { CalendarEventItem } from '../services';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 import {
   DAYS_SINGLE,
   DATE_STRIP_ITEM_WIDTH,
@@ -23,6 +23,7 @@ export const DateStripScroller: React.FC<DateStripProps> = ({
   onDateSelect,
   cachedEvents,
 }) => {
+  const { colors: themeColors } = useTheme();
   const scrollViewRef = useRef<ScrollView>(null);
   const [centerDate] = useState(new Date());
 
@@ -60,7 +61,7 @@ export const DateStripScroller: React.FC<DateStripProps> = ({
   }, [selectedDate, dates]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { borderBottomColor: themeColors.glassBorder }]}>
       <ScrollView
         ref={scrollViewRef}
         horizontal
@@ -80,7 +81,7 @@ export const DateStripScroller: React.FC<DateStripProps> = ({
               key={index}
               style={[
                 styles.dateItem,
-                isSelected && styles.dateItemSelected,
+                isSelected && [styles.dateItemSelected, { backgroundColor: themeColors.bgSecondary }],
               ]}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -90,26 +91,28 @@ export const DateStripScroller: React.FC<DateStripProps> = ({
             >
               <Text style={[
                 styles.dayLetter,
-                isToday && styles.dayLetterToday,
-                isSelected && styles.dayLetterSelected,
+                { color: themeColors.textTertiary },
+                isToday && { color: themeColors.accent },
+                isSelected && { color: themeColors.textPrimary },
               ]}>
                 {DAYS_SINGLE[dayOfWeek]}
               </Text>
               <View style={[
                 styles.dateCircle,
-                isToday && !isSelected && styles.dateCircleToday,
-                isSelected && styles.dateCircleSelected,
+                isToday && !isSelected && { borderWidth: 2, borderColor: themeColors.accent },
+                isSelected && { backgroundColor: themeColors.accent },
               ]}>
                 <Text style={[
                   styles.dateNumber,
-                  isToday && styles.dateNumberToday,
-                  isSelected && styles.dateNumberSelected,
+                  { color: themeColors.textPrimary },
+                  isToday && { color: themeColors.accent },
+                  isSelected && { color: '#fff' },
                 ]}>
                   {date.getDate()}
                 </Text>
               </View>
               {hasEvents && !isSelected && (
-                <View style={styles.eventDot} />
+                <View style={[styles.eventDot, { backgroundColor: themeColors.accent }]} />
               )}
             </TouchableOpacity>
           );

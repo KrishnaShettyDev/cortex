@@ -17,7 +17,7 @@ import * as Linking from 'expo-linking';
 
 import { useAuth } from '../../src/context/AuthContext';
 import { integrationsService, IntegrationsStatus, authService } from '../../src/services';
-import { colors, spacing, borderRadius, sheetHandle } from '../../src/theme';
+import { colors, spacing, borderRadius, sheetHandle, useTheme, ThemeMode } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
@@ -34,6 +34,7 @@ const goBack = () => {
 export default function SettingsScreen() {
   const { user, signOut } = useAuth();
   const posthog = usePostHog();
+  const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
 
   // Use cached integration status from store
   const cachedIntegrationStatus = useAppStore((state) => state.integrationStatus);
@@ -138,16 +139,21 @@ export default function SettingsScreen() {
     Linking.openURL('https://wa.me/917780185418');
   };
 
-  const displayName = user?.name?.toUpperCase() || 'USER';
+  // Use name if available, otherwise use email prefix as fallback
+  const emailPrefix = user?.email?.split('@')[0] || '';
+  const displayName = user?.name?.toUpperCase() || emailPrefix.toUpperCase() || 'USER';
   const displayEmail = user?.email || '';
   const isGoogleConnected = cachedIntegrationStatus?.google?.connected || false;
   const connectedEmail = cachedIntegrationStatus?.google?.email || displayEmail;
 
+  // For avatar, use name or email prefix
+  const avatarName = user?.name || emailPrefix || 'User';
+
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.bgPrimary }]} edges={['top']}>
       {/* Sheet Handle */}
       <View style={styles.handleContainer}>
-        <View style={styles.handle} />
+        <View style={[styles.handle, { backgroundColor: colors.textTertiary }]} />
       </View>
 
       <ScrollView
@@ -158,33 +164,27 @@ export default function SettingsScreen() {
         {/* Profile Section */}
         <View style={styles.profileSection}>
           <View style={styles.avatarContainer}>
-            {user?.name ? (
-              <Image
-                source={{ uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=random&size=128` }}
-                style={styles.avatarImage}
-              />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Text style={styles.avatarText}>?</Text>
-              </View>
-            )}
+            <Image
+              source={{ uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(avatarName)}&background=random&size=128` }}
+              style={styles.avatarImage}
+            />
           </View>
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>{displayName}</Text>
-            <Text style={styles.profileEmail}>{displayEmail}</Text>
+            <Text style={[styles.profileName, { color: colors.textPrimary }]}>{displayName}</Text>
+            <Text style={[styles.profileEmail, { color: colors.textSecondary }]}>{displayEmail}</Text>
           </View>
         </View>
 
         {/* Menu Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Menu</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Menu</Text>
 
           {/* Calendar Row */}
           <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/calendar')} activeOpacity={0.7}>
             <View style={styles.menuIconContainer}>
               <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} />
             </View>
-            <Text style={styles.menuText}>Calendar</Text>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Calendar</Text>
             <View style={{ flex: 1 }} />
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -194,15 +194,68 @@ export default function SettingsScreen() {
             <View style={styles.menuIconContainer}>
               <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
             </View>
-            <Text style={styles.menuText}>Contact Us</Text>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Contact Us</Text>
             <View style={{ flex: 1 }} />
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>
 
+        {/* Appearance Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Appearance</Text>
+
+          {/* System Option */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            onPress={() => setThemeMode('system')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="phone-portrait-outline" size={20} color={colors.textSecondary} />
+            </View>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>System</Text>
+            <View style={{ flex: 1 }} />
+            {themeMode === 'system' && (
+              <Ionicons name="checkmark" size={20} color={colors.accent} />
+            )}
+          </TouchableOpacity>
+
+          {/* Light Option */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            onPress={() => setThemeMode('light')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="sunny-outline" size={20} color={colors.textSecondary} />
+            </View>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Light</Text>
+            <View style={{ flex: 1 }} />
+            {themeMode === 'light' && (
+              <Ionicons name="checkmark" size={20} color={colors.accent} />
+            )}
+          </TouchableOpacity>
+
+          {/* Dark Option */}
+          <TouchableOpacity
+            style={styles.menuRow}
+            onPress={() => setThemeMode('dark')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="moon-outline" size={20} color={colors.textSecondary} />
+            </View>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Dark</Text>
+            <View style={{ flex: 1 }} />
+            {themeMode === 'dark' && (
+              <Ionicons name="checkmark" size={20} color={colors.accent} />
+            )}
+          </TouchableOpacity>
+        </View>
+
         {/* Connected Accounts Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Connected Accounts</Text>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Connected Accounts</Text>
 
           {/* Manage Accounts Expandable */}
           <TouchableOpacity
@@ -214,7 +267,7 @@ export default function SettingsScreen() {
               source={{ uri: 'https://www.google.com/favicon.ico' }}
               style={styles.googleLogo}
             />
-            <Text style={styles.menuText}>Manage Accounts</Text>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Manage Accounts</Text>
             <View style={{ flex: 1 }} />
             <Ionicons
               name={isAccountsExpanded ? "chevron-down" : "chevron-forward"}
@@ -225,7 +278,7 @@ export default function SettingsScreen() {
 
           {/* Expanded Accounts List */}
           {isAccountsExpanded && (
-            <View style={styles.accountsExpanded}>
+            <View style={[styles.accountsExpanded, { backgroundColor: colors.bgSecondary }]}>
               {isLoadingStatus ? (
                 <View style={styles.loadingContainer}>
                   <ActivityIndicator size="small" color={colors.textTertiary} />
@@ -233,9 +286,9 @@ export default function SettingsScreen() {
               ) : isGoogleConnected ? (
                 /* Connected Account */
                 <View style={styles.accountRow}>
-                  <Text style={styles.accountEmail}>{connectedEmail}</Text>
-                  <View style={styles.connectedBadge}>
-                    <Text style={styles.connectedText}>CONNECTED</Text>
+                  <Text style={[styles.accountEmail, { color: colors.textPrimary }]}>{connectedEmail}</Text>
+                  <View style={[styles.connectedBadge, { backgroundColor: colors.success + '20' }]}>
+                    <Text style={[styles.connectedText, { color: colors.success }]}>CONNECTED</Text>
                   </View>
                 </View>
               ) : (
@@ -251,7 +304,7 @@ export default function SettingsScreen() {
                   ) : (
                     <>
                       <Ionicons name="link-outline" size={18} color={colors.accent} />
-                      <Text style={styles.connectAccountText}>Connect Google Account</Text>
+                      <Text style={[styles.connectAccountText, { color: colors.accent }]}>Connect Google Account</Text>
                     </>
                   )}
                 </TouchableOpacity>
@@ -265,17 +318,17 @@ export default function SettingsScreen() {
       </ScrollView>
 
       {/* Bottom Actions - Fixed at bottom */}
-      <View style={styles.bottomActions}>
+      <View style={[styles.bottomActions, { borderTopColor: colors.glassBorder }]}>
         {/* Sign Out */}
         <TouchableOpacity style={styles.bottomRow} onPress={handleSignOut} activeOpacity={0.7}>
           <Ionicons name="log-out-outline" size={20} color={colors.error} />
-          <Text style={styles.signOutText}>Sign Out</Text>
+          <Text style={[styles.signOutText, { color: colors.error }]}>Sign Out</Text>
         </TouchableOpacity>
 
         {/* Delete Account */}
         <TouchableOpacity style={styles.bottomRow} onPress={handleDeleteAccount} activeOpacity={0.7}>
           <Ionicons name="trash-outline" size={20} color={colors.textTertiary} />
-          <Text style={styles.deleteText}>Delete Account</Text>
+          <Text style={[styles.deleteText, { color: colors.textTertiary }]}>Delete Account</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -285,7 +338,6 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
   },
   handleContainer: {
     alignItems: 'center',
@@ -296,7 +348,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: colors.textTertiary,
     opacity: 0.4,
   },
   scrollView: {
@@ -328,14 +379,12 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: colors.bgTertiary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarText: {
     fontSize: 24,
     fontWeight: '600',
-    color: colors.textSecondary,
   },
   profileInfo: {
     flex: 1,
@@ -343,12 +392,10 @@ const styles = StyleSheet.create({
   profileName: {
     fontSize: 17,
     fontWeight: '600',
-    color: colors.textPrimary,
     letterSpacing: 0.5,
   },
   profileEmail: {
     fontSize: 14,
-    color: colors.textSecondary,
     marginTop: 2,
   },
   // Section
@@ -358,7 +405,6 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 13,
     fontWeight: '400',
-    color: colors.textTertiary,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
@@ -378,7 +424,6 @@ const styles = StyleSheet.create({
   },
   menuText: {
     fontSize: 16,
-    color: colors.textPrimary,
     fontWeight: '400',
   },
   googleLogo: {
@@ -390,7 +435,6 @@ const styles = StyleSheet.create({
   accountsExpanded: {
     marginLeft: spacing.lg + 28 + spacing.md, // Align with text
     marginRight: spacing.lg,
-    backgroundColor: colors.bgSecondary,
     borderRadius: borderRadius.md,
     overflow: 'hidden',
   },
@@ -406,11 +450,9 @@ const styles = StyleSheet.create({
   },
   accountEmail: {
     fontSize: 14,
-    color: colors.textPrimary,
     flex: 1,
   },
   connectedBadge: {
-    backgroundColor: colors.success + '20',
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
     borderRadius: borderRadius.sm,
@@ -418,7 +460,6 @@ const styles = StyleSheet.create({
   connectedText: {
     fontSize: 10,
     fontWeight: '600',
-    color: colors.success,
     letterSpacing: 0.5,
   },
   connectAccountRow: {
@@ -430,7 +471,6 @@ const styles = StyleSheet.create({
   },
   connectAccountText: {
     fontSize: 14,
-    color: colors.accent,
     fontWeight: '500',
   },
   // Bottom Actions
@@ -438,7 +478,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.xl,
     borderTopWidth: 1,
-    borderTopColor: colors.glassBorder,
     paddingTop: spacing.md,
   },
   bottomRow: {
@@ -449,12 +488,10 @@ const styles = StyleSheet.create({
   },
   signOutText: {
     fontSize: 16,
-    color: colors.error,
     fontWeight: '400',
   },
   deleteText: {
     fontSize: 16,
-    color: colors.textTertiary,
     fontWeight: '400',
   },
 });

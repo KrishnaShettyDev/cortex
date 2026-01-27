@@ -1,7 +1,7 @@
 import React from 'react';
 import { TouchableOpacity, Text, View, StyleSheet, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, borderRadius, spacing } from '../theme';
+import { colors, borderRadius, spacing, useTheme } from '../theme';
 import type { ServiceIcon } from '../types';
 
 interface SuggestionPillProps {
@@ -68,6 +68,8 @@ const pillStyles = StyleSheet.create({
 });
 
 export function SuggestionPill({ text, onPress, services = 'none' }: SuggestionPillProps) {
+  const { colors: themeColors } = useTheme();
+
   const renderServiceIcons = () => {
     // Handle special cases
     if (services === 'none') {
@@ -78,7 +80,7 @@ export function SuggestionPill({ text, onPress, services = 'none' }: SuggestionP
       return (
         <View style={styles.iconsContainer}>
           <View style={styles.noteIcon}>
-            <Ionicons name="document-text" size={12} color={colors.textSecondary} />
+            <Ionicons name="document-text" size={12} color={themeColors.textSecondary} />
           </View>
         </View>
       );
@@ -110,9 +112,12 @@ export function SuggestionPill({ text, onPress, services = 'none' }: SuggestionP
 
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.touchable}>
-      <View style={styles.container}>
+      <View style={[
+        styles.container,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder }
+      ]}>
         {renderServiceIcons()}
-        <Text style={styles.text} numberOfLines={2}>{text}</Text>
+        <Text style={[styles.text, { color: themeColors.textPrimary }]} numberOfLines={2}>{text}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -124,10 +129,19 @@ interface SuggestActionsButtonProps {
 }
 
 export function SuggestActionsButton({ onPress }: SuggestActionsButtonProps) {
+  const { colors: themeColors } = useTheme();
+
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} style={styles.suggestButton}>
-      <Ionicons name="bulb-outline" size={14} color={colors.textSecondary} />
-      <Text style={styles.suggestButtonText}>Suggest actions</Text>
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={[
+        styles.suggestButton,
+        { backgroundColor: themeColors.bgTertiary, borderColor: themeColors.glassBorder }
+      ]}
+    >
+      <Ionicons name="bulb-outline" size={14} color={themeColors.textSecondary} />
+      <Text style={[styles.suggestButtonText, { color: themeColors.textSecondary }]}>Suggest actions</Text>
     </TouchableOpacity>
   );
 }

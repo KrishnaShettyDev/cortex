@@ -1,25 +1,28 @@
-import { StyleSheet, ViewStyle, TextStyle, Dimensions } from 'react-native';
+import { StyleSheet, ViewStyle, TextStyle, Dimensions, Platform } from 'react-native';
 import { colors } from './colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Common spacing values
+// iOS-style spacing (4pt grid)
 export const spacing = {
+  xxs: 2,
   xs: 4,
-  sm: 8,
-  md: 16,
-  lg: 24,
-  xl: 32,
-  xxl: 48,
-};
-
-// Common border radius values
-export const borderRadius = {
   sm: 8,
   md: 12,
   lg: 16,
   xl: 20,
   xxl: 24,
+  xxxl: 32,
+};
+
+// iOS-style border radius
+export const borderRadius = {
+  xs: 4,
+  sm: 8,
+  md: 10,
+  lg: 12,
+  xl: 16,
+  xxl: 20,
   full: 9999,
 };
 
@@ -27,39 +30,122 @@ export const borderRadius = {
 export const responsive = {
   screenPadding: spacing.lg,
   cardMaxWidth: 500,
-  inputHeight: 52,
+  inputHeight: 48,
   isSmallScreen: SCREEN_WIDTH < 375,
   isMediumScreen: SCREEN_WIDTH >= 375 && SCREEN_WIDTH < 428,
   isLargeScreen: SCREEN_WIDTH >= 428,
 };
 
-// Typography styles
+// iOS Typography - SF Pro inspired
+// Uses system font which is SF Pro on iOS
 export const typography = StyleSheet.create({
-  h1: {
-    fontSize: 32,
+  // Large Title (34pt)
+  largeTitle: {
+    fontSize: 34,
     fontWeight: '700',
     color: colors.textPrimary,
-    letterSpacing: -0.5,
+    letterSpacing: 0.37,
+    lineHeight: 41,
   },
-  h2: {
-    fontSize: 24,
+  // Title 1 (28pt)
+  title1: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.36,
+    lineHeight: 34,
+  },
+  // Title 2 (22pt)
+  title2: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.35,
+    lineHeight: 28,
+  },
+  // Title 3 (20pt)
+  title3: {
+    fontSize: 20,
     fontWeight: '600',
     color: colors.textPrimary,
-    letterSpacing: -0.3,
+    letterSpacing: 0.38,
+    lineHeight: 25,
+  },
+  // Headline (17pt semibold)
+  headline: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    letterSpacing: -0.41,
+    lineHeight: 22,
+  },
+  // Body (17pt)
+  body: {
+    fontSize: 17,
+    fontWeight: '400',
+    color: colors.textPrimary,
+    letterSpacing: -0.41,
+    lineHeight: 22,
+  },
+  // Callout (16pt)
+  callout: {
+    fontSize: 16,
+    fontWeight: '400',
+    color: colors.textPrimary,
+    letterSpacing: -0.32,
+    lineHeight: 21,
+  },
+  // Subhead (15pt)
+  subhead: {
+    fontSize: 15,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    letterSpacing: -0.24,
+    lineHeight: 20,
+  },
+  // Footnote (13pt)
+  footnote: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    letterSpacing: -0.08,
+    lineHeight: 18,
+  },
+  // Caption 1 (12pt)
+  caption1: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: colors.textTertiary,
+    lineHeight: 16,
+  },
+  // Caption 2 (11pt)
+  caption2: {
+    fontSize: 11,
+    fontWeight: '400',
+    color: colors.textTertiary,
+    letterSpacing: 0.07,
+    lineHeight: 13,
+  },
+  // Legacy aliases
+  h1: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.36,
+  },
+  h2: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    letterSpacing: 0.35,
   },
   h3: {
     fontSize: 20,
     fontWeight: '600',
     color: colors.textPrimary,
   },
-  body: {
-    fontSize: 16,
-    fontWeight: '400',
-    color: colors.textPrimary,
-    lineHeight: 24,
-  },
   bodySmall: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '400',
     color: colors.textSecondary,
     lineHeight: 20,
@@ -73,15 +159,23 @@ export const typography = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: colors.textPrimary,
+    letterSpacing: -0.41,
   },
 });
 
-// Glass card style - enhanced
+// iOS-style card
 export const glassCard: ViewStyle = {
-  backgroundColor: colors.glassBackground,
-  borderWidth: 1,
-  borderColor: colors.glassBorder,
-  borderRadius: borderRadius.xl,
+  backgroundColor: colors.fill,
+  borderRadius: borderRadius.lg,
+  overflow: 'hidden',
+};
+
+// iOS-style card with border
+export const borderedCard: ViewStyle = {
+  backgroundColor: colors.fill,
+  borderWidth: 0.5,
+  borderColor: colors.separator,
+  borderRadius: borderRadius.lg,
   overflow: 'hidden',
 };
 
@@ -89,115 +183,174 @@ export const glassCard: ViewStyle = {
 export const sheetHandle: ViewStyle = {
   width: 36,
   height: 5,
-  backgroundColor: colors.textTertiary,
+  backgroundColor: colors.fillTertiary,
   borderRadius: 2.5,
   alignSelf: 'center',
   marginTop: spacing.sm,
   marginBottom: spacing.md,
 };
 
-// Common button styles
+// iOS-style button styles
 export const buttonStyles = StyleSheet.create({
+  // Primary filled button
   primary: {
     backgroundColor: colors.accent,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.xl,
+    borderRadius: borderRadius.lg,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
+    minHeight: 50,
   },
   primaryText: {
-    color: colors.bgPrimary,
+    color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '600',
+    letterSpacing: -0.41,
   },
+  // Secondary/outline button
   secondary: {
-    backgroundColor: colors.glassBackground,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
+    backgroundColor: colors.fill,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.xl,
+    borderRadius: borderRadius.lg,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
+    minHeight: 50,
   },
   secondaryText: {
-    color: colors.textPrimary,
+    color: colors.accent,
     fontSize: 17,
     fontWeight: '600',
+    letterSpacing: -0.41,
   },
+  // Icon button (circular)
   icon: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.glassBackground,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
+    backgroundColor: colors.fill,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
-  glass: {
-    backgroundColor: colors.glassBackground,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    paddingVertical: spacing.md,
+  // Small icon button
+  iconSmall: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.fill,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  // Pill button (for actions)
+  pill: {
+    backgroundColor: colors.accent,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.full,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  pillText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  // Text button (no background)
+  text: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  textLabel: {
+    color: colors.accent,
+    fontSize: 17,
+    fontWeight: '400',
+  },
+  // Glass button (deprecated - use secondary)
+  glass: {
+    backgroundColor: colors.fill,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
     borderRadius: borderRadius.lg,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
 });
 
-// Input styles
+// iOS-style input
 export const inputStyles = StyleSheet.create({
   container: {
-    backgroundColor: colors.glassBackground,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    borderRadius: borderRadius.xl,
+    backgroundColor: colors.fill,
+    borderRadius: borderRadius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
     minHeight: responsive.inputHeight,
   },
   text: {
     color: colors.textPrimary,
-    fontSize: 16,
+    fontSize: 17,
+    letterSpacing: -0.41,
   },
   placeholder: {
     color: colors.textTertiary,
   },
   focused: {
-    borderColor: colors.accent,
+    backgroundColor: colors.fillSecondary,
+  },
+  // Search bar style
+  searchBar: {
+    backgroundColor: colors.fillSecondary,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: spacing.sm,
   },
 });
 
-// Shadow styles
+// iOS-style shadows
 export const shadows = {
+  none: {
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+  },
   sm: {
     shadowColor: colors.shadowColor,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 1,
   },
   md: {
     shadowColor: colors.shadowColor,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 3,
   },
   lg: {
     shadowColor: colors.shadowColor,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
     shadowRadius: 16,
-    elevation: 8,
+    elevation: 6,
   },
+  xl: {
+    shadowColor: colors.shadowColor,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  // Accent glow (for CTAs)
   glow: {
     shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 6,
   },
@@ -226,6 +379,11 @@ export const layoutStyles = StyleSheet.create({
   screenPadding: {
     paddingHorizontal: spacing.lg,
   },
+  // Safe area padding
+  safeArea: {
+    paddingTop: Platform.OS === 'ios' ? 44 : 24,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+  },
 });
 
 // iOS-style list row
@@ -235,13 +393,20 @@ export const listRowStyle: ViewStyle = {
   paddingVertical: spacing.md,
   paddingHorizontal: spacing.lg,
   gap: spacing.md,
+  minHeight: 44, // iOS touch target
 };
 
 // Divider style
 export const dividerStyle: ViewStyle = {
-  height: 1,
-  backgroundColor: colors.glassBorder,
-  marginHorizontal: spacing.lg,
+  height: StyleSheet.hairlineWidth,
+  backgroundColor: colors.separator,
+  marginLeft: spacing.lg,
+};
+
+// Full-width divider
+export const dividerFullStyle: ViewStyle = {
+  height: StyleSheet.hairlineWidth,
+  backgroundColor: colors.separator,
 };
 
 // Status pill style
@@ -250,6 +415,27 @@ export const statusPillStyle: ViewStyle = {
   alignItems: 'center',
   paddingHorizontal: spacing.sm,
   paddingVertical: spacing.xs,
-  borderRadius: borderRadius.sm,
+  borderRadius: borderRadius.full,
   gap: spacing.xs,
+  backgroundColor: colors.fill,
+};
+
+// iOS-style section header
+export const sectionHeaderStyle: TextStyle = {
+  fontSize: 13,
+  fontWeight: '400',
+  color: colors.textSecondary,
+  textTransform: 'uppercase',
+  letterSpacing: -0.08,
+  paddingHorizontal: spacing.lg,
+  paddingTop: spacing.xl,
+  paddingBottom: spacing.sm,
+};
+
+// iOS-style grouped list container
+export const groupedListStyle: ViewStyle = {
+  backgroundColor: colors.fill,
+  borderRadius: borderRadius.lg,
+  marginHorizontal: spacing.lg,
+  overflow: 'hidden',
 };

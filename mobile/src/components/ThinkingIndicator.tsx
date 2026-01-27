@@ -8,7 +8,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, borderRadius } from '../theme';
+import { colors, spacing, borderRadius, useTheme } from '../theme';
 
 interface ThinkingIndicatorProps {
   /** Current status message to display */
@@ -54,6 +54,7 @@ const TOOL_ICONS: Record<string, string> = {
 };
 
 export function ThinkingIndicator({ status, tool, isActive }: ThinkingIndicatorProps) {
+  const { colors: themeColors, isDark } = useTheme();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const dotAnims = [
@@ -138,16 +139,19 @@ export function ThinkingIndicator({ status, tool, isActive }: ThinkingIndicatorP
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-      <BlurView intensity={20} tint="dark" style={styles.blur}>
-        <View style={styles.content}>
+      <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={styles.blur}>
+        <View style={[styles.content, {
+          backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+          borderColor: themeColors.glassBorder
+        }]}>
           {showIcon && (
             <Ionicons
               name={`${icon}-outline` as any}
               size={12}
-              color={colors.accent}
+              color={themeColors.accent}
             />
           )}
-          <Animated.Text style={[styles.text, { opacity: pulseAnim }]}>
+          <Animated.Text style={[styles.text, { opacity: pulseAnim, color: themeColors.textSecondary }]}>
             {displayStatus}
           </Animated.Text>
           <View style={styles.dots}>
@@ -156,7 +160,7 @@ export function ThinkingIndicator({ status, tool, isActive }: ThinkingIndicatorP
                 key={i}
                 style={[
                   styles.dot,
-                  { opacity: dot }
+                  { opacity: dot, backgroundColor: themeColors.accent }
                 ]}
               />
             ))}

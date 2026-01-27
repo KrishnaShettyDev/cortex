@@ -7,7 +7,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, borderRadius, spacing } from '../theme';
+import { colors, borderRadius, spacing, useTheme } from '../theme';
 
 interface AuthButtonProps {
   type: 'apple' | 'google' | 'dev';
@@ -16,24 +16,26 @@ interface AuthButtonProps {
 }
 
 export function AuthButton({ type, onPress, isLoading = false }: AuthButtonProps) {
+  const { colors: themeColors } = useTheme();
+
   const config = {
     apple: {
       icon: 'logo-apple' as const,
       text: 'Continue with Apple',
-      bgColor: colors.textPrimary,
-      textColor: colors.bgPrimary,
+      bgColor: themeColors.textPrimary,
+      textColor: themeColors.bgPrimary,
     },
     google: {
       icon: 'logo-google' as const,
       text: 'Continue with Google',
-      bgColor: colors.glassBackground,
-      textColor: colors.textPrimary,
+      bgColor: themeColors.glassBackground,
+      textColor: themeColors.textPrimary,
     },
     dev: {
       icon: 'code-slash' as const,
       text: 'Dev Login',
-      bgColor: colors.glassBackground,
-      textColor: colors.textSecondary,
+      bgColor: themeColors.glassBackground,
+      textColor: themeColors.textSecondary,
     },
   };
 
@@ -45,7 +47,7 @@ export function AuthButton({ type, onPress, isLoading = false }: AuthButtonProps
         styles.button,
         {
           backgroundColor: bgColor,
-          borderColor: type === 'apple' ? 'transparent' : colors.glassBorder,
+          borderColor: type === 'apple' ? 'transparent' : themeColors.glassBorder,
         },
       ]}
       onPress={onPress}
