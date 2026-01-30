@@ -40,109 +40,91 @@ export interface ChatStreamCallbacks {
 class ChatService {
   /**
    * Send a chat message with streaming for real-time updates.
-   * Shows real-time status as AI searches memories and generates response.
    *
-   * Context Reinstatement (Phase 2.2):
-   * Automatically captures current context (location, time, etc.) and sends
-   * it with the request. This enables encoding specificity principle where
-   * memories matching current context are prioritized.
+   * NOTE: The new Cloudflare Workers backend doesn't support streaming yet,
+   * so this simulates streaming by calling the regular endpoint and then
+   * calling callbacks in sequence.
    */
   async chatStream(
     message: string,
     conversationId: string | undefined,
     callbacks: ChatStreamCallbacks
   ): Promise<void> {
-    // Track state during streaming
-    let memoriesUsed: MemoryReference[] = [];
-    let pendingActions: PendingAction[] = [];
-    let actionsTaken: ActionTaken[] = [];
-    let fullContent = '';
-    let convId = conversationId || '';
-
-    // Signal that we're starting to search
-    callbacks.onSearchingMemories?.();
-
-    // Capture current context for context reinstatement
-    let context: CurrentContext | undefined;
     try {
-      context = await contextCaptureService.captureContext();
-      logger.debug('[ChatService] Captured context for reinstatement:', context);
+      // Signal that we're starting to search
+      callbacks.onSearchingMemories?.();
+
+      // Call the non-streaming endpoint
+      const response = await api.request<{
+        response: string;
+        memories_used: number;
+        model: string;
+      }>('/api/chat', {
+        method: 'POST',
+        body: {
+          message,
+          model: 'gpt-4o-mini',
+          contextLimit: 5,
+        },
+      });
+
+      // Simulate streaming by calling callbacks in sequence
+      callbacks.onMemoriesFound?.([]);
+
+      // Simulate typing effect by streaming content in chunks
+      const fullContent = response.response;
+      const chunkSize = 20; // Characters per chunk
+      for (let i = 0; i < fullContent.length; i += chunkSize) {
+        const chunk = fullContent.slice(i, i + chunkSize);
+        callbacks.onContent?.(chunk, fullContent.slice(0, i + chunkSize));
+        // Small delay to simulate streaming
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+
+      callbacks.onComplete?.({
+        response: fullContent,
+        conversation_id: conversationId || '',
+        memories_used: [],
+        pending_actions: [],
+        actions_taken: [],
+      });
     } catch (error) {
-      logger.warn('[ChatService] Failed to capture context:', error);
+      callbacks.onError?.(error instanceof Error ? error.message : 'Chat failed');
     }
-
-    const streamCallbacks: StreamCallbacks = {
-      onMemories: (memories) => {
-        memoriesUsed = memories;
-        callbacks.onMemoriesFound?.(memoriesUsed);
-      },
-      onStatus: (status) => {
-        // Forward status updates for real-time reasoning display
-        logger.debug('[ChatService] Received status from API:', status);
-        callbacks.onStatus?.(status);
-      },
-      onContent: (content) => {
-        fullContent += content;
-        callbacks.onContent?.(content, fullContent);
-      },
-      onPendingActions: (actions) => {
-        pendingActions = actions;
-        callbacks.onPendingActions?.(pendingActions);
-      },
-      onActionsTaken: (actions) => {
-        actionsTaken = actions;
-        callbacks.onActionsTaken?.(actionsTaken);
-      },
-      onDone: (data) => {
-        convId = data.conversation_id;
-        callbacks.onComplete?.({
-          response: fullContent,
-          conversation_id: convId,
-          memories_used: memoriesUsed,
-          pending_actions: pendingActions,
-          actions_taken: actionsTaken,
-        });
-      },
-      onError: callbacks.onError,
-    };
-
-    await api.streamRequest(
-      '/chat/stream',
-      {
-        message,
-        conversation_id: conversationId,
-        context, // Send context for reinstatement
-      },
-      streamCallbacks
-    );
   }
 
   /**
    * Regular non-streaming chat (fallback).
-   * Also captures context for context reinstatement.
+   * Uses the new Cloudflare Workers backend.
    */
   async chat(
     message: string,
-    conversationId?: string
+    conversationId?: string,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    model?: string,
+    contextLimit?: number
   ): Promise<ChatResponse> {
-    // Capture current context for context reinstatement
-    let context: CurrentContext | undefined;
-    try {
-      context = await contextCaptureService.captureContext();
-    } catch (error) {
-      logger.warn('[ChatService] Failed to capture context:', error);
-    }
-
-    const response = await api.request<ChatResponse>('/chat', {
+    const response = await api.request<{
+      response: string;
+      memories_used: number;
+      model: string;
+    }>('/api/chat', {
       method: 'POST',
       body: {
         message,
-        conversation_id: conversationId,
-        context, // Send context for reinstatement
+        history,
+        model: model || 'gpt-4o-mini',
+        contextLimit: contextLimit || 5,
       },
     });
 
-    return response;
+    // Transform to ChatResponse format
+    return {
+      response: response.response,
+      conversation_id: conversationId || '',
+      memories_used: [],
+      pending_actions: [],
+    };
   }
 
   /**

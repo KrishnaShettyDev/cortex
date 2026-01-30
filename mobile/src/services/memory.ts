@@ -3,15 +3,21 @@ import { Memory, MemoryCreateResponse, MemoryListResponse, MemorySearchResponse 
 
 interface CreateMemoryRequest {
   content: string;
-  memory_type?: 'voice' | 'text' | 'photo';
-  memory_date?: string;
-  audio_url?: string;
-  photo_url?: string;
+  source?: string;
+  metadata?: {
+    entities?: string[];
+    location_lat?: number;
+    location_lon?: number;
+    location_name?: string;
+    people?: string[];
+    tags?: string[];
+    timestamp?: string;
+  };
 }
 
 class MemoryService {
-  async createMemory(data: CreateMemoryRequest): Promise<MemoryCreateResponse> {
-    return api.request<MemoryCreateResponse>('/memories', {
+  async createMemory(data: CreateMemoryRequest): Promise<Memory> {
+    return api.request<Memory>('/api/memories', {
       method: 'POST',
       body: data,
     });
@@ -20,27 +26,39 @@ class MemoryService {
   async getMemories(
     limit: number = 20,
     offset: number = 0,
-    memoryType?: string
+    source?: string
   ): Promise<MemoryListResponse> {
-    let endpoint = `/memories?limit=${limit}&offset=${offset}`;
-    if (memoryType) {
-      endpoint += `&type=${memoryType}`;
+    let endpoint = `/api/memories?limit=${limit}&offset=${offset}`;
+    if (source) {
+      endpoint += `&source=${source}`;
     }
     return api.request<MemoryListResponse>(endpoint);
   }
 
   async getMemory(id: string): Promise<Memory> {
-    return api.request<Memory>(`/memories/${id}`);
+    return api.request<Memory>(`/api/memories/${id}`);
+  }
+
+  async updateMemory(id: string, data: Partial<CreateMemoryRequest>): Promise<Memory> {
+    return api.request<Memory>(`/api/memories/${id}`, {
+      method: 'PATCH',
+      body: data,
+    });
   }
 
   async deleteMemory(id: string): Promise<void> {
-    await api.request(`/memories/${id}`, { method: 'DELETE' });
+    await api.request(`/api/memories/${id}`, { method: 'DELETE' });
   }
 
-  async searchMemories(query: string, limit: number = 10): Promise<MemorySearchResponse> {
-    return api.request<MemorySearchResponse>(
-      `/memories/search?q=${encodeURIComponent(query)}&limit=${limit}`
-    );
+  async searchMemories(query: string, limit: number = 10, source?: string): Promise<MemorySearchResponse> {
+    return api.request<MemorySearchResponse>('/api/search', {
+      method: 'POST',
+      body: {
+        query,
+        limit,
+        source,
+      },
+    });
   }
 }
 

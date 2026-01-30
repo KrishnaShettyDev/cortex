@@ -10,19 +10,32 @@ class AuthService {
     name?: string,
     email?: string
   ): Promise<AuthResponse> {
+    // Parse name if provided (format: "FirstName LastName")
+    let userObject;
+    if (name) {
+      const nameParts = name.split(' ');
+      userObject = {
+        name: {
+          givenName: nameParts[0],
+          familyName: nameParts.slice(1).join(' ') || nameParts[0],
+        },
+      };
+    }
+
     const response = await api.request<AuthResponse>('/auth/apple', {
       method: 'POST',
       body: {
-        identity_token: identityToken,
-        authorization_code: authorizationCode,
-        name,
-        email,
+        identityToken,
+        user: userObject,
       },
       requiresAuth: false,
     });
 
     await storage.saveAccessToken(response.access_token);
     await storage.saveRefreshToken(response.refresh_token);
+    if (response.user) {
+      await storage.saveUser(response.user);
+    }
 
     return response;
   }
@@ -36,15 +49,16 @@ class AuthService {
     const response = await api.request<AuthResponse>('/auth/google', {
       method: 'POST',
       body: {
-        id_token: idToken,
-        name,
-        email,
+        idToken,
       },
       requiresAuth: false,
     });
 
     await storage.saveAccessToken(response.access_token);
     await storage.saveRefreshToken(response.refresh_token);
+    if (response.user) {
+      await storage.saveUser(response.user);
+    }
 
     return response;
   }

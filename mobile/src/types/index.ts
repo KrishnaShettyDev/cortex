@@ -8,50 +8,57 @@ export interface User {
 
 // Auth types
 export interface AuthResponse {
-  user_id: string;
   access_token: string;
   refresh_token: string;
-  is_new_user: boolean;
+  expires_in: number;
+  user: {
+    id: string;
+    email: string;
+    name?: string;
+  };
 }
 
 // Memory types
 export interface Memory {
   id: string;
+  user_id: string;
   content: string;
-  summary: string | null;
-  memory_type: 'voice' | 'text' | 'photo' | 'email' | 'calendar';
-  source_id: string | null;
-  source_url: string | null;
-  audio_url: string | null;
-  photo_url: string | null;
-  memory_date: string;
+  source: string | null;
   created_at: string;
-  entities: string[];
-}
-
-export interface MemoryCreateResponse {
-  memory_id: string;
-  entities_extracted: string[];
+  updated_at: string;
+  metadata?: {
+    entities?: string[];
+    location_lat?: number;
+    location_lon?: number;
+    location_name?: string;
+    people?: string[];
+    tags?: string[];
+    timestamp?: string;
+  };
 }
 
 export interface CreateMemoryInput {
   content: string;
-  memory_type?: 'voice' | 'text' | 'photo';
-  memory_date?: string;
-  photo_url?: string;
-  audio_url?: string;
+  source?: string;
+  metadata?: {
+    entities?: string[];
+    location_lat?: number;
+    location_lon?: number;
+    location_name?: string;
+    people?: string[];
+    tags?: string[];
+    timestamp?: string;
+  };
 }
 
 export interface MemoryListResponse {
   memories: Memory[];
   total: number;
-  offset: number;
-  limit: number;
 }
 
 export interface MemorySearchResponse {
-  memories: Memory[];
-  query_understood: string;
+  results: Memory[];
+  count: number;
 }
 
 // Entity types
