@@ -209,8 +209,50 @@ app.post('/auth/refresh', async (c) => {
   }
 });
 
+// Get current user (used by mobile app)
+app.get('/auth/me', async (c) => {
+  try {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing authorization header' }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+
+    // Get user from database
+    const user = await c.env.DB.prepare('SELECT id, email, name, created_at FROM users WHERE id = ?')
+      .bind(payload.sub)
+      .first();
+
+    if (!user) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    return c.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      created_at: user.created_at,
+    });
+  } catch (error) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+});
+
 // Protected routes
 app.use('/api/*', async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
+  return jwtMiddleware(c, next);
+});
+
+// Legacy endpoints for mobile app compatibility
+app.use('/chat/*', async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
+  return jwtMiddleware(c, next);
+});
+
+app.use('/integrations/*', async (c, next) => {
   const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
   return jwtMiddleware(c, next);
 });
@@ -409,6 +451,65 @@ app.post('/api/chat', async (c) => {
       500
     );
   }
+});
+
+// Legacy chat endpoints (stub responses for mobile app compatibility)
+app.get('/chat/greeting', async (c) => {
+  return c.json({
+    greeting: "Welcome back!",
+    contextual_message: null,
+  });
+});
+
+app.get('/chat/suggestions', async (c) => {
+  return c.json({
+    suggestions: [],
+  });
+});
+
+app.get('/chat/insights', async (c) => {
+  return c.json({
+    total_attention_needed: 0,
+    urgent_emails: 0,
+    pending_commitments: 0,
+    important_dates: 0,
+  });
+});
+
+app.get('/chat/briefing', async (c) => {
+  return c.json({
+    summary: "Your day looks good!",
+    sections: [],
+  });
+});
+
+// Integrations endpoints
+app.get('/integrations/status', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+
+  const integrations = await c.env.DB.prepare(
+    'SELECT provider, connected, email, last_sync FROM integrations WHERE user_id = ?'
+  )
+    .bind(userId)
+    .all();
+
+  return c.json({
+    google: integrations.results?.find((i: any) => i.provider === 'google') || {
+      connected: false,
+      email: null,
+      last_sync: null,
+    },
+    apple: integrations.results?.find((i: any) => i.provider === 'apple') || {
+      connected: false,
+      email: null,
+      last_sync: null,
+    },
+  });
+});
+
+app.get('/integrations/google/connect', async (c) => {
+  // TODO: Implement OAuth flow with Composio
+  return c.json({ error: 'Integration not yet implemented' }, 501);
 });
 
 export default app;
