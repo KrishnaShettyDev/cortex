@@ -173,6 +173,34 @@ curl -X POST http://localhost:8787/api/search \
   }'
 ```
 
+**Chat (Simple):**
+```bash
+curl -X POST http://localhost:8787/api/chat \
+  -H "Authorization: Bearer your-access-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "What did I discuss with John?",
+    "model": "gpt-4o-mini",
+    "contextLimit": 5
+  }'
+```
+
+**Chat (With History):**
+```bash
+curl -X POST http://localhost:8787/api/chat \
+  -H "Authorization: Bearer your-access-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Tell me more about that",
+    "history": [
+      {"role": "user", "content": "What did I discuss with John?"},
+      {"role": "assistant", "content": "You discussed Q4 planning..."}
+    ],
+    "model": "gpt-4o-mini",
+    "contextLimit": 5
+  }'
+```
+
 ## Deployment
 
 ### Deploy to Production
@@ -223,7 +251,10 @@ wrangler deploy
 **Search & Chat:**
 - `POST /api/search` - Search memories using vector similarity
   - Body: `{ query, limit?, source? }`
-- `POST /api/chat` - Chat with AI (TODO)
+- `POST /api/chat` - Chat with AI using memory context
+  - Body: `{ message, history?, model?, contextLimit? }`
+  - Retrieves relevant memories and generates personalized responses
+  - Supports conversation history for multi-turn chats
 
 ## Architecture
 

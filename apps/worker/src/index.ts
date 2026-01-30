@@ -23,6 +23,7 @@ import {
   deleteMemory,
   searchMemories,
 } from './memory';
+import { chat, chatWithHistory } from './chat';
 
 type Bindings = {
   DB: D1Database;
@@ -366,11 +367,48 @@ app.post('/api/search', async (c) => {
 
 // Chat route
 app.post('/api/chat', async (c) => {
-  const userId = c.get('jwtPayload').sub;
-  const { message } = await c.req.json();
+  try {
+    const userId = c.get('jwtPayload').sub;
+    const { message, history, model, contextLimit } = await c.req.json();
 
-  // Will implement chat with memory context
-  return c.json({ response: 'Chat not implemented yet' }, 501);
+    if (!message || message.trim().length === 0) {
+      return c.json({ error: 'Message is required' }, 400);
+    }
+
+    // Use chatWithHistory if history is provided, otherwise use simple chat
+    const result = history
+      ? await chatWithHistory(
+          c.env.DB,
+          c.env.VECTORIZE,
+          userId,
+          message,
+          history,
+          c.env.OPENAI_API_KEY,
+          {
+            model: model || 'gpt-4o-mini',
+            contextLimit: contextLimit || 5,
+          }
+        )
+      : await chat(
+          c.env.DB,
+          c.env.VECTORIZE,
+          userId,
+          message,
+          c.env.OPENAI_API_KEY,
+          {
+            model: model || 'gpt-4o-mini',
+            contextLimit: contextLimit || 5,
+          }
+        );
+
+    return c.json(result);
+  } catch (error) {
+    console.error('Chat error:', error);
+    return c.json(
+      { error: 'Chat failed', details: error instanceof Error ? error.message : 'Unknown error' },
+      500
+    );
+  }
 });
 
 export default app;
