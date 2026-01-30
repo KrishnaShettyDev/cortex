@@ -114,17 +114,62 @@ curl -X POST http://localhost:8787/auth/refresh \
 
 ### Test Protected Endpoints
 
+**List Memories:**
 ```bash
-# Get memories
-curl http://localhost:8787/api/memories \
+curl http://localhost:8787/api/memories?limit=10&offset=0&source=chat \
   -H "Authorization: Bearer your-access-token"
+```
 
-# Create memory
+**Get Single Memory:**
+```bash
+curl http://localhost:8787/api/memories/memory-id \
+  -H "Authorization: Bearer your-access-token"
+```
+
+**Create Memory:**
+```bash
 curl -X POST http://localhost:8787/api/memories \
   -H "Authorization: Bearer your-access-token" \
   -H "Content-Type: application/json" \
   -d '{
-    "content": "This is a test memory"
+    "content": "Met with John about Q4 planning",
+    "source": "manual",
+    "metadata": {
+      "people": ["John"],
+      "tags": ["meeting", "planning"],
+      "timestamp": "2026-01-30T10:00:00Z"
+    }
+  }'
+```
+
+**Update Memory:**
+```bash
+curl -X PATCH http://localhost:8787/api/memories/memory-id \
+  -H "Authorization: Bearer your-access-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Updated content",
+    "metadata": {
+      "tags": ["important", "follow-up"]
+    }
+  }'
+```
+
+**Delete Memory:**
+```bash
+curl -X DELETE http://localhost:8787/api/memories/memory-id \
+  -H "Authorization: Bearer your-access-token"
+```
+
+**Search Memories:**
+```bash
+curl -X POST http://localhost:8787/api/search \
+  -H "Authorization: Bearer your-access-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "meetings with John",
+    "limit": 5,
+    "source": "manual"
   }'
 ```
 
@@ -165,9 +210,19 @@ wrangler deploy
 
 ### Protected Endpoints (require JWT)
 
-- `GET /api/memories` - Get user memories
-- `POST /api/memories` - Create memory
-- `POST /api/search` - Search memories (TODO)
+**Memories:**
+- `GET /api/memories` - List memories with pagination
+  - Query params: `limit`, `offset`, `source`
+- `GET /api/memories/:id` - Get single memory
+- `POST /api/memories` - Create memory with embeddings
+  - Body: `{ content, source?, metadata? }`
+- `PATCH /api/memories/:id` - Update memory
+  - Body: `{ content?, source?, metadata? }`
+- `DELETE /api/memories/:id` - Delete memory
+
+**Search & Chat:**
+- `POST /api/search` - Search memories using vector similarity
+  - Body: `{ query, limit?, source? }`
 - `POST /api/chat` - Chat with AI (TODO)
 
 ## Architecture

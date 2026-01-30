@@ -15,6 +15,14 @@ import {
   storeRefreshToken,
   verifyToken,
 } from './auth';
+import {
+  createMemory,
+  getMemory,
+  getMemories,
+  updateMemory,
+  deleteMemory,
+  searchMemories,
+} from './memory';
 
 type Bindings = {
   DB: D1Database;
@@ -208,37 +216,152 @@ app.use('/api/*', async (c, next) => {
 
 // Memory routes
 app.get('/api/memories', async (c) => {
-  const userId = c.get('jwtPayload').sub;
+  try {
+    const userId = c.get('jwtPayload').sub;
+    const limit = parseInt(c.req.query('limit') || '50');
+    const offset = parseInt(c.req.query('offset') || '0');
+    const source = c.req.query('source');
 
-  // Query D1
-  const { results } = await c.env.DB.prepare(
-    'SELECT * FROM memories WHERE user_id = ? ORDER BY created_at DESC LIMIT 50'
-  ).bind(userId).all();
+    const result = await getMemories(c.env.DB, userId, {
+      limit,
+      offset,
+      source: source || undefined,
+    });
 
-  return c.json({ memories: results });
+    return c.json(result);
+  } catch (error) {
+    console.error('Get memories error:', error);
+    return c.json(
+      { error: 'Failed to fetch memories', details: error instanceof Error ? error.message : 'Unknown error' },
+      500
+    );
+  }
+});
+
+app.get('/api/memories/:id', async (c) => {
+  try {
+    const userId = c.get('jwtPayload').sub;
+    const memoryId = c.req.param('id');
+
+    const memory = await getMemory(c.env.DB, memoryId, userId);
+
+    if (!memory) {
+      return c.json({ error: 'Memory not found' }, 404);
+    }
+
+    return c.json(memory);
+  } catch (error) {
+    console.error('Get memory error:', error);
+    return c.json(
+      { error: 'Failed to fetch memory', details: error instanceof Error ? error.message : 'Unknown error' },
+      500
+    );
+  }
 });
 
 app.post('/api/memories', async (c) => {
-  const userId = c.get('jwtPayload').sub;
-  const body = await c.req.json();
+  try {
+    const userId = c.get('jwtPayload').sub;
+    const body = await c.req.json();
 
-  // Create memory
-  const id = crypto.randomUUID();
+    const memory = await createMemory(
+      c.env.DB,
+      c.env.VECTORIZE,
+      userId,
+      {
+        content: body.content,
+        source: body.source,
+        metadata: body.metadata,
+      },
+      c.env.OPENAI_API_KEY
+    );
 
-  await c.env.DB.prepare(
-    'INSERT INTO memories (id, user_id, content, created_at) VALUES (?, ?, ?, ?)'
-  ).bind(id, userId, body.content, new Date().toISOString()).run();
+    return c.json(memory, 201);
+  } catch (error) {
+    console.error('Create memory error:', error);
+    return c.json(
+      { error: 'Failed to create memory', details: error instanceof Error ? error.message : 'Unknown error' },
+      400
+    );
+  }
+});
 
-  return c.json({ id, message: 'Memory created' }, 201);
+app.patch('/api/memories/:id', async (c) => {
+  try {
+    const userId = c.get('jwtPayload').sub;
+    const memoryId = c.req.param('id');
+    const body = await c.req.json();
+
+    const memory = await updateMemory(
+      c.env.DB,
+      c.env.VECTORIZE,
+      memoryId,
+      userId,
+      {
+        content: body.content,
+        source: body.source,
+        metadata: body.metadata,
+      },
+      c.env.OPENAI_API_KEY
+    );
+
+    return c.json(memory);
+  } catch (error) {
+    console.error('Update memory error:', error);
+    return c.json(
+      { error: 'Failed to update memory', details: error instanceof Error ? error.message : 'Unknown error' },
+      error instanceof Error && error.message === 'Memory not found' ? 404 : 400
+    );
+  }
+});
+
+app.delete('/api/memories/:id', async (c) => {
+  try {
+    const userId = c.get('jwtPayload').sub;
+    const memoryId = c.req.param('id');
+
+    await deleteMemory(c.env.DB, c.env.VECTORIZE, memoryId, userId);
+
+    return c.json({ message: 'Memory deleted successfully' });
+  } catch (error) {
+    console.error('Delete memory error:', error);
+    return c.json(
+      { error: 'Failed to delete memory', details: error instanceof Error ? error.message : 'Unknown error' },
+      error instanceof Error && error.message === 'Memory not found' ? 404 : 500
+    );
+  }
 });
 
 // Search route
 app.post('/api/search', async (c) => {
-  const userId = c.get('jwtPayload').sub;
-  const { query } = await c.req.json();
+  try {
+    const userId = c.get('jwtPayload').sub;
+    const { query, limit, source } = await c.req.json();
 
-  // Will implement vector search with Vectorize
-  return c.json({ results: [], message: 'Search not implemented yet' }, 501);
+    if (!query || query.trim().length === 0) {
+      return c.json({ error: 'Search query is required' }, 400);
+    }
+
+    const results = await searchMemories(
+      c.env.DB,
+      c.env.VECTORIZE,
+      userId,
+      query,
+      c.env.OPENAI_API_KEY,
+      {
+        limit: limit || 10,
+        source: source || undefined,
+      }
+    );
+
+    return c.json({ results, count: results.length });
+  } catch (error) {
+    console.error('Search error:', error);
+    return c.json(
+      { error: 'Search failed', details: error instanceof Error ? error.message : 'Unknown error' },
+      500
+    );
+  }
 });
 
 // Chat route
