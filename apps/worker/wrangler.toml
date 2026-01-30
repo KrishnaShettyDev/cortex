@@ -26,3 +26,4 @@ ENVIRONMENT = "production"
 # - OPENAI_API_KEY
 # - JWT_SECRET
 # - COMPOSIO_API_KEY
+# - GOOGLE_CLIENT_ID (optional, defaults to iOS client ID)
