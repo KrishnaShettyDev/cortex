@@ -1,12 +1,18 @@
 name = "cortex-api"
 main = "src/index.ts"
 compatibility_date = "2025-01-30"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+routes = [
+  { pattern = "askcortex.plutas.in/*", zone_name = "plutas.in" }
+]
 
 # D1 Database
 [[d1_databases]]
 binding = "DB"
 database_name = "cortex-production"
-database_id = "" # Will set after creating D1
+database_id = "9f0902b3-51cf-4cd1-81ca-4cd0c90fed53"
 
 # Vectorize
 [[vectorize]]
