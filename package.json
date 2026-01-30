@@ -1,21 +1,19 @@
 {
-  "name": "cortex-monorepo",
+  "name": "cortex",
+  "version": "2.0.0",
   "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "prepare": "husky"
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "husky": "^9.0.0",
-    "lint-staged": "^15.0.0"
-  },
-  "lint-staged": {
-    "backend/**/*.py": [
-      "ruff check --fix",
-      "ruff format"
-    ],
-    "mobile/**/*.{ts,tsx}": [
-      "eslint --fix",
-      "prettier --write"
-    ]
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "@cloudflare/workers-types": "^4.20250110.0"
   }
 }

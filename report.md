@@ -1304,7 +1304,7 @@ What's MISSING from the memory layer?
   9. Relationship Nudges                                                 
     - "You haven't talked to your college friends in 60 days"            
     - Proactive, not reactive                                            
-  10. Pattern Insights                                                   
+  10. Pattern Insights                                                    
     - "You always reschedule Friday meetings. Want me to stop booking    
   them?"                                                                 
                                                                          

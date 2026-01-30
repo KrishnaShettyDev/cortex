@@ -1,0 +1,28 @@
+name = "cortex-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-30"
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "cortex-production"
+database_id = "" # Will set after creating D1
+
+# Vectorize
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "cortex-embeddings"
+
+# R2 Storage
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "cortex-uploads"
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets (set with: wrangler secret put SECRET_NAME)
+# - OPENAI_API_KEY
+# - JWT_SECRET
+# - COMPOSIO_API_KEY
