@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "deploy": "wrangler deploy"
+    "deploy": "cd apps/backend && wrangler deploy"
   },
   "devDependencies": {
     "turbo": "^2.3.3",
