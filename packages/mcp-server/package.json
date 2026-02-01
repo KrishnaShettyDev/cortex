@@ -1,0 +1,30 @@
+{
+  "name": "@cortex/mcp-server",
+  "version": "1.0.0",
+  "description": "Cortex MCP Server - Claude Desktop Integration",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "cortex-mcp": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "cortex",
+    "memory",
+    "ai"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "typescript": "^5.6.3"
+  }
+}

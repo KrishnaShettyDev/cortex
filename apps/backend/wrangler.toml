@@ -24,6 +24,16 @@ index_name = "cortex-embeddings"
 binding = "MEDIA"
 bucket_name = "cortex-uploads"
 
+# AI (for embeddings)
+[ai]
+binding = "AI"
+
+# KV Namespace (for caching)
+[[kv_namespaces]]
+binding = "CACHE"
+id = "d34308c5609c457ebefd2a6f49e06d45"
+preview_id = "c63e89884ba54d73b9688c282fe11e51"
+
 # Environment variables
 [vars]
 ENVIRONMENT = "production"

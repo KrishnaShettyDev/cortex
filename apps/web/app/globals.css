@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   LIGHT MODE (Default for :root)
+   ============================================================================ */
+:root {
+  /* Background colors */
+  --color-bg-primary: #FAFAFA;
+  --color-bg-secondary: #FFFFFF;
+  --color-bg-tertiary: #F2F2F7;
+  --color-bg-elevated: #FFFFFF;
+
+  /* Text colors */
+  --color-text-primary: #1A1A1A;
+  --color-text-secondary: #6B6B6B;
+  --color-text-tertiary: #8E8E93;
+  --color-text-quaternary: #C7C7CC;
+
+  /* Accent colors */
+  --color-accent: #007AFF;
+  --color-accent-light: rgba(0, 122, 255, 0.12);
+  --color-accent-muted: rgba(0, 122, 255, 0.06);
+  --color-accent-pressed: #0056B3;
+
+  /* System colors */
+  --color-success: #34C759;
+  --color-error: #FF3B30;
+  --color-warning: #FF9500;
+  --color-info: #007AFF;
+
+  /* Separators */
+  --color-separator: #E5E5E5;
+  --color-glass-border: rgba(0, 0, 0, 0.06);
+  --color-glass-bg: rgba(0, 0, 0, 0.03);
+
+  /* Gradients */
+  --gradient-from: #007AFF;
+  --gradient-to: #5AC8FA;
+}
+
+/* ============================================================================
+   DARK MODE
+   ============================================================================ */
+.dark {
+  /* Background colors - OLED black */
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #1C1C1E;
+  --color-bg-tertiary: #2C2C2E;
+  --color-bg-elevated: #1C1C1E;
+
+  /* Text colors */
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #8E8E93;
+  --color-text-tertiary: #48484A;
+  --color-text-quaternary: #3A3A3C;
+
+  /* Accent colors */
+  --color-accent: #0A84FF;
+  --color-accent-light: rgba(10, 132, 255, 0.15);
+  --color-accent-muted: rgba(10, 132, 255, 0.08);
+  --color-accent-pressed: #409CFF;
+
+  /* System colors */
+  --color-success: #30D158;
+  --color-error: #FF453A;
+  --color-warning: #FF9F0A;
+  --color-info: #0A84FF;
+
+  /* Separators */
+  --color-separator: #2C2C2E;
+  --color-glass-border: rgba(255, 255, 255, 0.08);
+  --color-glass-bg: rgba(255, 255, 255, 0.04);
+
+  /* Gradients */
+  --gradient-from: #0A84FF;
+  --gradient-to: #5AC8FA;
+}
+
+/* ============================================================================
+   BASE STYLES
+   ============================================================================ */
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  color: var(--color-text-primary);
+  background: var(--color-bg-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================================
+   SCROLLBAR STYLING (Dark mode)
+   ============================================================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================================================
+   UTILITY CLASSES
+   ============================================================================ */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .glass-effect {
+    backdrop-filter: blur(25px);
+    background: var(--color-glass-bg);
+    border: 1px solid var(--color-glass-border);
+  }
+
+  .active-opacity {
+    transition: opacity 150ms ease;
+  }
+
+  .active-opacity:active {
+    opacity: 0.7;
+  }
+}

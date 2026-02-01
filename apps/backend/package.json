@@ -10,7 +10,8 @@
     "@cortex/core": "workspace:*",
     "hono": "^4.7.11",
     "jose": "^5.9.6",
-    "google-auth-library": "^9.15.0"
+    "google-auth-library": "^9.15.0",
+    "nanoid": "^5.0.9"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250110.0",

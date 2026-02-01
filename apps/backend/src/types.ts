@@ -6,6 +6,8 @@ export interface Bindings {
   DB: D1Database;
   VECTORIZE: Vectorize;
   MEDIA: R2Bucket;
+  AI: any; // Cloudflare AI for embeddings
+  CACHE: KVNamespace; // KV for caching
   OPENAI_API_KEY: string;
   JWT_SECRET: string;
   COMPOSIO_API_KEY: string;

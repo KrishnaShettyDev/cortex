@@ -11,12 +11,16 @@ import type { Bindings } from './types';
 import * as authHandlers from './handlers/auth';
 import * as memoryHandlers from './handlers/memories';
 import * as integrationHandlers from './handlers/integrations';
+import * as contextHandlers from './handlers/context';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 // Global middleware
 app.use('*', logger());
-app.use('*', cors());
+app.use('*', cors({
+  origin: ['https://app.askcortex.plutas.in', 'http://localhost:3000'],
+  credentials: true,
+}));
 
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -67,6 +71,26 @@ app.post('/api/chat', memoryHandlers.chatWithMemories);
 
 // Protected routes - Integrations
 app.get('/integrations/status', integrationHandlers.getIntegrationStatus);
-app.get('/integrations/google/connect', integrationHandlers.connectGoogle);
+app.post('/integrations/gmail/connect', integrationHandlers.connectGmail);
+app.post('/integrations/calendar/connect', integrationHandlers.connectCalendar);
+app.get('/integrations/gmail/callback', integrationHandlers.gmailCallback);
+app.get('/integrations/calendar/callback', integrationHandlers.calendarCallback);
+app.post('/integrations/gmail/sync', integrationHandlers.triggerGmailSync);
+app.post('/integrations/calendar/sync', integrationHandlers.triggerCalendarSync);
+app.delete('/integrations/:provider', integrationHandlers.disconnectIntegration);
+
+// v3 API - Context Cloud (Supermemory-style)
+app.use('/v3/*', async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
+  return jwtMiddleware(c, next);
+});
+
+app.post('/v3/memories', contextHandlers.addMemory);
+app.get('/v3/memories', contextHandlers.listMemories);
+app.put('/v3/memories/:id', contextHandlers.updateMemoryHandler);
+app.delete('/v3/memories/:id', contextHandlers.deleteMemory);
+app.post('/v3/search', contextHandlers.search);
+app.post('/v3/recall', contextHandlers.recall);
+app.get('/v3/profile', contextHandlers.getProfile);
 
 export default app;
