@@ -75,13 +75,17 @@ export interface ExtractedCommitment {
   confidence: number;
 }
 
+export interface CommitmentExtractionMetadata {
+  total_extracted: number;
+  high_confidence_count: number;
+  processing_time_ms: number;
+  skipped_reason?: 'no_signals';
+}
+
 export interface CommitmentExtractionResult {
   commitments: ExtractedCommitment[];
-  extraction_metadata: {
-    total_extracted: number;
-    high_confidence_count: number;
-    processing_time_ms: number;
-  };
+  saved?: Commitment[];
+  extraction_metadata: CommitmentExtractionMetadata;
 }
 
 /**

@@ -17,6 +17,7 @@ import type {
   CommitmentExtractionResult,
   CommitmentType,
   CommitmentPriority,
+  CommitmentExtractionMetadata,
 } from './types';
 import { CommitmentExtractionError } from './types';
 
@@ -398,7 +399,36 @@ If no commitments found, return: []`;
 }
 
 /**
+ * Commitment signal keywords for pre-filtering
+ * If none of these are present, skip LLM extraction entirely
+ */
+const COMMITMENT_SIGNALS = [
+  // Action verbs
+  'will', "i'll", 'promise', 'commit', 'agree', 'plan to', 'going to', 'gonna',
+  // Deadlines
+  'deadline', 'due', 'by', 'until', 'before', 'no later than',
+  // Time references
+  'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+  'next week', 'this week', 'end of', 'by end', 'eod', 'eow', 'eom',
+  // Actions
+  'send', 'deliver', 'submit', 'finish', 'complete', 'call', 'email', 'meet',
+  'follow up', 'followup', 'follow-up', 'check in', 'remind', 'schedule',
+  // Urgency
+  'asap', 'urgent', 'priority', 'important', 'critical', 'must', 'need to', 'have to',
+];
+
+/**
+ * Quick check if content likely contains commitments
+ * Returns true if LLM extraction should be performed
+ */
+function hasCommitmentSignals(content: string): boolean {
+  const lowerContent = content.toLowerCase();
+  return COMMITMENT_SIGNALS.some(signal => lowerContent.includes(signal));
+}
+
+/**
  * Helper function to extract and save commitments
+ * Now with pre-filtering to skip LLM for non-commitment content
  */
 export async function extractAndSaveCommitments(
   db: D1Database,
@@ -407,17 +437,38 @@ export async function extractAndSaveCommitments(
   memoryId: string,
   content: string
 ): Promise<CommitmentExtractionResult> {
+  const startTime = Date.now();
+
+  // PRE-FILTER: Skip LLM if no commitment signals detected
+  if (!hasCommitmentSignals(content)) {
+    console.log('[CommitmentExtractor] No commitment signals detected, skipping LLM');
+    return {
+      commitments: [],
+      saved: [],
+      extraction_metadata: {
+        total_extracted: 0,
+        high_confidence_count: 0,
+        processing_time_ms: Date.now() - startTime,
+        skipped_reason: 'no_signals',
+      },
+    };
+  }
+
   const extractor = new CommitmentExtractor(db, ai);
 
-  // Extract commitments
+  // Extract commitments via LLM
   const result = await extractor.extractCommitments(content);
 
   // Save high-confidence commitments
   const highConfidence = result.commitments.filter((c) => c.confidence >= 0.6);
+  let saved: Commitment[] = [];
 
   if (highConfidence.length > 0) {
-    await extractor.saveCommitments(userId, memoryId, highConfidence);
+    saved = await extractor.saveCommitments(userId, memoryId, highConfidence);
   }
 
-  return result;
+  return {
+    ...result,
+    saved,
+  };
 }

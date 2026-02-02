@@ -15,6 +15,33 @@ import type {
 } from './types';
 import { EntityExtractionError } from './types';
 
+/**
+ * Quick pattern-based entity detection
+ * Returns true if content likely contains extractable entities
+ */
+function hasEntitySignals(content: string): boolean {
+  // Too short to have meaningful entities
+  if (content.length < 20) return false;
+
+  // Check for capitalized words (likely names/companies)
+  const capitalizedWords = content.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g);
+  if (capitalizedWords && capitalizedWords.length > 0) return true;
+
+  // Check for email addresses
+  if (/@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(content)) return true;
+
+  // Check for company indicators
+  const companyIndicators = ['inc', 'corp', 'llc', 'ltd', 'company', 'co.', 'team', 'group'];
+  const lowerContent = content.toLowerCase();
+  if (companyIndicators.some(ind => lowerContent.includes(ind))) return true;
+
+  // Check for role/title indicators
+  const roleIndicators = ['ceo', 'cto', 'cfo', 'founder', 'director', 'manager', 'engineer', 'developer'];
+  if (roleIndicators.some(ind => lowerContent.includes(ind))) return true;
+
+  return false;
+}
+
 export class EntityExtractor {
   private ai: any;
 
@@ -24,6 +51,7 @@ export class EntityExtractor {
 
   /**
    * Extract entities and relationships from memory content
+   * Optimized with pre-filtering and reduced token usage
    */
   async extract(
     content: string,
@@ -31,11 +59,28 @@ export class EntityExtractor {
   ): Promise<EntityExtractionResult> {
     const startTime = Date.now();
 
+    // PRE-FILTER: Skip LLM for content without entity signals
+    if (!hasEntitySignals(content)) {
+      console.log('[EntityExtractor] No entity signals detected, skipping LLM');
+      return {
+        entities: [],
+        relationships: [],
+        extraction_metadata: {
+          model: 'skipped',
+          timestamp: new Date().toISOString(),
+          total_entities: 0,
+          total_relationships: 0,
+          processing_time_ms: Date.now() - startTime,
+          skipped_reason: 'no_signals',
+        },
+      };
+    }
+
     try {
       // Build extraction prompt
       const prompt = this.buildExtractionPrompt(content, context);
 
-      // Call LLM for extraction
+      // Call LLM for extraction (reduced max_tokens for faster response)
       const response = await this.ai.run('@cf/meta/llama-3.1-8b-instruct', {
         messages: [
           {
@@ -48,7 +93,7 @@ export class EntityExtractor {
           },
         ],
         temperature: 0.1, // Low temp for consistency
-        max_tokens: 2000, // Allow for complex extractions
+        max_tokens: 1000, // Reduced from 2000 for faster response
       });
 
       // Parse and validate response
@@ -68,7 +113,7 @@ export class EntityExtractor {
         entities: filteredEntities,
         relationships: filteredRelationships,
         extraction_metadata: {
-          model: 'gpt-4o-mini',
+          model: 'llama-3.1-8b-instruct',
           timestamp: new Date().toISOString(),
           total_entities: filteredEntities.length,
           total_relationships: filteredRelationships.length,
