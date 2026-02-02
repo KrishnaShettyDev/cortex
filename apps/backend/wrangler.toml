@@ -34,6 +34,23 @@ binding = "CACHE"
 id = "d34308c5609c457ebefd2a6f49e06d45"
 preview_id = "c63e89884ba54d73b9688c282fe11e51"
 
+# Queue (for async processing)
+# NOTE: Re-enabled with proper consumer
+[[queues.producers]]
+binding = "PROCESSING_QUEUE"
+queue = "cortex-processing"
+
+[[queues.consumers]]
+queue = "cortex-processing"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "cortex-dlq"
+
+# Scheduled tasks
+[triggers]
+crons = ["*/5 * * * *", "0 2 * * SUN"]  # Every 5min for syncs, Sunday 2am for consolidation
+
 # Environment variables
 [vars]
 ENVIRONMENT = "production"

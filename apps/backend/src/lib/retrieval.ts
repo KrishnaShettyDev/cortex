@@ -63,20 +63,21 @@ export async function hybridSearch(
   const startTime = Date.now();
 
   // Check cache first (only for hybrid/vector mode)
-  if (options.searchMode !== 'keyword') {
-    const cached = await getCachedSearchResults(
-      env.CACHE,
-      options.userId,
-      options.query,
-      options.containerTag || 'default'
-    );
+  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
+  // if (options.searchMode !== 'keyword') {
+  //   const cached = await getCachedSearchResults(
+  //     env.CACHE,
+  //     options.userId,
+  //     options.query,
+  //     options.containerTag || 'default'
+  //   );
 
-    if (cached) {
-      console.log('[Cache] Search results cache hit');
-      return { ...cached, timing: Date.now() - startTime };
-    }
-    console.log('[Cache] Search results cache miss, executing search...');
-  }
+  //   if (cached) {
+  //     console.log('[Cache] Search results cache hit');
+  //     return { ...cached, timing: Date.now() - startTime };
+  //   }
+  //   console.log('[Cache] Search results cache miss, executing search...');
+  // }
 
   // 1. Get user profile (if requested)
   let profile: { static: string[]; dynamic: string[] } | undefined;
@@ -189,15 +190,16 @@ export async function hybridSearch(
   };
 
   // Cache the result (only for hybrid/vector mode)
-  if (options.searchMode !== 'keyword') {
-    await cacheSearchResults(
-      env.CACHE,
-      options.userId,
-      options.query,
-      options.containerTag || 'default',
-      result
-    );
-  }
+  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
+  // if (options.searchMode !== 'keyword') {
+  //   await cacheSearchResults(
+  //     env.CACHE,
+  //     options.userId,
+  //     options.query,
+  //     options.containerTag || 'default',
+  //     result
+  //   );
+  // }
 
   return result;
 }

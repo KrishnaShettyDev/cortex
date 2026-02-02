@@ -296,14 +296,47 @@ export async function searchChunks(
     limit?: number;
   }
 ): Promise<DocumentChunk[]> {
+  // Tokenize query to avoid SQLite LIKE pattern complexity
+  // Split on whitespace and filter out short words
+  const keywords = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length >= 3) // Only words with 3+ chars
+    .slice(0, 10); // Limit to first 10 keywords
+
+  if (keywords.length === 0) {
+    // Fallback: no valid keywords, try simple search
+    let sql = `
+      SELECT dc.* FROM document_chunks dc
+      JOIN documents d ON dc.document_id = d.id
+      WHERE d.user_id = ?
+        AND d.status = 'done'
+        AND dc.content LIKE ?
+    `;
+    const params: any[] = [userId, `%${query}%`];
+
+    if (options?.containerTag) {
+      sql += ' AND d.container_tag = ?';
+      params.push(options.containerTag);
+    }
+
+    sql += ' ORDER BY dc.created_at DESC LIMIT ?';
+    params.push(options?.limit || 20);
+
+    const result = await db.prepare(sql).bind(...params).all<DocumentChunk>();
+    return result.results || [];
+  }
+
+  // Build query with OR conditions for each keyword
+  const likeConditions = keywords.map(() => 'dc.content LIKE ?').join(' OR ');
   let sql = `
     SELECT dc.* FROM document_chunks dc
     JOIN documents d ON dc.document_id = d.id
     WHERE d.user_id = ?
       AND d.status = 'done'
-      AND dc.content LIKE ?
+      AND (${likeConditions})
   `;
-  const params: any[] = [userId, `%${query}%`];
+  const params: any[] = [userId, ...keywords.map((kw) => `%${kw}%`)];
 
   if (options?.containerTag) {
     sql += ' AND d.container_tag = ?';

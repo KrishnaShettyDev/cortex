@@ -148,13 +148,17 @@ export async function findSimilarProfileFact(
   profileType: 'static' | 'dynamic',
   containerTag?: string
 ): Promise<UserProfile | null> {
+  // Truncate fact to prevent LIKE pattern complexity errors
+  // SQLite LIKE patterns have complexity limits, especially with wildcards
+  const truncatedFact = fact.length > 100 ? fact.substring(0, 100) : fact;
+
   let query = `
     SELECT * FROM user_profiles
     WHERE user_id = ?
       AND profile_type = ?
       AND fact LIKE ?
   `;
-  const params: any[] = [userId, profileType, `%${fact}%`];
+  const params: any[] = [userId, profileType, `%${truncatedFact}%`];
 
   if (containerTag) {
     query += ' AND container_tag = ?';
@@ -174,11 +178,17 @@ export async function upsertProfileFact(
   db: D1Database,
   options: CreateProfileFactOptions
 ): Promise<UserProfile> {
+  // Truncate fact if too long to prevent DB errors
+  const MAX_FACT_LENGTH = 500;
+  const fact = options.fact.length > MAX_FACT_LENGTH
+    ? options.fact.substring(0, MAX_FACT_LENGTH) + '...'
+    : options.fact;
+
   // Check if similar fact exists
   const existing = await findSimilarProfileFact(
     db,
     options.userId,
-    options.fact,
+    fact,
     options.profileType,
     options.containerTag
   );
@@ -237,14 +247,15 @@ export async function getFormattedProfile(
   const tag = containerTag || 'default';
 
   // Check cache if available
-  if (cache) {
-    const cached = await getCachedProfile(cache, userId, tag);
-    if (cached) {
-      console.log('[Cache] Profile cache hit');
-      return cached;
-    }
-    console.log('[Cache] Profile cache miss, querying DB...');
-  }
+  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
+  // if (cache) {
+  //   const cached = await getCachedProfile(cache, userId, tag);
+  //   if (cached) {
+  //     console.log('[Cache] Profile cache hit');
+  //     return cached;
+  //   }
+  //   console.log('[Cache] Profile cache miss, querying DB...');
+  // }
 
   // Cache miss or no cache - query database
   const profiles = await getUserProfile(db, userId, {
@@ -263,9 +274,10 @@ export async function getFormattedProfile(
   const result = { static: staticFacts, dynamic: dynamicFacts };
 
   // Cache the result
-  if (cache) {
-    await cacheProfile(cache, userId, tag, result);
-  }
+  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
+  // if (cache) {
+  //   await cacheProfile(cache, userId, tag, result);
+  // }
 
   return result;
 }

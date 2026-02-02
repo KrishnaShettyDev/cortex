@@ -24,6 +24,17 @@ export interface Memory {
   processing_error: string | null;
   is_forgotten: 0 | 1;
   forget_after: string | null;
+  // Temporal fields
+  valid_from: string | null;
+  valid_to: string | null;
+  event_date: string | null;
+  supersedes: string | null;
+  superseded_by: string | null;
+  memory_type: 'episodic' | 'semantic' | null;
+  // Importance scoring fields
+  importance_score: number | null;
+  access_count: number | null;
+  last_accessed: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -80,14 +91,25 @@ export async function createMemory(
     processing_error: null,
     is_forgotten: 0,
     forget_after: null,
+    // Temporal fields - will be set during processing
+    valid_from: now,
+    valid_to: null,
+    event_date: null,
+    supersedes: null,
+    superseded_by: null,
+    memory_type: 'episodic',
+    // Importance scoring fields
+    importance_score: 0.5,
+    access_count: 0,
+    last_accessed: null,
     created_at: now,
     updated_at: now,
   };
 
   await db
     .prepare(
-      `INSERT INTO memories (id, user_id, content, source, version, is_latest, parent_memory_id, root_memory_id, container_tag, processing_status, processing_error, is_forgotten, forget_after, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO memories (id, user_id, content, source, version, is_latest, parent_memory_id, root_memory_id, container_tag, processing_status, processing_error, is_forgotten, forget_after, valid_from, valid_to, event_date, supersedes, superseded_by, memory_type, importance_score, access_count, last_accessed, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       memory.id,
@@ -103,6 +125,15 @@ export async function createMemory(
       memory.processing_error,
       memory.is_forgotten,
       memory.forget_after,
+      memory.valid_from,
+      memory.valid_to,
+      memory.event_date,
+      memory.supersedes,
+      memory.superseded_by,
+      memory.memory_type,
+      memory.importance_score,
+      memory.access_count,
+      memory.last_accessed,
       memory.created_at,
       memory.updated_at
     )
@@ -298,14 +329,47 @@ export async function searchMemories(
     limit?: number;
   }
 ): Promise<Memory[]> {
+  // Tokenize query to avoid SQLite LIKE pattern complexity
+  // Split on whitespace and filter out short words
+  const keywords = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length >= 3) // Only words with 3+ chars
+    .slice(0, 10); // Limit to first 10 keywords
+
+  if (keywords.length === 0) {
+    // Fallback: no valid keywords, try simple search
+    let sql = `
+      SELECT * FROM memories
+      WHERE user_id = ?
+        AND is_latest = 1
+        AND is_forgotten = 0
+        AND content LIKE ?
+    `;
+    const params: any[] = [userId, `%${query}%`];
+
+    if (options?.containerTag) {
+      sql += ` AND container_tag = ?`;
+      params.push(options.containerTag);
+    }
+
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(options?.limit || 20);
+
+    const result = await db.prepare(sql).bind(...params).all<Memory>();
+    return result.results || [];
+  }
+
+  // Build query with OR conditions for each keyword
+  const likeConditions = keywords.map(() => 'content LIKE ?').join(' OR ');
   let sql = `
     SELECT * FROM memories
     WHERE user_id = ?
       AND is_latest = 1
       AND is_forgotten = 0
-      AND content LIKE ?
+      AND (${likeConditions})
   `;
-  const params: any[] = [userId, `%${query}%`];
+  const params: any[] = [userId, ...keywords.map((kw) => `%${kw}%`)];
 
   if (options?.containerTag) {
     sql += ` AND container_tag = ?`;

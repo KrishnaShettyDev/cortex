@@ -8,6 +8,7 @@ export interface Bindings {
   MEDIA: R2Bucket;
   AI: any; // Cloudflare AI for embeddings
   CACHE: KVNamespace; // KV for caching
+  PROCESSING_QUEUE?: Queue<any>; // Queue for async processing (optional, requires paid plan)
   OPENAI_API_KEY: string;
   JWT_SECRET: string;
   COMPOSIO_API_KEY: string;

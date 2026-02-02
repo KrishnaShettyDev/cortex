@@ -132,6 +132,75 @@ export async function refreshToken(c: Context<{ Bindings: Bindings }>) {
   });
 }
 
+/**
+ * TEMPORARY: Generate a test token for development
+ * WARNING: This is a convenience endpoint for testing. Remove in production.
+ */
+export async function generateTestToken(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    // Use existing plutaslab user
+    const testUserId = '79f149ea-6c24-45df-a029-fc1483fe1192';
+    const testEmail = 'plutaslab@gmail.com';
+    const testName = 'Plutas Lab';
+
+    // Generate 24h access token
+    const tokens = await generateTokens(
+      testUserId,
+      testEmail,
+      testName,
+      c.env.JWT_SECRET
+    );
+
+    return c.json({
+      access_token: tokens.access_token,
+      expires_in: tokens.expires_in,
+      user: {
+        id: testUserId,
+        email: testEmail,
+        name: testName,
+      },
+      note: 'DEVELOPMENT ONLY: Use this token to generate a long-lived API key via POST /auth/api-key',
+      warning: 'This endpoint should be removed before public launch',
+    });
+  });
+}
+
+/**
+ * Generate a long-lived API key for testing/development
+ */
+export async function generateApiKey(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing authorization header' }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+
+    // Generate a long-lived token (1 year)
+    const { SignJWT } = await import('jose');
+    const secret = new TextEncoder().encode(c.env.JWT_SECRET);
+
+    const apiKey = await new SignJWT({
+      sub: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      type: 'api_key',
+    })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt()
+      .setExpirationTime('1y')
+      .sign(secret);
+
+    return c.json({
+      api_key: apiKey,
+      expires_in: 31536000, // 1 year in seconds
+      note: 'This is a long-lived API key for testing. Keep it secure.',
+    });
+  });
+}
+
 export async function getCurrentUser(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
     const authHeader = c.req.header('Authorization');

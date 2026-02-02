@@ -29,11 +29,12 @@ export async function generateEmbedding(
   text: string
 ): Promise<number[]> {
   // Check cache first
-  const cached = await getCachedEmbedding(env.CACHE, text);
-  if (cached) {
-    console.log('[Cache] Embedding cache hit');
-    return cached;
-  }
+  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
+  // const cached = await getCachedEmbedding(env.CACHE, text);
+  // if (cached) {
+  //   console.log('[Cache] Embedding cache hit');
+  //   return cached;
+  // }
 
   // Cache miss - generate embedding
   console.log('[Cache] Embedding cache miss, generating...');
@@ -44,7 +45,8 @@ export async function generateEmbedding(
   const embedding = response.data[0]; // 768-dimensional vector
 
   // Cache the result
-  await cacheEmbedding(env.CACHE, text, embedding);
+  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
+  // await cacheEmbedding(env.CACHE, text, embedding);
 
   return embedding;
 }

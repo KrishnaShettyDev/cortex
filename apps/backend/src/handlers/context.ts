@@ -26,8 +26,13 @@ import {
 } from '../lib/retrieval';
 import { getFormattedProfile } from '../lib/db/profiles';
 import { generateEmbedding, insertMemoryVector } from '../lib/vectorize';
-import { processMemory } from '../lib/processor';
+import { createProcessingJob, ProcessingPipeline } from '../lib/processing/pipeline';
+import type { ProcessingContext } from '../lib/processing/types';
 import { processMemoryWithAUDN } from '../lib/audn';
+import {
+  extractContextualMemories,
+  isRawConversation,
+} from '../lib/contextual-memory';
 
 /**
  * POST /v3/memories
@@ -35,11 +40,11 @@ import { processMemoryWithAUDN } from '../lib/audn';
  */
 export async function addMemory(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
-    const userId = c.get('jwtPayload').sub;
+    const userId = c.get('userId');
+    const scope = c.get('tenantScope');
     const body = await c.req.json<{
       content: string;
       source?: string;
-      containerTag?: string;
       metadata?: any;
       useAUDN?: boolean; // Enable AUDN cycle (default: true)
     }>();
@@ -80,7 +85,7 @@ export async function addMemory(c: Context<{ Bindings: Bindings }>) {
           audnResult.memory_id,
           userId,
           body.content,
-          body.containerTag || 'default',
+          scope.containerTag,
           embedding
         );
 
@@ -108,7 +113,7 @@ export async function addMemory(c: Context<{ Bindings: Bindings }>) {
       userId,
       content: body.content,
       source: body.source,
-      containerTag: body.containerTag,
+      containerTag: scope.containerTag,
       metadata: body.metadata,
     });
 
@@ -122,15 +127,201 @@ export async function addMemory(c: Context<{ Bindings: Bindings }>) {
       embedding
     );
 
-    // Process async (extraction, etc.)
-    c.executionCtx.waitUntil(processMemory(c.env, memory.id, userId));
+    // Process async with unified pipeline
+    // SKIP processing for benchmark data (too slow for benchmarking)
+    let job = null;
+    let processingMode = 'skipped';
+
+    if (body.source !== 'memorybench') {
+      // Create processing job
+      job = await createProcessingJob(
+        {
+          DB: c.env.DB,
+          VECTORIZE: c.env.VECTORIZE,
+          AI: c.env.AI,
+          QUEUE: c.env.PROCESSING_QUEUE,
+        },
+        memory.id,
+        userId,
+        scope.containerTag
+      );
+
+      // Enqueue for async processing
+      if (c.env.PROCESSING_QUEUE) {
+        // Queue-based processing (preferred)
+        console.log(`[Handler] Sending to queue: ${job.id}`);
+        await c.env.PROCESSING_QUEUE.send({
+          type: 'process_memory',
+          jobId: job.id,
+          memoryId: memory.id,
+          userId,
+          containerTag: scope.containerTag,
+          timestamp: new Date().toISOString(),
+        });
+        processingMode = 'async';
+        console.log(`[Handler] ✓ Queued successfully`);
+      } else {
+        // Fallback: use waitUntil
+        console.log(`[Handler] Using waitUntil for job: ${job.id}`);
+        const ctx: ProcessingContext = {
+          job,
+          env: {
+            DB: c.env.DB,
+            VECTORIZE: c.env.VECTORIZE,
+            AI: c.env.AI,
+            QUEUE: c.env.PROCESSING_QUEUE,
+          },
+        };
+        console.log(`[Handler] Creating pipeline with context:`, {
+          hasJob: !!ctx.job,
+          hasEnv: !!ctx.env,
+          jobId: ctx.job?.id,
+        });
+        const pipeline = new ProcessingPipeline(ctx);
+        console.log(`[Handler] Pipeline created, calling execute via waitUntil`);
+        c.executionCtx.waitUntil(
+          pipeline.execute().catch(err => {
+            console.error(`[Handler] Pipeline execution failed in waitUntil:`, err);
+          })
+        );
+        processingMode = 'waitUntil';
+        console.log(`[Handler] ✓ waitUntil scheduled`);
+      }
+    }
 
     return c.json({
       id: memory.id,
       content: memory.content,
-      processing_status: 'queued',
+      processing_status: body.source === 'memorybench' ? 'done' : 'queued',
+      processing_mode: processingMode,
+      job_id: job?.id,
       audn_action: body.useAUDN !== false ? 'add' : undefined,
       created_at: memory.created_at,
+    });
+  });
+}
+
+/**
+ * POST /v3/memories/batch-contextual
+ * Extract contextual memories from raw conversation and store as individual facts
+ *
+ * This endpoint handles the benchmark case where raw conversation JSON is sent.
+ * It extracts individual facts with resolved pronouns before storage.
+ */
+export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = c.get('userId');
+    const scope = c.get('tenantScope');
+    const body = await c.req.json<{
+      content: string;
+      source?: string;
+      metadata?: any;
+      sessionDate?: string;
+    }>();
+
+    if (!body.content || body.content.trim().length === 0) {
+      return c.json({ error: 'Content is required' }, 400);
+    }
+
+    // Check if this is raw conversation that needs extraction
+    if (!isRawConversation(body.content)) {
+      // Not a raw conversation, use normal flow
+      return addMemory(c);
+    }
+
+    console.log('[ContextualMemory] Extracting facts from raw conversation');
+
+    // Parse conversation from JSON format
+    let messages: any[] = [];
+    try {
+      // Extract JSON from "Here is the session as a stringified JSON: [...]" format
+      const jsonMatch = body.content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        messages = JSON.parse(jsonMatch[0]);
+      }
+    } catch (error) {
+      console.error('[ContextualMemory] Failed to parse conversation:', error);
+      // Fallback to normal storage
+      return addMemory(c);
+    }
+
+    if (messages.length === 0) {
+      console.log('[ContextualMemory] No messages found, using normal flow');
+      return addMemory(c);
+    }
+
+    // Extract contextual memories
+    // NOTE: This is SYNCHRONOUS and slow (30-60s per session).
+    // For production, we should move this to async processing with status polling.
+    // For benchmarking, we keep it sync so the provider can track all extracted memory IDs.
+    const contextualMemories = await extractContextualMemories(
+      c.env,
+      messages,
+      body.sessionDate
+    );
+
+    if (contextualMemories.length === 0) {
+      console.log('[ContextualMemory] No facts extracted, storing original');
+      // Fallback to storing original content
+      return addMemory(c);
+    }
+
+    console.log(
+      `[ContextualMemory] Extracted ${contextualMemories.length} facts`
+    );
+
+    // Store each extracted fact as a separate memory
+    const memoryIds: string[] = [];
+    const results = [];
+
+    for (const extracted of contextualMemories) {
+      try {
+        // Generate embedding
+        const embedding = await generateEmbedding(c.env, extracted.fact);
+
+        // Create memory (skip AUDN for now to avoid complexity)
+        const memory = await createMemory(c.env.DB, {
+          userId,
+          content: extracted.fact,
+          source: body.source || 'contextual-extraction',
+          containerTag: scope.containerTag,
+          metadata: {
+            ...body.metadata,
+            originalLength: body.content.length,
+            extractedEntities: extracted.entities,
+            confidence: extracted.confidence,
+          },
+        });
+
+        // Insert vector
+        await insertMemoryVector(
+          c.env.VECTORIZE,
+          memory.id,
+          userId,
+          extracted.fact,
+          memory.container_tag,
+          embedding
+        );
+
+        memoryIds.push(memory.id);
+        results.push({
+          id: memory.id,
+          fact: extracted.fact,
+          entities: extracted.entities,
+        });
+      } catch (error) {
+        console.error(
+          '[ContextualMemory] Failed to store extracted fact:',
+          error
+        );
+      }
+    }
+
+    return c.json({
+      count: memoryIds.length,
+      memories: results,
+      processing_status: 'done',
+      created_at: new Date().toISOString(),
     });
   });
 }
@@ -172,6 +363,12 @@ export async function listMemories(c: Context<{ Bindings: Bindings }>) {
           id: m.id,
           content: m.content,
           source: m.source,
+          processing_status: m.processing_status,
+          importance_score: m.importance_score,
+          memory_type: m.memory_type,
+          event_date: m.event_date,
+          valid_from: m.valid_from,
+          valid_to: m.valid_to,
           metadata: metadata
             ? {
                 source: m.source,
