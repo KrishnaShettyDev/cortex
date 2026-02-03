@@ -7,29 +7,29 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		084944659DB8AC41956F94B9 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 736D6269F47CCBAD37F0B575 /* PrivacyInfo.xcprivacy */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		5B264F4743EE984468A4A24F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = BFFC6C4C32ED16A448945A7D /* PrivacyInfo.xcprivacy */; };
-		653C3AC8A991D360A47513C1 /* libPods-Cortex.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 30485783C29B88F4D3479569 /* libPods-Cortex.a */; };
-		8ED5E7A352EBA6D8A35D6399 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C3D8E84C8C4F4E0A094343 /* ExpoModulesProvider.swift */; };
+		5A561BD3997CD411CB58C141 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF40F89777CE5F3A2C6F45A1 /* ExpoModulesProvider.swift */; };
+		96456A23B54D66BAF0F19303 /* libPods-Cortex.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 12CCD379908CA91BCA35AD8A /* libPods-Cortex.a */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		12CCD379908CA91BCA35AD8A /* libPods-Cortex.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Cortex.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07F961A680F5B00A75B9A /* Cortex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cortex.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Cortex/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = Cortex/Info.plist; sourceTree = "<group>"; };
-		30485783C29B88F4D3479569 /* libPods-Cortex.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Cortex.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		46F773B2391090BA7C9F6EE6 /* Pods-Cortex.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Cortex.release.xcconfig"; path = "Target Support Files/Pods-Cortex/Pods-Cortex.release.xcconfig"; sourceTree = "<group>"; };
-		74E2024BEA8AE56CC0C959C6 /* Pods-Cortex.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Cortex.debug.xcconfig"; path = "Target Support Files/Pods-Cortex/Pods-Cortex.debug.xcconfig"; sourceTree = "<group>"; };
-		A1C3D8E84C8C4F4E0A094343 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Cortex/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
+		736D6269F47CCBAD37F0B575 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Cortex/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		9965C0D634A9D1641E836F0B /* Pods-Cortex.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Cortex.release.xcconfig"; path = "Target Support Files/Pods-Cortex/Pods-Cortex.release.xcconfig"; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Cortex/SplashScreen.storyboard; sourceTree = "<group>"; };
+		AF40F89777CE5F3A2C6F45A1 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Cortex/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
-		BFFC6C4C32ED16A448945A7D /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Cortex/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Cortex/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* Cortex-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Cortex-Bridging-Header.h"; path = "Cortex/Cortex-Bridging-Header.h"; sourceTree = "<group>"; };
+		FF141731E1A4177A5936FD85 /* Pods-Cortex.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Cortex.debug.xcconfig"; path = "Target Support Files/Pods-Cortex/Pods-Cortex.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -37,7 +37,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				653C3AC8A991D360A47513C1 /* libPods-Cortex.a in Frameworks */,
+				96456A23B54D66BAF0F19303 /* libPods-Cortex.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -53,28 +53,34 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				BFFC6C4C32ED16A448945A7D /* PrivacyInfo.xcprivacy */,
+				736D6269F47CCBAD37F0B575 /* PrivacyInfo.xcprivacy */,
 			);
 			name = Cortex;
+			sourceTree = "<group>";
+		};
+		247B7E053BF1B6FD1C71A691 /* ExpoModulesProviders */ = {
+			isa = PBXGroup;
+			children = (
+				5915267EDC79E6075CC8C555 /* Cortex */,
+			);
+			name = ExpoModulesProviders;
 			sourceTree = "<group>";
 		};
 		2D16E6871FA4F8E400B85C8A /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				30485783C29B88F4D3479569 /* libPods-Cortex.a */,
+				12CCD379908CA91BCA35AD8A /* libPods-Cortex.a */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		6F0532C91B6BC99E4EBFAAFB /* Pods */ = {
+		5915267EDC79E6075CC8C555 /* Cortex */ = {
 			isa = PBXGroup;
 			children = (
-				74E2024BEA8AE56CC0C959C6 /* Pods-Cortex.debug.xcconfig */,
-				46F773B2391090BA7C9F6EE6 /* Pods-Cortex.release.xcconfig */,
+				AF40F89777CE5F3A2C6F45A1 /* ExpoModulesProvider.swift */,
 			);
-			name = Pods;
-			path = Pods;
+			name = Cortex;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -91,8 +97,8 @@
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
-				6F0532C91B6BC99E4EBFAAFB /* Pods */,
-				DD9241087587FB8FB4A40E95 /* ExpoModulesProviders */,
+				BCEFEEA62199CC45480295AE /* Pods */,
+				247B7E053BF1B6FD1C71A691 /* ExpoModulesProviders */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -107,14 +113,6 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		87B53FD756BD422B8B1185D1 /* Cortex */ = {
-			isa = PBXGroup;
-			children = (
-				A1C3D8E84C8C4F4E0A094343 /* ExpoModulesProvider.swift */,
-			);
-			name = Cortex;
-			sourceTree = "<group>";
-		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
 			isa = PBXGroup;
 			children = (
@@ -124,12 +122,14 @@
 			path = Cortex/Supporting;
 			sourceTree = "<group>";
 		};
-		DD9241087587FB8FB4A40E95 /* ExpoModulesProviders */ = {
+		BCEFEEA62199CC45480295AE /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				87B53FD756BD422B8B1185D1 /* Cortex */,
+				FF141731E1A4177A5936FD85 /* Pods-Cortex.debug.xcconfig */,
+				9965C0D634A9D1641E836F0B /* Pods-Cortex.release.xcconfig */,
 			);
-			name = ExpoModulesProviders;
+			name = Pods;
+			path = Pods;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -140,14 +140,14 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "Cortex" */;
 			buildPhases = (
 				08A4A3CD28434E44B6B9DE2E /* [CP] Check Pods Manifest.lock */,
-				B89E74EA758273CFB4AA328B /* [Expo] Configure project */,
+				3388AC87A3A1D442424E5573 /* [Expo] Configure project */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				20E9B03FFCA9498585BDFDEA /* Upload Debug Symbols to Sentry */,
-				F9FF5DE9CF7D34BD1C45335B /* [CP] Embed Pods Frameworks */,
+				ADBE5C1E855547DDB6D4313A /* Upload Debug Symbols to Sentry */,
+				C008EFB117305412A3582230 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -167,8 +167,8 @@
 				LastUpgradeCheck = 1130;
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
-						DevelopmentTeam = FFA9ZSC8JC;
 						LastSwiftMigration = 1250;
+						DevelopmentTeam = "FFA9ZSC8JC";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -199,7 +199,7 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				5B264F4743EE984468A4A24F /* PrivacyInfo.xcprivacy in Resources */,
+				084944659DB8AC41956F94B9 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -245,19 +245,29 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		20E9B03FFCA9498585BDFDEA /* Upload Debug Symbols to Sentry */ = {
+		3388AC87A3A1D442424E5573 /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
-			inputPaths = (
+			inputFileListPaths = (
 			);
-			name = "Upload Debug Symbols to Sentry";
+			inputPaths = (
+				"$(SRCROOT)/.xcode.env",
+				"$(SRCROOT)/.xcode.env.local",
+				"$(SRCROOT)/Cortex/Cortex.entitlements",
+				"$(SRCROOT)/Pods/Target Support Files/Pods-Cortex/expo-configure-project.sh",
+			);
+			name = "[Expo] Configure project";
+			outputFileListPaths = (
+			);
 			outputPaths = (
+				"$(SRCROOT)/Pods/Target Support Files/Pods-Cortex/ExpoModulesProvider.swift",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh `${NODE_BINARY:-node} --print \"require('path').dirname(require.resolve('@sentry/react-native/package.json')) + '/scripts/sentry-xcode-debug-files.sh'\"`";
+			shellScript = "# This script configures Expo modules and generates the modules provider file.\nbash -l -c \"./Pods/Target\\ Support\\ Files/Pods-Cortex/expo-configure-project.sh\"\n";
 		};
 		800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -307,31 +317,21 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Cortex/Pods-Cortex-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		B89E74EA758273CFB4AA328B /* [Expo] Configure project */ = {
+		ADBE5C1E855547DDB6D4313A /* Upload Debug Symbols to Sentry */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
-			inputFileListPaths = (
-			);
 			inputPaths = (
-				"$(SRCROOT)/.xcode.env",
-				"$(SRCROOT)/.xcode.env.local",
-				"$(SRCROOT)/Cortex/Cortex.entitlements",
-				"$(SRCROOT)/Pods/Target Support Files/Pods-Cortex/expo-configure-project.sh",
 			);
-			name = "[Expo] Configure project";
-			outputFileListPaths = (
-			);
+			name = "Upload Debug Symbols to Sentry";
 			outputPaths = (
-				"$(SRCROOT)/Pods/Target Support Files/Pods-Cortex/ExpoModulesProvider.swift",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# This script configures Expo modules and generates the modules provider file.\nbash -l -c \"./Pods/Target\\ Support\\ Files/Pods-Cortex/expo-configure-project.sh\"\n";
+			shellScript = "/bin/sh `${NODE_BINARY:-node} --print \"require('path').dirname(require.resolve('@sentry/react-native/package.json')) + '/scripts/sentry-xcode-debug-files.sh'\"`";
 		};
-		F9FF5DE9CF7D34BD1C45335B /* [CP] Embed Pods Frameworks */ = {
+		C008EFB117305412A3582230 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -361,7 +361,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
-				8ED5E7A352EBA6D8A35D6399 /* ExpoModulesProvider.swift in Sources */,
+				5A561BD3997CD411CB58C141 /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -370,15 +370,12 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 74E2024BEA8AE56CC0C959C6 /* Pods-Cortex.debug.xcconfig */;
+			baseConfigurationReference = FF141731E1A4177A5936FD85 /* Pods-Cortex.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Cortex/Cortex.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = FFA9ZSC8JC;
 				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
@@ -404,20 +401,20 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
+				DEVELOPMENT_TEAM = "FFA9ZSC8JC";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 			};
 			name = Debug;
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 46F773B2391090BA7C9F6EE6 /* Pods-Cortex.release.xcconfig */;
+			baseConfigurationReference = 9965C0D634A9D1641E836F0B /* Pods-Cortex.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Cortex/Cortex.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = FFA9ZSC8JC;
 				INFOPLIST_FILE = Cortex/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -437,6 +434,9 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
+				DEVELOPMENT_TEAM = "FFA9ZSC8JC";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 			};
 			name = Release;
 		};

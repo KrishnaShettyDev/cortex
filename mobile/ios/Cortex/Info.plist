@@ -39,12 +39,6 @@
           <string>exp+cortex</string>
         </array>
       </dict>
-      <dict>
-        <key>CFBundleURLSchemes</key>
-        <array>
-          <string>com.googleusercontent.apps.266293132252-ks0f0m30egbekl2jhtqnqv8r8olfub4q</string>
-        </array>
-      </dict>
     </array>
     <key>CFBundleVersion</key>
     <string>1</string>
