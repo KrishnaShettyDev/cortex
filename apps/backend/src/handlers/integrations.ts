@@ -30,31 +30,39 @@ export async function getIntegrationStatus(c: Context<{ Bindings: Bindings }>) {
       .bind(userId)
       .all();
 
-    // Also check Composio for active connections
-    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
-    const composioAccounts = await composio.client.listConnectedAccounts({
-      userId,
-      statuses: ['ACTIVE'],
-    });
+    // Try to check Composio for active connections (gracefully handle errors)
+    let gmailAccount = null;
+    let calendarAccount = null;
 
-    // Map Composio accounts to our format
-    const gmailAccount = composioAccounts.items.find((a) => a.toolkitSlug === 'gmail');
-    const calendarAccount = composioAccounts.items.find(
-      (a) => a.toolkitSlug === 'googlecalendar'
-    );
+    try {
+      const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+      const composioAccounts = await composio.client.listConnectedAccounts({
+        userId,
+        statuses: ['ACTIVE'],
+      });
+
+      // Map Composio accounts to our format
+      gmailAccount = composioAccounts.items?.find((a) => a.toolkitSlug === 'gmail') || null;
+      calendarAccount = composioAccounts.items?.find(
+        (a) => a.toolkitSlug === 'googlecalendar'
+      ) || null;
+    } catch (error: any) {
+      // Log but don't fail - Composio may return 404 when no accounts exist
+      console.warn('[Integrations] Composio lookup failed (likely no accounts):', error.message);
+    }
 
     return c.json({
       gmail: {
         connected: !!gmailAccount,
-        accountId: gmailAccount?.id,
-        status: gmailAccount?.status,
+        accountId: gmailAccount?.id || null,
+        status: gmailAccount?.status || null,
         lastSync:
           integrations.results?.find((i: any) => i.provider === 'gmail')?.last_sync || null,
       },
       calendar: {
         connected: !!calendarAccount,
-        accountId: calendarAccount?.id,
-        status: calendarAccount?.status,
+        accountId: calendarAccount?.id || null,
+        status: calendarAccount?.status || null,
         lastSync:
           integrations.results?.find((i: any) => i.provider === 'googlecalendar')?.last_sync ||
           null,

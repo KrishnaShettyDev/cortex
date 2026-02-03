@@ -40,8 +40,8 @@ import {
  */
 export async function addMemory(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
-    const userId = c.get('userId');
-    const scope = c.get('tenantScope');
+    const userId = c.get('jwtPayload').sub;
+    const scope = c.get('tenantScope') || { containerTag: 'default' };
     const body = await c.req.json<{
       content: string;
       source?: string;
@@ -210,8 +210,8 @@ export async function addMemory(c: Context<{ Bindings: Bindings }>) {
  */
 export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
-    const userId = c.get('userId');
-    const scope = c.get('tenantScope');
+    const userId = c.get('jwtPayload').sub;
+    const scope = c.get('tenantScope') || { containerTag: 'default' };
     const body = await c.req.json<{
       content: string;
       source?: string;

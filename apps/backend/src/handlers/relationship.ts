@@ -104,10 +104,12 @@ app.get('/:entityId/health', async (c) => {
  */
 app.get('/', async (c) => {
   const userId = c.get('jwtPayload').sub;
+  const tenantScope = c.get('tenantScope') || { containerTag: 'default' };
+  const containerTag = tenantScope.containerTag;
 
   try {
-    const generator = new ProactiveNudgeGenerator(c.env.DB);
-    const result = await generator.generateNudges(userId);
+    const generator = new ProactiveNudgeGenerator(c.env.DB, c.env.AI, userId, containerTag);
+    const result = await generator.generateNudges();
 
     return c.json({
       nudges: result.nudges,
@@ -131,10 +133,12 @@ app.get('/', async (c) => {
  */
 app.post('/generate', async (c) => {
   const userId = c.get('jwtPayload').sub;
+  const tenantScope = c.get('tenantScope') || { containerTag: 'default' };
+  const containerTag = tenantScope.containerTag;
 
   try {
-    const generator = new ProactiveNudgeGenerator(c.env.DB);
-    const result = await generator.generateNudges(userId);
+    const generator = new ProactiveNudgeGenerator(c.env.DB, c.env.AI, userId, containerTag);
+    const result = await generator.generateNudges();
 
     return c.json({
       nudges: result.nudges,
