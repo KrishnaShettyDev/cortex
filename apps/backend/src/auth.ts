@@ -2,7 +2,7 @@
  * Auth utilities for Apple Sign In and Google Sign In
  */
 
-import { SignJWT, jwtVerify } from 'jose';
+import { SignJWT, jwtVerify, createRemoteJWKSet } from 'jose';
 
 export interface TokenPayload {
   sub: string; // user_id
@@ -71,49 +71,76 @@ export async function verifyToken(token: string, secret: string): Promise<TokenP
   return payload as unknown as TokenPayload;
 }
 
+// Apple's JWKS endpoint for cryptographic verification
+const APPLE_JWKS = createRemoteJWKSet(
+  new URL('https://appleid.apple.com/auth/keys')
+);
+
+// Valid Apple bundle IDs for your app
+const APPLE_VALID_AUDIENCES = [
+  'in.plutas.cortex',
+  'com.plutas.cortex',
+];
+
 /**
- * Verify Apple ID token
- * Apple tokens are signed JWTs, we verify the signature and extract user info
+ * Verify Apple ID token with REAL cryptographic signature verification
+ * Uses Apple's public keys from https://appleid.apple.com/auth/keys
  */
 export async function verifyAppleToken(identityToken: string): Promise<{
   sub: string;
   email: string;
 }> {
   try {
-    // Decode the token without verification first to get the key ID
-    const parts = identityToken.split('.');
-    if (parts.length !== 3) {
-      throw new Error('Invalid token format');
+    // Verify the token signature using Apple's public keys
+    const { payload } = await jwtVerify(identityToken, APPLE_JWKS, {
+      issuer: 'https://appleid.apple.com',
+      audience: APPLE_VALID_AUDIENCES,
+    });
+
+    // Validate required claims
+    if (!payload.sub || typeof payload.sub !== 'string') {
+      throw new Error('Missing or invalid sub claim');
+    }
+    if (!payload.email || typeof payload.email !== 'string') {
+      throw new Error('Missing or invalid email claim');
     }
 
-    const payload = JSON.parse(atob(parts[1])) as AppleTokenPayload;
-
-    // Basic validation
-    if (!payload.sub || !payload.email) {
-      throw new Error('Invalid Apple token: missing required fields');
+    // Additional security: check token age (auth_time)
+    const authTime = payload.auth_time as number | undefined;
+    if (authTime) {
+      const now = Math.floor(Date.now() / 1000);
+      const maxAge = 24 * 60 * 60; // 24 hours
+      if (now - authTime > maxAge) {
+        throw new Error('Token auth_time too old');
+      }
     }
-
-    // In production, you should verify the token signature using Apple's public keys
-    // For now, we'll trust the token (this should be improved)
-    // Apple's public keys: https://appleid.apple.com/auth/keys
 
     return {
       sub: payload.sub,
       email: payload.email,
     };
-  } catch (error) {
-    throw new Error(`Apple token verification failed: ${error}`);
+  } catch (error: any) {
+    // Log for debugging but don't expose internal details
+    console.error('Apple token verification failed:', error.message);
+    throw new Error('Invalid Apple identity token');
   }
 }
 
+// Google's JWKS endpoint for cryptographic verification
+const GOOGLE_JWKS = createRemoteJWKSet(
+  new URL('https://www.googleapis.com/oauth2/v3/certs')
+);
+
+// Valid Google OAuth client IDs (should be environment variables in production)
+const GOOGLE_VALID_CLIENT_IDS = [
+  '266293132252-ks0f0m30egbekl2jhtqnqv8r8olfub4q.apps.googleusercontent.com', // iOS
+  '266293132252-ce19t4pktv5t8o5k34rito52r4opi7rk.apps.googleusercontent.com', // Web
+  '266293132252-tu55j8qrfi96n15jntgbinpnj3cnh9si.apps.googleusercontent.com', // Android
+];
+
 /**
- * Verify Google ID token
- *
- * NOTE: For Cloudflare Workers, we decode without verification since
- * google-auth-library uses Node.js crypto which isn't available.
- * The token comes directly from Google's servers, so this is acceptable.
- *
- * For production, consider using Web Crypto API to verify the signature.
+ * Verify Google ID token with REAL cryptographic signature verification
+ * Uses Google's public keys from https://www.googleapis.com/oauth2/v3/certs
  */
 export async function verifyGoogleToken(
   idToken: string,
@@ -125,43 +152,38 @@ export async function verifyGoogleToken(
   picture?: string;
 }> {
   try {
-    // Decode JWT without verification (token comes from Google directly)
-    const parts = idToken.split('.');
-    if (parts.length !== 3) {
-      throw new Error('Invalid token format');
+    // Build valid audience list including provided clientId
+    const validAudiences = [...new Set([clientId, ...GOOGLE_VALID_CLIENT_IDS])];
+
+    // Verify the token signature using Google's public keys
+    const { payload } = await jwtVerify(idToken, GOOGLE_JWKS, {
+      issuer: ['https://accounts.google.com', 'accounts.google.com'],
+      audience: validAudiences,
+    });
+
+    // Validate required claims
+    if (!payload.sub || typeof payload.sub !== 'string') {
+      throw new Error('Missing or invalid sub claim');
+    }
+    if (!payload.email || typeof payload.email !== 'string') {
+      throw new Error('Missing or invalid email claim');
     }
 
-    const payload = JSON.parse(atob(parts[1]));
-
-    // Basic validation
-    if (!payload.sub || !payload.email) {
-      throw new Error('Invalid Google token: missing required fields');
-    }
-
-    // Verify audience matches one of our client IDs (web or iOS)
-    const validClientIds = [
-      clientId,
-      '266293132252-ks0f0m30egbekl2jhtqnqv8r8olfub4q.apps.googleusercontent.com', // iOS
-      '266293132252-ce19t4pktv5t8o5k34rito52r4opi7rk.apps.googleusercontent.com', // Web
-    ];
-    if (!validClientIds.includes(payload.aud)) {
-      throw new Error('Invalid audience');
-    }
-
-    // Verify token hasn't expired
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now) {
-      throw new Error('Token expired');
+    // Verify email is verified (important security check)
+    if (payload.email_verified !== true && payload.email_verified !== 'true') {
+      throw new Error('Google email not verified');
     }
 
     return {
       sub: payload.sub,
       email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
+      name: payload.name as string | undefined,
+      picture: payload.picture as string | undefined,
     };
-  } catch (error) {
-    throw new Error(`Google token verification failed: ${error}`);
+  } catch (error: any) {
+    // Log for debugging but don't expose internal details
+    console.error('Google token verification failed:', error.message);
+    throw new Error('Invalid Google identity token');
   }
 }
 

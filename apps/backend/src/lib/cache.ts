@@ -14,6 +14,7 @@ const TTL = {
   EMBEDDING: 60 * 60, // 1 hour
   PROFILE: 60 * 5, // 5 minutes
   SEARCH: 60 * 10, // 10 minutes
+  ENTITY: 60 * 30, // 30 minutes - entities change less frequently
 };
 
 /**
@@ -160,4 +161,121 @@ export async function invalidateUserSearchCache(
   // For now, we rely on TTL expiration
   // In production, could maintain a list of active search keys per user
   console.log(`Search cache invalidation requested for user ${userId} (TTL-based)`);
+}
+
+// ============================================
+// ENTITY CACHE
+// ============================================
+
+/**
+ * Simplified entity for caching (just what we need for matching)
+ */
+export interface CachedEntity {
+  id: string;
+  name: string;
+  canonical_name: string;
+  entity_type: string;
+  attributes: Record<string, any>;
+  importance_score: number;
+}
+
+/**
+ * Get cached entities for a user
+ * Returns top entities for quick matching during extraction
+ */
+export async function getCachedEntities(
+  kv: KVNamespace,
+  userId: string,
+  containerTag: string
+): Promise<CachedEntity[] | null> {
+  const key = `entities:${userId}:${containerTag}`;
+  const cached = await kv.get(key, 'text');
+
+  if (!cached) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(cached) as CachedEntity[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cache entities for a user
+ * Stores top 100 entities by importance for quick matching
+ */
+export async function cacheEntities(
+  kv: KVNamespace,
+  userId: string,
+  containerTag: string,
+  entities: CachedEntity[]
+): Promise<void> {
+  const key = `entities:${userId}:${containerTag}`;
+
+  // Sort by importance and take top 100
+  const sorted = [...entities]
+    .sort((a, b) => (b.importance_score || 0) - (a.importance_score || 0))
+    .slice(0, 100);
+
+  await kv.put(key, JSON.stringify(sorted), {
+    expirationTtl: TTL.ENTITY,
+  });
+}
+
+/**
+ * Update entity cache with new entities
+ * Merges new entities into existing cache
+ */
+export async function updateEntityCache(
+  kv: KVNamespace,
+  userId: string,
+  containerTag: string,
+  newEntities: CachedEntity[]
+): Promise<void> {
+  const existing = await getCachedEntities(kv, userId, containerTag) || [];
+
+  // Build map for deduplication (by canonical_name)
+  const entityMap = new Map<string, CachedEntity>();
+
+  // Add existing entities
+  for (const e of existing) {
+    entityMap.set(e.canonical_name?.toLowerCase() || e.name.toLowerCase(), e);
+  }
+
+  // Add/update with new entities
+  for (const e of newEntities) {
+    const key = e.canonical_name?.toLowerCase() || e.name.toLowerCase();
+    const existingEntity = entityMap.get(key);
+
+    if (existingEntity) {
+      // Merge: keep higher importance, merge attributes
+      entityMap.set(key, {
+        ...existingEntity,
+        attributes: { ...existingEntity.attributes, ...e.attributes },
+        importance_score: Math.max(
+          existingEntity.importance_score || 0,
+          e.importance_score || 0
+        ),
+      });
+    } else {
+      entityMap.set(key, e);
+    }
+  }
+
+  // Save back to cache
+  await cacheEntities(kv, userId, containerTag, Array.from(entityMap.values()));
+}
+
+/**
+ * Invalidate entity cache (e.g., when entity is deleted or significantly changed)
+ */
+export async function invalidateEntityCache(
+  kv: KVNamespace,
+  userId: string,
+  containerTag: string
+): Promise<void> {
+  const key = `entities:${userId}:${containerTag}`;
+  await kv.delete(key);
 }

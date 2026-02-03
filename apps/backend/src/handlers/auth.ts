@@ -132,38 +132,8 @@ export async function refreshToken(c: Context<{ Bindings: Bindings }>) {
   });
 }
 
-/**
- * TEMPORARY: Generate a test token for development
- * WARNING: This is a convenience endpoint for testing. Remove in production.
- */
-export async function generateTestToken(c: Context<{ Bindings: Bindings }>) {
-  return handleError(c, async () => {
-    // Use existing plutaslab user
-    const testUserId = '79f149ea-6c24-45df-a029-fc1483fe1192';
-    const testEmail = 'plutaslab@gmail.com';
-    const testName = 'Plutas Lab';
-
-    // Generate 24h access token
-    const tokens = await generateTokens(
-      testUserId,
-      testEmail,
-      testName,
-      c.env.JWT_SECRET
-    );
-
-    return c.json({
-      access_token: tokens.access_token,
-      expires_in: tokens.expires_in,
-      user: {
-        id: testUserId,
-        email: testEmail,
-        name: testName,
-      },
-      note: 'DEVELOPMENT ONLY: Use this token to generate a long-lived API key via POST /auth/api-key',
-      warning: 'This endpoint should be removed before public launch',
-    });
-  });
-}
+// REMOVED: generateTestToken was a critical security vulnerability
+// Test tokens should never be generated via public endpoints
 
 /**
  * Generate a long-lived API key for testing/development
