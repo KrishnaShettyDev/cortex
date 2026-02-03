@@ -13,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import * as Linking from 'expo-linking';
+import * as Google from 'expo-auth-session/providers/google';
 
 import { useAuth } from '../../src/context/AuthContext';
 import { integrationsService, IntegrationsStatus, authService } from '../../src/services';
@@ -22,6 +22,10 @@ import { logger } from '../../src/utils/logger';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
 import { useAppStore } from '../../src/stores/appStore';
+import { GOOGLE_CLIENT_ID } from '../../src/config/env';
+
+// Required for Google Sign In
+WebBrowser.maybeCompleteAuthSession();
 
 const goBack = () => {
   if (router.canGoBack()) {
@@ -46,6 +50,53 @@ export default function SettingsScreen() {
   // Only show loading if we have no cached data
   const [isLoadingStatus, setIsLoadingStatus] = useState(!cachedIntegrationStatus);
 
+  // Google OAuth for connecting services (Gmail/Calendar)
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    iosClientId: GOOGLE_CLIENT_ID.ios,
+    androidClientId: GOOGLE_CLIENT_ID.android,
+    webClientId: GOOGLE_CLIENT_ID.web,
+    scopes: [
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/calendar.readonly',
+    ],
+  });
+
+  // Debug: Log the redirect URI being used
+  useEffect(() => {
+    if (request) {
+      console.log('🔐 OAuth Request redirect URI:', request.redirectUri);
+      console.log('🔐 OAuth Request URL:', request.url);
+    }
+  }, [request]);
+
+  // Handle Google OAuth response
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { authentication } = response;
+      if (authentication?.accessToken) {
+        handleGoogleConnected(authentication.accessToken);
+      }
+    } else if (response?.type === 'error') {
+      setIsConnecting(false);
+      Alert.alert('Error', response.error?.message || 'Failed to connect Google');
+    } else if (response?.type === 'dismiss') {
+      setIsConnecting(false);
+    }
+  }, [response]);
+
+  const handleGoogleConnected = async (accessToken: string) => {
+    try {
+      // TODO: Send access token to backend to store for syncing
+      // For now, just refresh the status
+      await loadIntegrationStatus();
+      posthog?.capture('google_connected', { source: 'settings' });
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to complete Google connection');
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
   // Track settings screen viewed
   useEffect(() => {
     posthog?.capture(ANALYTICS_EVENTS.SETTINGS_OPENED);
@@ -67,33 +118,17 @@ export default function SettingsScreen() {
     loadIntegrationStatus();
   }, [loadIntegrationStatus]);
 
-  // Listen for OAuth callback
-  useEffect(() => {
-    const handleDeepLink = (event: { url: string }) => {
-      if (event.url.includes('oauth/success') || event.url.includes('oauth/callback')) {
-        loadIntegrationStatus();
-        setIsConnecting(false);
-      }
-    };
-
-    const subscription = Linking.addEventListener('url', handleDeepLink);
-    return () => subscription.remove();
-  }, [loadIntegrationStatus]);
-
   const handleConnectGoogle = async () => {
+    if (!request) {
+      Alert.alert('Error', 'Google Sign In is not ready yet. Please try again.');
+      return;
+    }
     setIsConnecting(true);
     try {
-      const returnUrl = Linking.createURL('oauth/success');
-      const oauthUrl = await integrationsService.getGoogleConnectUrl(returnUrl);
-      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, returnUrl);
-
-      if (result.type === 'success') {
-        await loadIntegrationStatus();
-      }
+      await promptAsync();
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to connect Google');
-    } finally {
       setIsConnecting(false);
+      Alert.alert('Error', error.message || 'Failed to connect Google');
     }
   };
 
@@ -178,6 +213,26 @@ export default function SettingsScreen() {
         {/* Menu Section */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Menu</Text>
+
+          {/* Insights Row */}
+          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/insights')} activeOpacity={0.7}>
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="bulb-outline" size={20} color={colors.textSecondary} />
+            </View>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Insights</Text>
+            <View style={{ flex: 1 }} />
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Relationships Row */}
+          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/relationships')} activeOpacity={0.7}>
+            <View style={styles.menuIconContainer}>
+              <Ionicons name="people-outline" size={20} color={colors.textSecondary} />
+            </View>
+            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Relationships</Text>
+            <View style={{ flex: 1 }} />
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
 
           {/* Calendar Row */}
           <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/calendar')} activeOpacity={0.7}>

@@ -50,6 +50,20 @@ export default function MainLayout() {
         }}
       />
       <Stack.Screen
+        name="insights"
+        options={{
+          presentation: 'modal',
+          animation: 'slide_from_bottom',
+        }}
+      />
+      <Stack.Screen
+        name="relationships"
+        options={{
+          presentation: 'modal',
+          animation: 'slide_from_bottom',
+        }}
+      />
+      <Stack.Screen
         name="calendar"
         options={{
           presentation: 'modal',

@@ -357,13 +357,65 @@ const isResponseAboutPhoto = (content: string): boolean => {
   return weakMatches >= 2;
 };
 
+// ============ FEEDBACK BUTTONS ============
+function FeedbackButtons({
+  outcomeId,
+  feedbackGiven,
+  onFeedback,
+  colors,
+}: {
+  outcomeId: string;
+  feedbackGiven?: 'positive' | 'negative' | 'neutral';
+  onFeedback: (outcomeId: string, signal: 'positive' | 'negative') => void;
+  colors: any;
+}) {
+  if (feedbackGiven) {
+    // Show confirmation after feedback
+    return (
+      <View style={styles.feedbackConfirmation}>
+        <Ionicons
+          name={feedbackGiven === 'positive' ? 'checkmark-circle' : 'close-circle'}
+          size={14}
+          color={feedbackGiven === 'positive' ? colors.success : colors.textTertiary}
+        />
+        <Text style={[styles.feedbackConfirmText, { color: colors.textTertiary }]}>
+          {feedbackGiven === 'positive' ? 'Thanks!' : 'Noted'}
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.feedbackContainer}>
+      <Text style={[styles.feedbackLabel, { color: colors.textTertiary }]}>Was this helpful?</Text>
+      <View style={styles.feedbackButtons}>
+        <TouchableOpacity
+          style={[styles.feedbackButton, { borderColor: colors.success + '40' }]}
+          onPress={() => onFeedback(outcomeId, 'positive')}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="thumbs-up-outline" size={16} color={colors.success} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.feedbackButton, { borderColor: colors.textTertiary + '40' }]}
+          onPress={() => onFeedback(outcomeId, 'negative')}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="thumbs-down-outline" size={16} color={colors.textTertiary} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 // ============ MAIN CHAT BUBBLE COMPONENT ============
 interface ChatBubbleProps {
   message: ChatMessage;
   onReviewAction?: (action: PendingAction) => void;
+  onFeedback?: (outcomeId: string, signal: 'positive' | 'negative') => void;
 }
 
-export function ChatBubble({ message, onReviewAction }: ChatBubbleProps) {
+export function ChatBubble({ message, onReviewAction, onFeedback }: ChatBubbleProps) {
   const { colors: themeColors, isDark } = useTheme();
   const isUser = message.role === 'user';
   const hasActions = message.actionsTaken && message.actionsTaken.length > 0;
@@ -453,6 +505,16 @@ export function ChatBubble({ message, onReviewAction }: ChatBubbleProps) {
           </View>
         );
       })()}
+
+      {/* Feedback buttons for cognitive layer responses */}
+      {message.outcomeId && onFeedback && (
+        <FeedbackButtons
+          outcomeId={message.outcomeId}
+          feedbackGiven={message.feedbackGiven}
+          onFeedback={onFeedback}
+          colors={themeColors}
+        />
+      )}
     </View>
   );
 }
@@ -617,5 +679,40 @@ const styles = StyleSheet.create({
   memoryPhoto: {
     width: 140,
     height: 140,
+  },
+
+  // Feedback buttons
+  feedbackContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+    paddingTop: spacing.xs,
+    gap: spacing.sm,
+  },
+  feedbackLabel: {
+    fontSize: 12,
+    fontWeight: '400',
+  },
+  feedbackButtons: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  feedbackButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  feedbackConfirmation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+    gap: spacing.xs,
+  },
+  feedbackConfirmText: {
+    fontSize: 12,
+    fontWeight: '400',
   },
 });

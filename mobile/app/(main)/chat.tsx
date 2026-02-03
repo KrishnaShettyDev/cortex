@@ -352,6 +352,9 @@ export default function ChatScreen() {
             pendingActions: userFacingActions.length > 0 ? userFacingActions : undefined,
             actionsTaken: response.actions_taken?.length > 0 ? response.actions_taken : undefined,
             timestamp: new Date(),
+            // Cognitive layer tracking
+            outcomeId: response.outcome_id,
+            sources: response.sources,
           };
 
           addChatMessage(assistantMessage);
@@ -670,6 +673,31 @@ export default function ChatScreen() {
     addChatMessage(cancelMessage);
   };
 
+  // Handle feedback submission for cognitive layer responses
+  const handleFeedback = useCallback(async (outcomeId: string, signal: 'positive' | 'negative') => {
+    try {
+      // Submit feedback to backend
+      await chatService.submitFeedback(outcomeId, signal, 'explicit_feedback');
+
+      // Update the message to show feedback was given
+      setChatMessages(prevMessages =>
+        prevMessages.map(msg =>
+          msg.outcomeId === outcomeId
+            ? { ...msg, feedbackGiven: signal }
+            : msg
+        )
+      );
+
+      // Track feedback
+      posthog?.capture('response_feedback', {
+        outcome_id: outcomeId,
+        signal,
+      });
+    } catch (error) {
+      logger.error('Failed to submit feedback:', error);
+    }
+  }, [setChatMessages, posthog]);
+
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
     const isUser = item.role === 'user';
     const showTimestamp = index === 0 ||
@@ -690,6 +718,7 @@ export default function ChatScreen() {
         <ChatBubble
           message={item}
           onReviewAction={handleReviewAction}
+          onFeedback={handleFeedback}
         />
       </View>
     );

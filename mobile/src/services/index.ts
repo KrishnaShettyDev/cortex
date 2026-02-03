@@ -13,3 +13,8 @@ export * from './notifications';
 export * from './feedback';
 export * from './reminders';
 export * from './backgroundSync';
+
+// New v3 services
+export * from './entities';
+export * from './commitments';
+export * from './cognitive';

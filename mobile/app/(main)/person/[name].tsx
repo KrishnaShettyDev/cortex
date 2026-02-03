@@ -133,13 +133,14 @@ export default function PersonDetailScreen() {
     setIsLoadingContext(true);
     try {
       const response = await peopleService.getMeetingContext(name);
-      setMeetingContext(response.context);
+      setMeetingContext(response.context || null);
       posthog?.capture(ANALYTICS_EVENTS.MEETING_CONTEXT_GENERATED, {
         person_name: name,
         context_length: response.context?.length || 0,
       });
     } catch (err: any) {
       logger.error('Failed to get meeting context:', err);
+      setMeetingContext(`Unable to load context for ${name}. Please try again.`);
     } finally {
       setIsLoadingContext(false);
     }

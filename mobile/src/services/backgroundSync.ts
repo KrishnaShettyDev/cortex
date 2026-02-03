@@ -6,7 +6,7 @@
 import { AppState, AppStateStatus } from 'react-native';
 import { logger } from '../utils/logger';
 import { locationService } from './location';
-import { remindersService } from './reminders';
+import { commitmentsService } from './commitments';
 import { storage } from './storage';
 
 // Minimum interval between syncs (5 minutes)
@@ -183,7 +183,8 @@ class BackgroundSyncService {
         }
       }
 
-      const response = await remindersService.checkLocationReminders(
+      // Location-based reminders not supported in v3 commitments API
+      const response = await commitmentsService.checkLocationReminders(
         location.latitude,
         location.longitude
       );

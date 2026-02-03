@@ -87,6 +87,14 @@ export interface ChatMessage {
   pendingActions?: PendingAction[];
   reasoningSteps?: ReasoningStep[];
   timestamp: Date;
+  // Cognitive layer tracking
+  outcomeId?: string; // For feedback tracking
+  feedbackGiven?: 'positive' | 'negative' | 'neutral';
+  sources?: {
+    memories: number;
+    learnings: number;
+    beliefs: number;
+  };
 }
 
 export interface MemoryReference {

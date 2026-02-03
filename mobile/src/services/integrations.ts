@@ -23,114 +23,28 @@ export interface SyncResponse {
   errors: string[];
 }
 
-// Calendar types
+// Calendar types - kept for future implementation
 export interface CalendarEventAttendee {
   email: string;
   name?: string;
   optional?: boolean;
 }
 
-export interface CreateCalendarEventRequest {
-  title: string;
-  description?: string;
-  start_time: string; // ISO datetime
-  end_time: string; // ISO datetime
-  location?: string;
-  attendees?: CalendarEventAttendee[];
-  send_notifications?: boolean;
-}
-
-export interface UpdateCalendarEventRequest {
-  title?: string;
-  description?: string;
-  start_time?: string;
-  end_time?: string;
-  location?: string;
-  attendees?: CalendarEventAttendee[];
-  send_notifications?: boolean;
-}
-
-export interface CalendarEventResponse {
-  success: boolean;
-  event_id: string;
-  event_url?: string;
-  message: string;
-}
-
-// Calendar Events List types
 export type MeetingType = 'google_meet' | 'zoom' | 'teams' | 'webex' | 'video' | 'offline';
 
 export interface CalendarEventItem {
   id: string;
   title: string;
-  start_time: string; // ISO datetime
-  end_time: string; // ISO datetime
+  start_time: string;
+  end_time: string;
   is_all_day: boolean;
   location?: string;
   description?: string;
   attendees: string[];
   color?: string;
   html_link?: string;
-  meet_link?: string; // Google Meet or video conference link
-  meeting_type: MeetingType; // Type of meeting for icon display
-}
-
-export interface CalendarEventsResponse {
-  success: boolean;
-  events: CalendarEventItem[];
-  message?: string;
-}
-
-// Calendar availability/free slots types
-export interface TimeSlot {
-  start: string; // ISO datetime
-  end: string; // ISO datetime
-  duration_minutes: number;
-}
-
-export interface CalendarAvailabilityResponse {
-  success: boolean;
-  free_slots: TimeSlot[];
-  busy_slots?: { start: string; end: string }[];
-  message?: string;
-}
-
-// Email types
-export interface EmailRecipient {
-  email: string;
-  name?: string;
-}
-
-export interface EmailItem {
-  id: string;
-  thread_id: string;
-  from: string;
-  subject: string;
-  snippet: string;
-  date: string | null;
-}
-
-export interface InboxResponse {
-  success: boolean;
-  emails: EmailItem[];
-  message: string;
-}
-
-export interface SendEmailRequest {
-  to: EmailRecipient[];
-  cc?: EmailRecipient[];
-  bcc?: EmailRecipient[];
-  subject: string;
-  body: string;
-  is_html?: boolean;
-  reply_to_message_id?: string;
-}
-
-export interface EmailResponse {
-  success: boolean;
-  message_id?: string;
-  thread_id?: string;
-  message: string;
+  meet_link?: string;
+  meeting_type: MeetingType;
 }
 
 class IntegrationsService {
@@ -142,124 +56,118 @@ class IntegrationsService {
   }
 
   /**
-   * Get OAuth URL for connecting Google account
-   *
-   * Uses unified 'googlesuper' which provides access to Gmail, Calendar,
-   * Drive, and all other Google services with a single OAuth flow.
-   *
-   * The backend handles the callback URL automatically and redirects
-   * back to the app via deep link after OAuth completes.
-   *
-   * @param appReturnUrl - The deep link URL to return to after OAuth (from Linking.createURL)
+   * Connect Gmail - initiates OAuth flow
+   * Backend endpoint: POST /integrations/gmail/connect
    */
-  async getGoogleConnectUrl(appReturnUrl?: string): Promise<string> {
-    const params = new URLSearchParams();
-    if (appReturnUrl) params.append('app_return_url', appReturnUrl);
-    // Backend always uses googlesuper for unified Google access
-    const queryString = params.toString() ? `?${params.toString()}` : '';
-    const response = await api.request<OAuthRedirectResponse>(`/integrations/google/connect${queryString}`);
+  async connectGmail(): Promise<OAuthRedirectResponse> {
+    return api.request<OAuthRedirectResponse>('/integrations/gmail/connect', {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Connect Google Calendar - initiates OAuth flow
+   * Backend endpoint: POST /integrations/calendar/connect
+   */
+  async connectCalendar(): Promise<OAuthRedirectResponse> {
+    return api.request<OAuthRedirectResponse>('/integrations/calendar/connect', {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Connect both Gmail and Calendar (convenience method)
+   * Calls both connect endpoints and returns both redirect URLs
+   */
+  async connectGoogle(): Promise<{ gmail: string; calendar: string }> {
+    const [gmailResponse, calendarResponse] = await Promise.all([
+      this.connectGmail(),
+      this.connectCalendar(),
+    ]);
+    return {
+      gmail: gmailResponse.redirect_url,
+      calendar: calendarResponse.redirect_url,
+    };
+  }
+
+  /**
+   * Get the Google OAuth connect URL
+   * Used for initiating OAuth flow from settings/connected-accounts screens
+   * @param returnUrl - The URL to redirect back to after OAuth completes
+   */
+  async getGoogleConnectUrl(returnUrl: string): Promise<string> {
+    const response = await api.request<{ redirect_url: string }>('/auth/google/connect', {
+      method: 'POST',
+      body: { return_url: returnUrl },
+    });
     return response.redirect_url;
   }
 
   /**
-   * Disconnect Google account
+   * Disconnect a provider (gmail, calendar, etc.)
+   * Backend endpoint: DELETE /integrations/:provider
+   */
+  async disconnect(provider: 'gmail' | 'calendar' | 'google'): Promise<void> {
+    await api.request(`/integrations/${provider}`, { method: 'DELETE' });
+  }
+
+  /**
+   * Disconnect Google (both Gmail and Calendar)
    */
   async disconnectGoogle(): Promise<void> {
-    await api.request('/integrations/google', { method: 'DELETE' });
+    await this.disconnect('google');
   }
 
   /**
-   * Trigger a sync for Google (Gmail + Calendar)
+   * Trigger Gmail sync
+   * Backend endpoint: POST /integrations/gmail/sync
    */
-  async syncGoogle(): Promise<SyncResponse> {
-    return api.request<SyncResponse>('/integrations/sync', {
+  async syncGmail(): Promise<SyncResponse> {
+    return api.request<SyncResponse>('/integrations/gmail/sync', {
       method: 'POST',
-      body: { provider: 'google' },
     });
   }
 
-  // ============== Calendar Actions ==============
-
   /**
-   * Get calendar events for a date range
+   * Trigger Calendar sync
+   * Backend endpoint: POST /integrations/calendar/sync
    */
-  async getCalendarEvents(startDate: Date, endDate: Date): Promise<CalendarEventsResponse> {
-    const params = new URLSearchParams();
-    params.append('start_date', startDate.toISOString());
-    params.append('end_date', endDate.toISOString());
-    return api.request<CalendarEventsResponse>(`/integrations/google/calendar/events?${params.toString()}`);
-  }
-
-  /**
-   * Create a new calendar event
-   */
-  async createCalendarEvent(request: CreateCalendarEventRequest): Promise<CalendarEventResponse> {
-    return api.request<CalendarEventResponse>('/integrations/google/calendar/events', {
+  async syncCalendar(): Promise<SyncResponse> {
+    return api.request<SyncResponse>('/integrations/calendar/sync', {
       method: 'POST',
-      body: request,
     });
   }
 
   /**
-   * Update/reschedule a calendar event
+   * Sync both Gmail and Calendar
    */
-  async updateCalendarEvent(eventId: string, request: UpdateCalendarEventRequest): Promise<CalendarEventResponse> {
-    return api.request<CalendarEventResponse>(`/integrations/google/calendar/events/${eventId}`, {
-      method: 'PUT',
-      body: request,
-    });
+  async syncGoogle(): Promise<{ gmail: SyncResponse; calendar: SyncResponse }> {
+    const [gmailResult, calendarResult] = await Promise.all([
+      this.syncGmail(),
+      this.syncCalendar(),
+    ]);
+    return {
+      gmail: gmailResult,
+      calendar: calendarResult,
+    };
   }
+
+  // ============== Calendar CRUD ==============
+  // NOTE: These endpoints are not yet implemented in the backend.
+  // The UI should hide these features or show "coming soon" until backend adds support.
+  // Keeping the type definitions for future use.
 
   /**
-   * Delete a calendar event
+   * @deprecated Calendar CRUD not implemented in backend yet
    */
-  async deleteCalendarEvent(eventId: string, sendNotifications: boolean = true): Promise<CalendarEventResponse> {
-    return api.request<CalendarEventResponse>(
-      `/integrations/google/calendar/events/${eventId}?send_notifications=${sendNotifications}`,
-      { method: 'DELETE' }
-    );
+  async getCalendarEvents(_startDate: Date, _endDate: Date): Promise<{ events: CalendarEventItem[] }> {
+    console.warn('IntegrationsService: getCalendarEvents not implemented in backend');
+    return { events: [] };
   }
 
-  /**
-   * Find available time slots in the calendar
-   */
-  async getCalendarAvailability(
-    date: string, // YYYY-MM-DD
-    durationMinutes: number = 30,
-    startHour: number = 9,
-    endHour: number = 18
-  ): Promise<CalendarAvailabilityResponse> {
-    const params = new URLSearchParams();
-    params.append('date', date);
-    params.append('duration_minutes', durationMinutes.toString());
-    params.append('start_hour', startHour.toString());
-    params.append('end_hour', endHour.toString());
-    return api.request<CalendarAvailabilityResponse>(
-      `/integrations/google/calendar/availability?${params.toString()}`
-    );
-  }
-
-  // ============== Email Actions ==============
-
-  /**
-   * Get inbox emails
-   */
-  async getInbox(maxResults: number = 20, unreadOnly: boolean = false): Promise<InboxResponse> {
-    const params = new URLSearchParams();
-    params.append('max_results', maxResults.toString());
-    if (unreadOnly) params.append('unread_only', 'true');
-    return api.request<InboxResponse>(`/integrations/google/gmail/inbox?${params.toString()}`);
-  }
-
-  /**
-   * Send an email via Gmail
-   */
-  async sendEmail(request: SendEmailRequest): Promise<EmailResponse> {
-    return api.request<EmailResponse>('/integrations/google/gmail/send', {
-      method: 'POST',
-      body: request,
-    });
-  }
+  // ============== Email CRUD ==============
+  // NOTE: Email listing/sending not implemented in backend yet.
+  // The UI should hide these features until backend adds support.
 }
 
 export const integrationsService = new IntegrationsService();

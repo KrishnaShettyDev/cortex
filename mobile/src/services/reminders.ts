@@ -1,7 +1,19 @@
-import { api } from './api';
+/**
+ * Reminders Service
+ *
+ * @deprecated This service is deprecated. Use commitments.ts instead.
+ *
+ * This file now wraps the commitments service for backwards compatibility.
+ * The backend has replaced reminders with auto-extracted commitments.
+ */
+
+import { commitmentsService, Commitment } from './commitments';
 import { logger } from '../utils/logger';
 
-// Types matching backend models
+// Re-export types from commitments for convenience
+export type { Commitment };
+
+// Legacy types for backwards compatibility
 export interface Reminder {
   id: string;
   title: string;
@@ -24,32 +36,6 @@ export interface Task {
   created_at: string;
 }
 
-export interface CreateReminderRequest {
-  title: string;
-  body?: string;
-  remind_at?: string;
-  reminder_type?: 'time' | 'location' | 'event';
-  location_name?: string;
-  location_latitude?: number;
-  location_longitude?: number;
-  location_radius_meters?: number;
-}
-
-export interface UpdateReminderRequest {
-  title?: string;
-  body?: string;
-  remind_at?: string;
-  status?: string;
-}
-
-export interface CreateTaskRequest {
-  title: string;
-  description?: string;
-  due_date?: string;
-  priority?: number;
-  related_person?: string;
-}
-
 export interface ReminderListResponse {
   reminders: Reminder[];
   total: number;
@@ -65,121 +51,193 @@ export interface SuccessResponse {
   message?: string;
 }
 
+// Transform Commitment to Reminder format
+function commitmentToReminder(commitment: Commitment): Reminder {
+  return {
+    id: commitment.id,
+    title: commitment.content,
+    body: null,
+    remind_at: commitment.due_date,
+    reminder_type: 'time',
+    location_name: null,
+    status: commitment.status === 'completed' ? 'completed' :
+            commitment.status === 'cancelled' ? 'cancelled' :
+            commitment.status === 'overdue' ? 'sent' : 'pending',
+    created_at: commitment.created_at,
+  };
+}
+
+// Transform Commitment to Task format
+function commitmentToTask(commitment: Commitment): Task {
+  return {
+    id: commitment.id,
+    title: commitment.content,
+    description: null,
+    due_date: commitment.due_date,
+    priority: commitment.type === 'deadline' ? 1 : 2,
+    is_completed: commitment.status === 'completed',
+    completed_at: commitment.status === 'completed' ? commitment.updated_at : null,
+    created_at: commitment.created_at,
+  };
+}
+
 class RemindersService {
-  // ==================== REMINDERS ====================
-
   /**
-   * Create a new reminder
+   * @deprecated Use commitmentsService.getCommitments() instead
    */
-  async createReminder(request: CreateReminderRequest): Promise<Reminder> {
-    logger.log('Reminders: Creating reminder', request.title);
-    return api.request<Reminder>('/reminders', {
-      method: 'POST',
-      body: request,
-    });
-  }
-
-  /**
-   * List all reminders for the current user
-   */
-  async listReminders(includeCompleted = false, limit = 50): Promise<ReminderListResponse> {
-    logger.log('Reminders: Listing reminders');
-    return api.request<ReminderListResponse>(
-      `/reminders?include_completed=${includeCompleted}&limit=${limit}`
+  async createReminder(_request: {
+    title: string;
+    body?: string;
+    remind_at?: string;
+    reminder_type?: 'time' | 'location' | 'event';
+    location_name?: string;
+  }): Promise<never> {
+    logger.warn('RemindersService: createReminder is deprecated');
+    throw new Error(
+      'Creating reminders is not supported. ' +
+        'Commitments are automatically extracted from your memories. ' +
+        'Try adding a memory like "I need to call John tomorrow".'
     );
   }
 
   /**
-   * Get a specific reminder by ID
+   * @deprecated Use commitmentsService.getCommitments() instead
+   */
+  async listReminders(
+    includeCompleted = false,
+    limit = 50
+  ): Promise<ReminderListResponse> {
+    logger.warn('RemindersService: listReminders is deprecated, use commitmentsService.getCommitments()');
+
+    const status = includeCompleted ? undefined : 'active';
+    const response = await commitmentsService.getCommitments({ status, limit });
+
+    return {
+      reminders: response.commitments.map(commitmentToReminder),
+      total: response.total,
+    };
+  }
+
+  /**
+   * @deprecated Use commitmentsService.getCommitment() instead
    */
   async getReminder(reminderId: string): Promise<Reminder> {
-    logger.log('Reminders: Getting reminder', reminderId);
-    return api.request<Reminder>(`/reminders/${reminderId}`);
+    logger.warn('RemindersService: getReminder is deprecated, use commitmentsService.getCommitment()');
+
+    const commitment = await commitmentsService.getCommitment(reminderId);
+    return commitmentToReminder(commitment);
   }
 
   /**
-   * Update a reminder
+   * @deprecated Updating reminders not supported
    */
-  async updateReminder(reminderId: string, request: UpdateReminderRequest): Promise<Reminder> {
-    logger.log('Reminders: Updating reminder', reminderId);
-    return api.request<Reminder>(`/reminders/${reminderId}`, {
-      method: 'PUT',
-      body: request,
-    });
+  async updateReminder(
+    _reminderId: string,
+    _request: { title?: string; body?: string; remind_at?: string; status?: string }
+  ): Promise<never> {
+    logger.warn('RemindersService: updateReminder is deprecated');
+    throw new Error(
+      'Updating reminders is not supported. ' +
+        'Use completeReminder() or delete the commitment instead.'
+    );
   }
 
   /**
-   * Mark a reminder as completed
+   * @deprecated Use commitmentsService.completeCommitment() instead
    */
   async completeReminder(reminderId: string): Promise<SuccessResponse> {
-    logger.log('Reminders: Completing reminder', reminderId);
-    return api.request<SuccessResponse>(`/reminders/${reminderId}/complete`, {
-      method: 'POST',
-    });
+    logger.warn('RemindersService: completeReminder is deprecated, use commitmentsService.completeCommitment()');
+
+    try {
+      await commitmentsService.completeCommitment(reminderId);
+      return { success: true, message: 'Commitment completed' };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to complete',
+      };
+    }
   }
 
   /**
-   * Snooze a reminder
+   * @deprecated Snoozing not supported for commitments
    */
-  async snoozeReminder(reminderId: string, minutes = 15): Promise<Reminder> {
-    logger.log('Reminders: Snoozing reminder', reminderId, 'for', minutes, 'minutes');
-    return api.request<Reminder>(`/reminders/${reminderId}/snooze?minutes=${minutes}`, {
-      method: 'POST',
-    });
+  async snoozeReminder(_reminderId: string, _minutes = 15): Promise<never> {
+    logger.warn('RemindersService: snoozeReminder is deprecated');
+    throw new Error(
+      'Snoozing is not supported for commitments. ' +
+        'Commitments track promises and deadlines extracted from your memories.'
+    );
   }
 
   /**
-   * Delete a reminder
+   * @deprecated Use commitmentsService.cancelCommitment() instead
    */
   async deleteReminder(reminderId: string): Promise<SuccessResponse> {
-    logger.log('Reminders: Deleting reminder', reminderId);
-    return api.request<SuccessResponse>(`/reminders/${reminderId}`, {
-      method: 'DELETE',
-    });
+    logger.warn('RemindersService: deleteReminder is deprecated, use commitmentsService.cancelCommitment()');
+
+    try {
+      await commitmentsService.cancelCommitment(reminderId);
+      return { success: true, message: 'Commitment cancelled' };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to cancel',
+      };
+    }
   }
 
   /**
-   * Check location-based reminders
+   * @deprecated Location-based reminders not supported
    */
-  async checkLocationReminders(latitude: number, longitude: number): Promise<ReminderListResponse> {
-    logger.log('Reminders: Checking location reminders at', latitude, longitude);
-    return api.request<ReminderListResponse>(
-      `/reminders/check-location?latitude=${latitude}&longitude=${longitude}`,
-      { method: 'POST' }
-    );
+  async checkLocationReminders(
+    _latitude: number,
+    _longitude: number
+  ): Promise<ReminderListResponse> {
+    logger.warn('RemindersService: checkLocationReminders is deprecated and not available');
+    return { reminders: [], total: 0 };
   }
 
   // ==================== TASKS ====================
 
   /**
-   * Create a new task
+   * @deprecated Use commitmentsService.getCommitments({ type: 'task' }) instead
    */
-  async createTask(request: CreateTaskRequest): Promise<Task> {
-    logger.log('Tasks: Creating task', request.title);
-    return api.request<Task>('/reminders/tasks', {
-      method: 'POST',
-      body: request,
-    });
-  }
-
-  /**
-   * List all tasks for the current user
-   */
-  async listTasks(includeCompleted = false, limit = 50): Promise<TaskListResponse> {
-    logger.log('Tasks: Listing tasks');
-    return api.request<TaskListResponse>(
-      `/reminders/tasks?include_completed=${includeCompleted}&limit=${limit}`
+  async createTask(_request: {
+    title: string;
+    description?: string;
+    due_date?: string;
+    priority?: number;
+  }): Promise<never> {
+    logger.warn('RemindersService: createTask is deprecated');
+    throw new Error(
+      'Creating tasks is not supported. ' +
+        'Tasks are automatically extracted from your memories. ' +
+        'Try adding a memory like "I need to finish the report by Friday".'
     );
   }
 
   /**
-   * Mark a task as completed
+   * @deprecated Use commitmentsService.getCommitments({ type: 'task' }) instead
+   */
+  async listTasks(includeCompleted = false, limit = 50): Promise<TaskListResponse> {
+    logger.warn('RemindersService: listTasks is deprecated, use commitmentsService.getCommitments()');
+
+    const status = includeCompleted ? undefined : 'active';
+    const response = await commitmentsService.getCommitments({ status, type: 'task', limit });
+
+    return {
+      tasks: response.commitments.map(commitmentToTask),
+      total: response.total,
+    };
+  }
+
+  /**
+   * @deprecated Use commitmentsService.completeCommitment() instead
    */
   async completeTask(taskId: string): Promise<SuccessResponse> {
-    logger.log('Tasks: Completing task', taskId);
-    return api.request<SuccessResponse>(`/reminders/tasks/${taskId}/complete`, {
-      method: 'POST',
-    });
+    logger.warn('RemindersService: completeTask is deprecated, use commitmentsService.completeCommitment()');
+    return this.completeReminder(taskId);
   }
 }
 

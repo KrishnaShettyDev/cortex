@@ -17,6 +17,7 @@ import * as entityHandlers from './handlers/entities';
 import * as temporalHandlers from './handlers/temporal';
 import * as provenanceHandlers from './handlers/provenance';
 import * as syncHandlers from './handlers/sync';
+import * as uploadHandlers from './handlers/upload';
 import consolidationRouter from './handlers/consolidation';
 import commitmentsRouter from './handlers/commitments';
 import relationshipRouter from './handlers/relationship';
@@ -25,6 +26,7 @@ import learningsRouter from './handlers/learnings';
 import beliefsRouter from './handlers/beliefs';
 import outcomesRouter from './handlers/outcomes';
 import sleepRouter from './handlers/sleep';
+import briefingRouter from './handlers/briefing';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 import { handleSleepComputeCron } from './lib/cognitive/sleep/cron';
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
@@ -127,6 +129,7 @@ app.get('/', (c) =>
         refresh: '/auth/refresh',
         me: '/auth/me',
         generate_api_key: '/auth/api-key (POST, requires auth)',
+        delete_account: '/auth/account (DELETE, requires auth)',
       },
       v3: {
         memories: '/v3/memories',
@@ -227,6 +230,11 @@ app.get('/', (c) =>
           sync_logs: '/v3/sync/connections/:id/logs',
           status: '/v3/sync/status',
         },
+        briefing: '/v3/briefing (consolidated home screen data)',
+        upload: {
+          audio: '/v3/upload/audio (POST, multipart/form-data)',
+          text: '/v3/upload/text (POST, JSON body)',
+        },
       },
     },
     getting_started: {
@@ -255,6 +263,13 @@ app.use('/auth/api-key', async (c, next) => {
   return jwtMiddleware(c, next);
 });
 app.post('/auth/api-key', authHandlers.generateApiKey);
+
+// Account deletion (protected) - App Store compliance
+app.use('/auth/account', async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
+  return jwtMiddleware(c, next);
+});
+app.delete('/auth/account', authHandlers.deleteAccount);
 
 // Public stubs (mobile app compatibility)
 app.get('/chat/greeting', (c) =>
@@ -390,6 +405,13 @@ app.route('/v3/recall', outcomesRouter);
 
 // Sleep compute endpoints
 app.route('/v3/sleep', sleepRouter);
+
+// Briefing endpoint (consolidated mobile home screen data)
+app.route('/v3/briefing', briefingRouter);
+
+// Upload endpoints (audio transcription, text)
+app.post('/v3/upload/audio', uploadHandlers.uploadAudio);
+app.post('/v3/upload/text', uploadHandlers.uploadText);
 
 // Sync infrastructure endpoints
 app.get('/v3/sync/connections', syncHandlers.listSyncConnectionsHandler);

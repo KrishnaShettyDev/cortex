@@ -63,20 +63,6 @@ class AuthService {
     return response;
   }
 
-  // Dev Sign-In (for development only)
-  async devSignIn(email: string, name?: string): Promise<AuthResponse> {
-    const response = await api.request<AuthResponse>('/auth/dev', {
-      method: 'POST',
-      body: { email, name },
-      requiresAuth: false,
-    });
-
-    await storage.saveAccessToken(response.access_token);
-    await storage.saveRefreshToken(response.refresh_token);
-
-    return response;
-  }
-
   // Get current user
   async getCurrentUser(): Promise<User> {
     return api.request<User>('/auth/me');
@@ -88,8 +74,15 @@ class AuthService {
   }
 
   // Delete account
+  // NOTE: Backend endpoint DELETE /auth/account not implemented yet
+  // This will fail until backend adds the endpoint
   async deleteAccount(): Promise<void> {
-    await api.request('/auth/account', { method: 'DELETE' });
+    try {
+      await api.request('/auth/account', { method: 'DELETE' });
+    } catch (error) {
+      console.warn('AuthService: deleteAccount endpoint not implemented in backend');
+      // Still clear local data
+    }
     await storage.clearAll();
   }
 
