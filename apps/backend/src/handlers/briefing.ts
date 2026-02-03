@@ -3,10 +3,12 @@
  *
  * Consolidated endpoint for mobile app home screen:
  * GET /v3/briefing - Returns everything needed for home in one call
+ * GET /v3/briefing/structured - Returns AI-enhanced structured briefing
  */
 
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
+import { createBriefingIntelligence } from '../lib/briefing';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -152,7 +154,7 @@ app.get('/', async (c) => {
     ]);
 
     // Extract values with fallbacks
-    const userName = userResult.status === 'fulfilled' ? userResult.value?.name : null;
+    const userName = userResult.status === 'fulfilled' ? userResult.value?.name ?? null : null;
     const userTimezone = timezoneResult.status === 'fulfilled' ? timezoneResult.value?.timezone || 'UTC' : 'UTC';
     const upcoming = upcomingResult.status === 'fulfilled' ? upcomingResult.value?.results || [] : [];
     const overdue = overdueResult.status === 'fulfilled' ? overdueResult.value?.results || [] : [];
@@ -224,6 +226,56 @@ app.get('/', async (c) => {
     return c.json(
       {
         error: 'Failed to get briefing',
+        message: error.message,
+      },
+      500
+    );
+  }
+});
+
+/**
+ * GET /v3/briefing/structured
+ * Enhanced AI-powered structured briefing with world context
+ */
+app.get('/structured', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+
+  try {
+    // Get user location and timezone from request or preferences
+    const latitude = c.req.query('latitude') ? parseFloat(c.req.query('latitude')!) : undefined;
+    const longitude = c.req.query('longitude') ? parseFloat(c.req.query('longitude')!) : undefined;
+    const city = c.req.query('city');
+
+    // Get user timezone from notification preferences
+    const timezoneResult = await c.env.DB.prepare(
+      'SELECT timezone FROM notification_preferences WHERE user_id = ?'
+    ).bind(userId).first() as { timezone: string } | null;
+
+    const timezone = timezoneResult?.timezone || 'UTC';
+
+    // Create briefing intelligence with world context APIs
+    const briefingIntelligence = createBriefingIntelligence({
+      openWeatherApiKey: c.env.OPENWEATHER_API_KEY,
+      serperApiKey: c.env.SERPER_API_KEY,
+      yelpApiKey: c.env.YELP_API_KEY,
+    });
+
+    // Generate structured briefing
+    const briefing = await briefingIntelligence.generateBriefing({
+      userId,
+      db: c.env.DB,
+      timezone,
+      latitude,
+      longitude,
+      city,
+    });
+
+    return c.json(briefing);
+  } catch (error: any) {
+    console.error('[Briefing] Structured briefing failed:', error);
+    return c.json(
+      {
+        error: 'Failed to generate structured briefing',
         message: error.message,
       },
       500

@@ -13,6 +13,10 @@ export interface Bindings {
   JWT_SECRET: string;
   COMPOSIO_API_KEY: string;
   GOOGLE_CLIENT_ID?: string;
+  // World context API keys
+  OPENWEATHER_API_KEY?: string;
+  SERPER_API_KEY?: string;
+  YELP_API_KEY?: string;
 }
 
 export interface ErrorResponse {
