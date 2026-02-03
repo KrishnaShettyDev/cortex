@@ -11,16 +11,29 @@ import type { Bindings } from '../types';
 const app = new Hono<{ Bindings: Bindings }>();
 
 /**
- * Build greeting based on time of day (IST timezone)
+ * Build greeting based on time of day in user's timezone
  */
-function buildGreeting(userName: string | null): string {
-  const hour = new Date().getUTCHours();
-  // Adjust for IST (UTC+5:30)
-  const istHour = (hour + 5) % 24;
+function buildGreeting(userName: string | null, timezone: string = 'UTC'): string {
   const name = userName || 'there';
 
-  if (istHour < 12) return `Good morning, ${name}`;
-  if (istHour < 17) return `Good afternoon, ${name}`;
+  // Get current hour in user's timezone using Intl API
+  let hour = 12; // Default to noon if timezone fails
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(new Date());
+    const hourPart = parts.find(p => p.type === 'hour');
+    hour = parseInt(hourPart?.value || '12', 10);
+  } catch {
+    // Invalid timezone, use UTC
+    hour = new Date().getUTCHours();
+  }
+
+  if (hour < 12) return `Good morning, ${name}`;
+  if (hour < 17) return `Good afternoon, ${name}`;
   return `Good evening, ${name}`;
 }
 
@@ -38,6 +51,7 @@ app.get('/', async (c) => {
     // Parallelize all queries using Promise.allSettled
     const [
       userResult,
+      timezoneResult,
       upcomingResult,
       overdueResult,
       nudgesResult,
@@ -52,6 +66,9 @@ app.get('/', async (c) => {
     ] = await Promise.allSettled([
       // User info for greeting
       c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first<{ name: string }>(),
+
+      // User timezone from notification preferences
+      c.env.DB.prepare('SELECT timezone FROM notification_preferences WHERE user_id = ?').bind(userId).first<{ timezone: string }>(),
 
       // Upcoming commitments (next 7 days)
       c.env.DB.prepare(
@@ -136,6 +153,7 @@ app.get('/', async (c) => {
 
     // Extract values with fallbacks
     const userName = userResult.status === 'fulfilled' ? userResult.value?.name : null;
+    const userTimezone = timezoneResult.status === 'fulfilled' ? timezoneResult.value?.timezone || 'UTC' : 'UTC';
     const upcoming = upcomingResult.status === 'fulfilled' ? upcomingResult.value?.results || [] : [];
     const overdue = overdueResult.status === 'fulfilled' ? overdueResult.value?.results || [] : [];
     const nudges = nudgesResult.status === 'fulfilled' ? nudgesResult.value?.results || [] : [];
@@ -169,7 +187,8 @@ app.get('/', async (c) => {
     ).length;
 
     return c.json({
-      greeting: buildGreeting(userName),
+      greeting: buildGreeting(userName, userTimezone),
+      timezone: userTimezone,
 
       commitments: {
         upcoming,
