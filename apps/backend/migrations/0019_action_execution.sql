@@ -36,6 +36,3 @@ CREATE TABLE IF NOT EXISTS pending_actions (
 
 CREATE INDEX IF NOT EXISTS idx_pending_actions_user ON pending_actions(user_id);
 CREATE INDEX IF NOT EXISTS idx_pending_actions_expires ON pending_actions(expires_at);
-
--- Add is_vip column to profiles if not exists
-ALTER TABLE profiles ADD COLUMN is_vip INTEGER DEFAULT 0;
