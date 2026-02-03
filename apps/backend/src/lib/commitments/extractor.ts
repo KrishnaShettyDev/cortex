@@ -43,12 +43,12 @@ export class CommitmentExtractor {
       // Use LLM to detect commitments
       const prompt = this.buildExtractionPrompt(content, referenceDate);
 
+      // OPTIMIZED: Reduced max_tokens from 500 to 300, simplified system prompt
       const response = await this.ai.run('@cf/meta/llama-3.1-8b-instruct', {
         messages: [
           {
             role: 'system',
-            content:
-              'You are a commitment extraction system. Extract promises, deadlines, and follow-ups from text. Return valid JSON only.',
+            content: 'Extract commitments as JSON array. Return [] if none.',
           },
           {
             role: 'user',
@@ -56,7 +56,7 @@ export class CommitmentExtractor {
           },
         ],
         temperature: 0.1,
-        max_tokens: 500,
+        max_tokens: 300,
       });
 
       const commitments = this.parseResponse(response.response, referenceDate);
@@ -81,6 +81,7 @@ export class CommitmentExtractor {
 
   /**
    * Build extraction prompt for LLM
+   * OPTIMIZED: Reduced from ~300 tokens to ~100 tokens
    */
   private buildExtractionPrompt(
     content: string,
@@ -88,44 +89,11 @@ export class CommitmentExtractor {
   ): string {
     const refDateStr = referenceDate.toISOString().split('T')[0];
 
-    return `Extract commitments from this text. Reference date: ${refDateStr}
+    return `Extract commitments from: "${content}"
+Today: ${refDateStr}
 
-TEXT: "${content}"
-
-COMMITMENT TYPES:
-1. PROMISE - "I will...", "I'll...", "I promise to..."
-2. DEADLINE - "Need to X by Y", "Due on...", "Must complete..."
-3. FOLLOW_UP - "Remind me to...", "Check back on...", "Follow up with..."
-4. MEETING - "Meeting with...", "Call scheduled...", "Sync with..."
-5. DELIVERABLE - "Deliver X by Y", "Ship by...", "Complete X"
-
-PRIORITY LEVELS:
-- critical: ASAP, urgent, critical, emergency
-- high: important, soon, priority
-- medium: default
-- low: when you can, eventually
-
-EXTRACT:
-- description: What needs to be done
-- type: One of the types above
-- to_entity: Person/company the commitment is to (if mentioned)
-- due_date: When it's due (ISO format YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)
-- priority: critical/high/medium/low
-- confidence: 0-1 (how confident you are this is a real commitment)
-
-Return ONLY valid JSON array:
-[
-  {
-    "description": "Send quarterly report",
-    "type": "promise",
-    "to_entity": "Sarah",
-    "due_date": "2026-02-05",
-    "priority": "high",
-    "confidence": 0.9
-  }
-]
-
-If no commitments found, return: []`;
+Return JSON array: [{"description": "...", "type": "promise|deadline|follow_up|meeting|deliverable", "to_entity": "person/company or null", "due_date": "YYYY-MM-DD or null", "priority": "critical|high|medium|low", "confidence": 0.0-1.0}]
+Return [] if none.`;
   }
 
   /**

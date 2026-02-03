@@ -88,53 +88,92 @@ export class ImportanceScorer {
   }
 
   /**
-   * Analyze content importance using LLM
+   * Analyze content importance using rule-based scoring (OPTIMIZED - no LLM)
+   *
+   * Previously used LLM which added ~600ms per memory.
+   * Now uses keyword matching and heuristics for <5ms scoring.
    */
   private async analyzeContent(content: string): Promise<number> {
-    try {
-      const prompt = `Rate the long-term importance of this memory on a scale of 0.0 to 1.0.
+    const lowerContent = content.toLowerCase();
+    let score = 0.4; // Base score
 
-MEMORY: "${content}"
-
-SCORING CRITERIA:
-1.0 - Critical: Major life events, key decisions, important commitments, career milestones
-0.8 - High: Significant relationships, important preferences, core values, ongoing projects
-0.6 - Medium: Useful context, recent events, project updates, work meetings
-0.4 - Low: Minor details, casual mentions, routine activities
-0.2 - Minimal: Trivial information, small talk, generic statements
-
-Consider:
-- Does this contain actionable information?
-- Will this be relevant weeks/months from now?
-- Does this reveal important facts about the user?
-- Does this contain commitments or deadlines?
-
-Return ONLY a number between 0.0 and 1.0, no explanation.`;
-
-      const response = await this.ai.run('@cf/meta/llama-3.1-8b-instruct', {
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        temperature: 0.1,
-        max_tokens: 10,
-      });
-
-      // Extract number from response
-      const scoreMatch = response.response.match(/\d+\.?\d*/);
-      if (!scoreMatch) {
-        console.warn('[ImportanceScorer] Could not parse LLM score, using default 0.5');
-        return 0.5;
-      }
-
-      const score = parseFloat(scoreMatch[0]);
-      return Math.min(1, Math.max(0, score));
-    } catch (error) {
-      console.error('[ImportanceScorer] Content analysis failed:', error);
-      return 0.5; // Default to medium importance
+    // === Critical Indicators (boost to 0.9-1.0) ===
+    const criticalKeywords = [
+      'major decision', 'life changing', 'milestone', 'promotion', 'fired',
+      'hired', 'resigned', 'married', 'engaged', 'pregnant', 'born', 'died',
+      'acquisition', 'ipo', 'funding round', 'series a', 'series b', 'series c',
+      'closed the deal', 'signed the contract', 'accepted the offer',
+    ];
+    if (criticalKeywords.some(k => lowerContent.includes(k))) {
+      score = 0.95;
     }
+
+    // === High Importance Indicators (boost to 0.7-0.85) ===
+    const highKeywords = [
+      'decision', 'decided', 'commitment', 'promise', 'deadline', 'due date',
+      'important', 'critical', 'urgent', 'priority', 'must', 'need to',
+      'meeting with', 'call with', 'presentation', 'review', 'interview',
+      'project', 'launch', 'release', 'deliver', 'ship',
+      'ceo', 'cto', 'founder', 'investor', 'partner', 'client', 'customer',
+    ];
+    const highMatches = highKeywords.filter(k => lowerContent.includes(k)).length;
+    if (highMatches >= 3) {
+      score = Math.max(score, 0.85);
+    } else if (highMatches >= 2) {
+      score = Math.max(score, 0.75);
+    } else if (highMatches >= 1) {
+      score = Math.max(score, 0.65);
+    }
+
+    // === Medium Importance Indicators ===
+    const mediumKeywords = [
+      'plan', 'strategy', 'goal', 'objective', 'target',
+      'update', 'progress', 'status', 'sync', 'standup',
+      'learned', 'discovered', 'realized', 'insight',
+      'feedback', 'suggestion', 'recommendation',
+    ];
+    const mediumMatches = mediumKeywords.filter(k => lowerContent.includes(k)).length;
+    if (mediumMatches >= 2) {
+      score = Math.max(score, 0.55);
+    }
+
+    // === Low Importance Indicators (reduce score) ===
+    const lowKeywords = [
+      'random thought', 'just thinking', 'wondering', 'maybe',
+      'weather', 'lunch', 'coffee', 'tired', 'bored',
+      'test', 'testing', 'ignore', 'delete this',
+    ];
+    if (lowKeywords.some(k => lowerContent.includes(k))) {
+      score = Math.min(score, 0.3);
+    }
+
+    // === Content Quality Signals ===
+
+    // Length suggests detail (longer = more context = more valuable)
+    if (content.length > 500) score += 0.08;
+    else if (content.length > 200) score += 0.04;
+    else if (content.length < 30) score -= 0.1; // Very short = low value
+
+    // Questions suggest active thinking/discussion
+    const questionCount = (content.match(/\?/g) || []).length;
+    if (questionCount >= 2) score += 0.05;
+
+    // Numbers often indicate specific details (dates, amounts, metrics)
+    const hasNumbers = /\d+/.test(content);
+    if (hasNumbers) score += 0.03;
+
+    // Proper nouns (capitalized words) suggest named entities
+    const properNouns = content.match(/\b[A-Z][a-z]+\b/g) || [];
+    if (properNouns.length >= 3) score += 0.05;
+
+    // Email addresses suggest contacts
+    if (/@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(content)) score += 0.05;
+
+    // Money amounts suggest financial importance
+    if (/\$[\d,]+|\d+k|\d+m|\d+ million|\d+ thousand/i.test(content)) score += 0.1;
+
+    // Clamp to valid range
+    return Math.min(1.0, Math.max(0.0, score));
   }
 
   /**

@@ -23,18 +23,27 @@ import { getCachedEmbedding, cacheEmbedding } from './cache';
 
 /**
  * Generate embedding using Cloudflare AI (with caching)
+ *
+ * OPTIMIZATION: Re-enabled caching with error handling.
+ * Cache operations are non-blocking to prevent failures from affecting embedding generation.
  */
 export async function generateEmbedding(
-  env: { AI: any; CACHE: KVNamespace },
+  env: { AI: any; CACHE?: KVNamespace },
   text: string
 ): Promise<number[]> {
-  // Check cache first
-  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
-  // const cached = await getCachedEmbedding(env.CACHE, text);
-  // if (cached) {
-  //   console.log('[Cache] Embedding cache hit');
-  //   return cached;
-  // }
+  // Check cache first (if CACHE binding exists)
+  if (env.CACHE) {
+    try {
+      const cached = await getCachedEmbedding(env.CACHE, text);
+      if (cached) {
+        console.log('[Cache] Embedding cache HIT');
+        return cached;
+      }
+    } catch (cacheError) {
+      // Non-blocking: cache read failure shouldn't stop embedding generation
+      console.warn('[Cache] Cache read failed (non-blocking):', cacheError);
+    }
+  }
 
   // Cache miss - generate embedding
   console.log('[Cache] Embedding cache miss, generating...');
@@ -44,9 +53,14 @@ export async function generateEmbedding(
 
   const embedding = response.data[0]; // 768-dimensional vector
 
-  // Cache the result
-  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
-  // await cacheEmbedding(env.CACHE, text, embedding);
+  // Cache the result (non-blocking, fire-and-forget)
+  if (env.CACHE) {
+    // Use waitUntil pattern or just fire-and-forget to not block response
+    cacheEmbedding(env.CACHE, text, embedding).catch((cacheError) => {
+      // Non-blocking: cache write failure shouldn't affect response
+      console.warn('[Cache] Cache write failed (non-blocking):', cacheError);
+    });
+  }
 
   return embedding;
 }

@@ -42,6 +42,129 @@ function hasEntitySignals(content: string): boolean {
   return false;
 }
 
+/**
+ * Quick NER: Extract potential entity names using regex
+ * Returns candidates that can be matched against known entities
+ */
+function quickNER(content: string): Array<{ name: string; type: 'unknown' | 'person' | 'company' | 'email' }> {
+  const candidates: Array<{ name: string; type: 'unknown' | 'person' | 'company' | 'email' }> = [];
+  const seen = new Set<string>();
+
+  // Extract capitalized words/phrases (potential names)
+  const capitalizedPattern = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/g;
+  const capitalizedMatches = content.match(capitalizedPattern) || [];
+
+  // Common words that are often capitalized but aren't entities
+  const skipWords = new Set([
+    'I', 'The', 'This', 'That', 'These', 'Those', 'My', 'Your', 'His', 'Her',
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday',
+    'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+    'September', 'October', 'November', 'December', 'Today', 'Tomorrow', 'Yesterday',
+  ]);
+
+  for (const match of capitalizedMatches) {
+    const normalized = match.trim();
+    if (normalized.length < 2 || skipWords.has(normalized) || seen.has(normalized.toLowerCase())) {
+      continue;
+    }
+    seen.add(normalized.toLowerCase());
+    candidates.push({ name: normalized, type: 'unknown' });
+  }
+
+  // Extract email addresses (→ person)
+  const emailPattern = /[\w.-]+@[\w.-]+\.\w+/g;
+  const emailMatches = content.match(emailPattern) || [];
+  for (const email of emailMatches) {
+    const namePart = email.split('@')[0].replace(/[._-]/g, ' ').trim();
+    if (!seen.has(namePart.toLowerCase())) {
+      seen.add(namePart.toLowerCase());
+      candidates.push({ name: namePart, type: 'email' });
+    }
+  }
+
+  // Extract company patterns (Inc, LLC, Corp, etc.)
+  const companyPattern = /\b[\w\s]+(?:Inc|LLC|Corp|Ltd|Limited|Company|Co)\b/gi;
+  const companyMatches = content.match(companyPattern) || [];
+  for (const company of companyMatches) {
+    const normalized = company.trim();
+    if (!seen.has(normalized.toLowerCase())) {
+      seen.add(normalized.toLowerCase());
+      candidates.push({ name: normalized, type: 'company' });
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Match quick NER candidates against known entities
+ * Returns matches + unmatched candidates that need LLM
+ */
+function matchAgainstKnownEntities(
+  candidates: Array<{ name: string; type: string }>,
+  knownEntities: Entity[]
+): {
+  matched: ExtractedEntity[];
+  needsLLM: Array<{ name: string; type: string }>;
+} {
+  const matched: ExtractedEntity[] = [];
+  const needsLLM: Array<{ name: string; type: string }> = [];
+
+  // Build lookup map for known entities (lowercase name → entity)
+  const knownMap = new Map<string, Entity>();
+  for (const entity of knownEntities) {
+    knownMap.set(entity.name.toLowerCase(), entity);
+    // Also add canonical name
+    if (entity.canonical_name) {
+      knownMap.set(entity.canonical_name.toLowerCase(), entity);
+    }
+  }
+
+  for (const candidate of candidates) {
+    const nameLower = candidate.name.toLowerCase();
+
+    // Try exact match
+    const exactMatch = knownMap.get(nameLower);
+    if (exactMatch) {
+      matched.push({
+        name: exactMatch.name,
+        entity_type: exactMatch.entity_type,
+        attributes: exactMatch.attributes || {},
+        confidence: 0.95, // High confidence for exact match
+        mentions: [candidate.name],
+      });
+      continue;
+    }
+
+    // Try fuzzy match (check if known entity name is contained in candidate or vice versa)
+    let fuzzyMatch: Entity | null = null;
+    for (const [key, entity] of knownMap) {
+      if (nameLower.includes(key) || key.includes(nameLower)) {
+        // Check it's a meaningful overlap (at least 4 chars)
+        const overlap = nameLower.length > key.length ? key : nameLower;
+        if (overlap.length >= 4) {
+          fuzzyMatch = entity;
+          break;
+        }
+      }
+    }
+
+    if (fuzzyMatch) {
+      matched.push({
+        name: fuzzyMatch.name,
+        entity_type: fuzzyMatch.entity_type,
+        attributes: fuzzyMatch.attributes || {},
+        confidence: 0.8, // Slightly lower for fuzzy match
+        mentions: [candidate.name],
+      });
+    } else {
+      needsLLM.push(candidate);
+    }
+  }
+
+  return { matched, needsLLM };
+}
+
 export class EntityExtractor {
   private ai: any;
 
@@ -51,7 +174,12 @@ export class EntityExtractor {
 
   /**
    * Extract entities and relationships from memory content
-   * Optimized with pre-filtering and reduced token usage
+   *
+   * OPTIMIZED FLOW:
+   * 1. Pre-filter: Skip if no entity signals
+   * 2. Quick NER: Extract candidates using regex
+   * 3. Match against known: Reuse known entities (no LLM needed)
+   * 4. LLM only for NEW entities that need classification
    */
   async extract(
     content: string,
@@ -59,7 +187,7 @@ export class EntityExtractor {
   ): Promise<EntityExtractionResult> {
     const startTime = Date.now();
 
-    // PRE-FILTER: Skip LLM for content without entity signals
+    // STEP 1: PRE-FILTER - Skip LLM for content without entity signals
     if (!hasEntitySignals(content)) {
       console.log('[EntityExtractor] No entity signals detected, skipping LLM');
       return {
@@ -76,11 +204,40 @@ export class EntityExtractor {
       };
     }
 
-    try {
-      // Build extraction prompt
-      const prompt = this.buildExtractionPrompt(content, context);
+    // STEP 2: QUICK NER - Extract candidate entity names using regex
+    const candidates = quickNER(content);
+    console.log(`[EntityExtractor] Quick NER found ${candidates.length} candidates`);
 
-      // Call LLM for extraction (reduced max_tokens for faster response)
+    // STEP 3: MATCH AGAINST KNOWN - Reuse known entities (0ms per match)
+    const knownEntities = context.known_entities || [];
+    const { matched, needsLLM } = matchAgainstKnownEntities(candidates, knownEntities);
+
+    console.log(`[EntityExtractor] Matched ${matched.length} known entities, ${needsLLM.length} need LLM`);
+
+    // If all entities matched known ones, skip LLM entirely
+    if (needsLLM.length === 0) {
+      console.log('[EntityExtractor] All entities matched known, skipping LLM');
+      return {
+        entities: matched,
+        relationships: [], // Can't extract relationships without LLM
+        extraction_metadata: {
+          model: 'quick_ner_only',
+          timestamp: new Date().toISOString(),
+          total_entities: matched.length,
+          total_relationships: 0,
+          processing_time_ms: Date.now() - startTime,
+          matched_known: matched.length,
+          skipped_llm: true,
+        },
+      };
+    }
+
+    try {
+      // STEP 4: LLM - Only for entities that need classification
+      // Build focused prompt with just the unknown entities
+      const prompt = this.buildExtractionPrompt(content, context, needsLLM);
+
+      // Call LLM for extraction
       const response = await this.ai.run('@cf/meta/llama-3.1-8b-instruct', {
         messages: [
           {
@@ -92,8 +249,8 @@ export class EntityExtractor {
             content: prompt,
           },
         ],
-        temperature: 0.1, // Low temp for consistency
-        max_tokens: 1000, // Reduced from 2000 for faster response
+        temperature: 0.1,
+        max_tokens: 500,
       });
 
       // Parse and validate response
@@ -107,21 +264,44 @@ export class EntityExtractor {
         (r) => r.confidence >= 0.6
       );
 
+      // Combine matched known entities + LLM-extracted entities
+      const allEntities = [...matched, ...filteredEntities];
+
       const processingTime = Date.now() - startTime;
 
+      console.log(`[EntityExtractor] Final: ${allEntities.length} entities (${matched.length} cached + ${filteredEntities.length} new)`);
+
       return {
-        entities: filteredEntities,
+        entities: allEntities,
         relationships: filteredRelationships,
         extraction_metadata: {
           model: 'llama-3.1-8b-instruct',
           timestamp: new Date().toISOString(),
-          total_entities: filteredEntities.length,
+          total_entities: allEntities.length,
           total_relationships: filteredRelationships.length,
           processing_time_ms: processingTime,
+          matched_known: matched.length,
+          llm_extracted: filteredEntities.length,
         },
       };
     } catch (error: any) {
       console.error('[EntityExtractor] Extraction failed:', error);
+      // On LLM failure, still return the matched entities
+      if (matched.length > 0) {
+        console.log(`[EntityExtractor] LLM failed but returning ${matched.length} matched entities`);
+        return {
+          entities: matched,
+          relationships: [],
+          extraction_metadata: {
+            model: 'quick_ner_fallback',
+            timestamp: new Date().toISOString(),
+            total_entities: matched.length,
+            total_relationships: 0,
+            processing_time_ms: Date.now() - startTime,
+            error: error.message,
+          },
+        };
+      }
       throw new EntityExtractionError(
         `Entity extraction failed: ${error.message}`,
         true,
@@ -132,112 +312,51 @@ export class EntityExtractor {
 
   /**
    * System prompt for entity extraction
+   * OPTIMIZED: Reduced from ~400 tokens to ~150 tokens
    */
   private getSystemPrompt(): string {
-    return `You are an expert entity extraction system. Your job is to extract entities (people, companies, projects, places, events) and their relationships from text with high precision.
+    return `Extract entities and relationships from text. Return ONLY valid JSON.
 
-RULES:
-1. Only extract entities that are explicitly or strongly implied in the text
-2. For each entity, extract relevant attributes based on entity type
-3. Identify relationships between entities when clear
-4. Provide confidence scores (0.6-1.0) based on how explicit the information is
-5. Include text evidence for each extraction
-6. Return ONLY valid JSON, no additional text
-
-CONFIDENCE GUIDELINES:
-- 1.0: Explicitly stated with full details ("Sarah Chen is CEO of Acme Corp")
-- 0.9: Explicitly stated with partial details ("Sarah from Acme mentioned...")
-- 0.8: Strongly implied from context ("Sarah sent the deck" + known Sarah is from Acme)
-- 0.7: Inferred from strong signals ("Met with the Lightspeed team" -> team is entity)
-- 0.6: Weakly inferred (minimum threshold)
-- <0.6: Don't extract
-
-OUTPUT FORMAT:
+Output format:
 {
-  "entities": [{
-    "name": "Full Name",
-    "entity_type": "person|company|project|place|event",
-    "attributes": {...},
-    "confidence": 0.6-1.0,
-    "mentions": ["exact text snippets where entity appears"]
-  }],
-  "relationships": [{
-    "source_entity": "Entity Name 1",
-    "target_entity": "Entity Name 2",
-    "relationship_type": "works_for|reports_to|founded|...",
-    "attributes": {...},
-    "confidence": 0.6-1.0,
-    "evidence": "text snippet supporting relationship"
-  }]
-}`;
+  "entities": [{"name": "...", "entity_type": "person|company|project|place|event", "attributes": {}, "confidence": 0.6-1.0, "mentions": []}],
+  "relationships": [{"source_entity": "...", "target_entity": "...", "relationship_type": "works_for|reports_to|founded|invested_in|met_at|collaborates_with|part_of|manages", "attributes": {}, "confidence": 0.6-1.0, "evidence": "..."}]
+}
+
+Confidence: 1.0=explicit, 0.8=implied, 0.6=inferred. Skip if <0.6.`;
   }
 
   /**
    * Build extraction prompt with context
+   * OPTIMIZED: Focus on unknown entities only when provided
    */
   private buildExtractionPrompt(
     content: string,
-    context: EntityExtractionContext
+    context: EntityExtractionContext,
+    unknownCandidates?: Array<{ name: string; type: string }>
   ): string {
-    const knownEntitiesHint = context.known_entities
-      ? `\n\nKNOWN ENTITIES (use exact names if referring to these):\n${context.known_entities
-          .map((e) => `- ${e.name} (${e.entity_type})`)
-          .join('\n')}`
+    // Only include top 10 known entities to reduce token count
+    const knownEntitiesHint = context.known_entities?.length
+      ? `\nKnown: ${context.known_entities.slice(0, 10).map(e => e.name).join(', ')}`
       : '';
 
-    return `Extract entities and relationships from this text:
+    // If we have specific unknown candidates, focus the prompt on classifying them
+    if (unknownCandidates && unknownCandidates.length > 0) {
+      const candidateList = unknownCandidates.map(c => c.name).join(', ');
+      return `TEXT: "${content}"
+Date: ${context.created_at}${knownEntitiesHint}
 
-TEXT:
-"""
-${content}
-"""
+Classify these entities: ${candidateList}
+For each: determine type (person/company/project/place/event), extract attributes, relationships.
+Return JSON with entities and relationships arrays.`;
+    }
 
-CONTEXT:
-- Date: ${context.created_at}
-- User: ${context.user_id}${knownEntitiesHint}
+    // Fallback to full extraction
+    return `TEXT: "${content}"
+Date: ${context.created_at}${knownEntitiesHint}
 
-ENTITY TYPE GUIDELINES:
-
-PERSON attributes:
-- role: Job title/role
-- company: Company they work for
-- email: Email address
-- phone: Phone number
-- location: City/location
-
-COMPANY attributes:
-- industry: Industry/sector
-- stage: Funding stage (Seed, Series A, etc.)
-- size: Company size
-- location: HQ location
-
-PROJECT attributes:
-- status: Current status (active, completed, planning)
-- deadline: Project deadline
-- stakeholders: Key people involved
-
-PLACE attributes:
-- type: city, venue, address, region
-- address: Full address if available
-
-EVENT attributes:
-- date: Event date/time
-- location: Where it happened
-- attendees: Who attended
-
-RELATIONSHIP TYPES:
-- works_for: Person → Company
-- reports_to: Person → Person
-- founded: Person → Company
-- invested_in: Company → Company
-- met_at: Person → Person (via Event/Place)
-- collaborates_with: Person ↔ Person
-- part_of: Project → Company
-- manages: Person → Project
-- attends: Person → Event
-- located_in: Entity → Place
-
-Extract now with high precision:`;
+Extract entities (person/company/project/place/event) and relationships.
+Include: name, type, attributes (role, company, email for person; industry, stage for company), confidence (0.6-1.0).`;
   }
 
   /**

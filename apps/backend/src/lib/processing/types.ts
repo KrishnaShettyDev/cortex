@@ -4,7 +4,8 @@
  * Production-grade processing with full observability.
  * Extended pipeline: queued → extracting → chunking → embedding → indexing
  *                   → temporal_extraction → entity_extraction
- *                   → importance_scoring → commitment_extraction → done
+ *                   → importance_scoring → commitment_extraction
+ *                   → learning_extraction → done
  */
 
 export type ProcessingStatus =
@@ -17,6 +18,7 @@ export type ProcessingStatus =
   | 'entity_extraction'     // Extracting entities and relationships
   | 'importance_scoring'    // Calculating memory importance
   | 'commitment_extraction' // Extracting commitments and promises
+  | 'learning_extraction'   // Extracting patterns and preferences
   | 'done'                  // Successfully completed
   | 'failed';               // Processing failed
 
@@ -46,11 +48,13 @@ export interface ProcessingMetrics {
   entityExtractionDurationMs?: number;
   importanceScoringDurationMs?: number;
   commitmentExtractionDurationMs?: number;
+  learningExtractionDurationMs?: number;
 
   // Intelligence metrics
   entitiesExtracted?: number;
   relationshipsExtracted?: number;
   commitmentsExtracted?: number;
+  learningsExtracted?: number;
   importanceScore?: number;
 
   // Resource metrics
@@ -172,6 +176,17 @@ export interface CommitmentExtractionResult {
   totalCommitments: number;
 }
 
+export interface LearningExtractionResult {
+  learnings: Array<{
+    id: string;
+    category: string;
+    statement: string;
+    confidence: number;
+  }>;
+  totalLearnings: number;
+  conflictsDetected: number;
+}
+
 /**
  * Processing context passed through pipeline
  */
@@ -195,6 +210,7 @@ export interface ProcessingContext {
   entityResult?: EntityExtractionResult;
   importanceResult?: ImportanceScoringResult;
   commitmentResult?: CommitmentExtractionResult;
+  learningResult?: LearningExtractionResult;
 
   // Memory record (fetched during processing)
   memory?: any;
@@ -268,5 +284,12 @@ export class CommitmentExtractionError extends ProcessingError {
   constructor(message: string, retryable = true, metadata?: Record<string, any>) {
     super('commitment_extraction', message, retryable, metadata);
     this.name = 'CommitmentExtractionError';
+  }
+}
+
+export class LearningExtractionError extends ProcessingError {
+  constructor(message: string, retryable = true, metadata?: Record<string, any>) {
+    super('learning_extraction', message, retryable, metadata);
+    this.name = 'LearningExtractionError';
   }
 }

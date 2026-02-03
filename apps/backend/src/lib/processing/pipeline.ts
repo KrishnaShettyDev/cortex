@@ -109,15 +109,35 @@ export class ProcessingPipeline {
         await this.runCommitmentExtraction();
       });
 
+      // Step 9: Extract learnings (patterns and preferences)
+      await this.runStep('learning_extraction', async () => {
+        await this.runLearningExtraction();
+      });
+
       // Mark as done
       await this.markDone();
 
       console.log(`[Pipeline] ✓ Completed in ${job.metrics.totalDurationMs}ms`);
-      console.log(`[Pipeline] Metrics:`, {
-        chunks: job.metrics.chunkCount,
-        tokens: job.metrics.tokenCount,
-        retries: job.metrics.retryCount,
-      });
+
+      // Print detailed stage breakdown for performance monitoring
+      console.log(`[Pipeline] Stage Breakdown:`);
+      console.log(`  extracting:        ${(job.metrics.extractionDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  chunking:          ${(job.metrics.chunkingDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  embedding:         ${(job.metrics.embeddingDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  indexing:          ${(job.metrics.indexingDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  temporal:          ${(job.metrics.temporalExtractionDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  entity_extraction: ${(job.metrics.entityExtractionDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  importance:        ${(job.metrics.importanceScoringDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  commitment:        ${(job.metrics.commitmentExtractionDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  learning:          ${(job.metrics.learningExtractionDurationMs || 0).toString().padStart(6)}ms`);
+      console.log(`  TOTAL:             ${job.metrics.totalDurationMs.toString().padStart(6)}ms`);
+
+      console.log(`[Pipeline] Extraction Results:`);
+      console.log(`  entities:     ${job.metrics.entitiesExtracted || 0}`);
+      console.log(`  relationships: ${job.metrics.relationshipsExtracted || 0}`);
+      console.log(`  commitments:  ${job.metrics.commitmentsExtracted || 0}`);
+      console.log(`  learnings:    ${job.metrics.learningsExtracted || 0}`);
+      console.log(`  importance:   ${(job.metrics.importanceScore || 0).toFixed(3)}`);
 
       console.log(`[Pipeline] ========== EXECUTE COMPLETE ==========`);
       return job;
@@ -199,6 +219,12 @@ export class ProcessingPipeline {
           job.metrics.commitmentExtractionDurationMs = durationMs;
           if (this.ctx.commitmentResult) {
             job.metrics.commitmentsExtracted = this.ctx.commitmentResult.totalCommitments;
+          }
+          break;
+        case 'learning_extraction':
+          job.metrics.learningExtractionDurationMs = durationMs;
+          if (this.ctx.learningResult) {
+            job.metrics.learningsExtracted = this.ctx.learningResult.totalLearnings;
           }
           break;
       }
@@ -644,6 +670,48 @@ export class ProcessingPipeline {
       this.ctx.commitmentResult = {
         commitments: [],
         totalCommitments: 0,
+      };
+    }
+  }
+
+  /**
+   * Step 9: Extract learnings (patterns and preferences)
+   */
+  private async runLearningExtraction() {
+    const memory = await this.getMemory();
+    const { job } = this.ctx;
+    const { extractAndSaveLearnings } = await import('../cognitive/learning/extractor');
+
+    try {
+      const result = await extractAndSaveLearnings(
+        this.ctx.env.DB,
+        this.ctx.env.AI,
+        job.userId,
+        job.containerTag,
+        memory.id,
+        memory.content
+      );
+      const learnings = result.saved || [];
+
+      this.ctx.learningResult = {
+        learnings: learnings.map(l => ({
+          id: l.id,
+          category: l.category,
+          statement: l.statement,
+          confidence: l.confidence,
+        })),
+        totalLearnings: learnings.length,
+        conflictsDetected: result.conflicts?.length || 0,
+      };
+
+      console.log(`[Pipeline] Extracted ${learnings.length} learnings (${result.conflicts?.length || 0} conflicts)`);
+    } catch (error) {
+      // Non-blocking - learning extraction failure shouldn't stop pipeline
+      console.warn(`[Pipeline] Learning extraction failed (non-critical):`, error);
+      this.ctx.learningResult = {
+        learnings: [],
+        totalLearnings: 0,
+        conflictsDetected: 0,
       };
     }
   }
