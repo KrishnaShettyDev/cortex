@@ -4,17 +4,23 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cortex/core": "workspace:*",
+    "google-auth-library": "^9.15.0",
     "hono": "^4.7.11",
     "jose": "^5.9.6",
-    "google-auth-library": "^9.15.0",
-    "nanoid": "^5.0.9"
+    "nanoid": "^5.0.9",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250110.0",
+    "vitest": "^4.0.18",
     "wrangler": "^3.101.0"
   }
 }

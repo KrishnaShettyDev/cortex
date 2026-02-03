@@ -7,8 +7,12 @@ dist/
 .turbo/
 .wrangler/
 
-# Environment
+# Environment files - NEVER commit secrets
 .env
+.env.*
+.env.local
+.env.development
+.env.production
 .dev.vars
 
 # Secrets
