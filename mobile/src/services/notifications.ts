@@ -285,9 +285,13 @@ class NotificationService {
 
   /**
    * Register push token with backend.
+   * Also sends user's timezone for timezone-aware notifications.
    */
   private async registerToken(token: string, Device: typeof DeviceType): Promise<void> {
     try {
+      // Get user's timezone
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
       await api.request('/notifications/register', {
         method: 'POST',
         body: {
@@ -296,7 +300,16 @@ class NotificationService {
           device_name: Device.deviceName || `${Device.brand} ${Device.modelName}`,
         },
       });
-      logger.log('Push token registered with backend');
+
+      // Also update timezone in notification preferences
+      await api.request('/notifications/preferences', {
+        method: 'PUT',
+        body: { timezone },
+      }).catch(() => {
+        // Ignore errors - preferences might not exist yet
+      });
+
+      logger.log('Push token registered with backend, timezone:', timezone);
     } catch (error) {
       logger.error('Failed to register push token:', error);
     }

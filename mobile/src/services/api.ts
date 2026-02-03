@@ -541,4 +541,25 @@ class ApiService {
   }
 }
 
-export const api = new ApiService();
+// Convenience methods
+const apiService = new ApiService();
+
+export const api = {
+  request: apiService.request.bind(apiService),
+  streamRequest: apiService.streamRequest.bind(apiService),
+  uploadAudioWithTranscription: apiService.uploadAudioWithTranscription.bind(apiService),
+  uploadPhoto: apiService.uploadPhoto.bind(apiService),
+
+  // HTTP method shortcuts
+  get: <T>(endpoint: string, options?: Omit<RequestOptions, 'method'>) =>
+    apiService.request<T>(endpoint, { ...options, method: 'GET' }),
+
+  post: <T>(endpoint: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>) =>
+    apiService.request<T>(endpoint, { ...options, method: 'POST', body }),
+
+  put: <T>(endpoint: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>) =>
+    apiService.request<T>(endpoint, { ...options, method: 'PUT', body }),
+
+  delete: <T>(endpoint: string, options?: Omit<RequestOptions, 'method'>) =>
+    apiService.request<T>(endpoint, { ...options, method: 'DELETE' }),
+};
