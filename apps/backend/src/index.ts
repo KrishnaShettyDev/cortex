@@ -30,6 +30,8 @@ import briefingRouter from './handlers/briefing';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 import { handleSleepComputeCron } from './lib/cognitive/sleep/cron';
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
+import { notificationHandlers } from './handlers/notifications';
+import { processScheduledNotifications } from './lib/notifications/scheduler';
 import { tenantScopeMiddleware, tenantAuditMiddleware, tenantRateLimitMiddleware } from './lib/multi-tenancy/middleware';
 import { PerformanceTimer, logPerformance, trackPerformanceMetrics } from './lib/monitoring/performance';
 import { handleUncaughtError } from './lib/monitoring/errors';
@@ -422,6 +424,18 @@ app.post('/v3/sync/connections/:id/sync', syncHandlers.triggerManualSyncHandler)
 app.get('/v3/sync/connections/:id/logs', syncHandlers.getSyncLogsHandler);
 app.get('/v3/sync/status', syncHandlers.getSyncStatusHandler);
 
+// Push notification endpoints (protected)
+app.use('/notifications/*', async (c, next) => {
+  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
+  return jwtMiddleware(c, next);
+});
+app.post('/notifications/register', notificationHandlers.registerPushToken);
+app.post('/notifications/unregister', notificationHandlers.unregisterPushToken);
+app.get('/notifications/preferences', notificationHandlers.getNotificationPreferences);
+app.put('/notifications/preferences', notificationHandlers.updateNotificationPreferences);
+app.post('/notifications/test', notificationHandlers.sendTestNotification);
+app.get('/notifications/status', notificationHandlers.getNotificationStatus);
+
 export default {
   fetch: app.fetch,
 
@@ -452,9 +466,14 @@ export default {
     try {
       // Run scheduled syncs (every 5 minutes for realtime, hourly for others)
       if (event.cron === '*/5 * * * *') {
+        // Run scheduled syncs
         const orchestrator = new SyncOrchestrator(env);
-        const results = await orchestrator.runScheduledSyncs();
-        console.log(`[Scheduled] Syncs completed: ${results.synced} synced, ${results.failed} failed`);
+        const syncResults = await orchestrator.runScheduledSyncs();
+        console.log(`[Scheduled] Syncs completed: ${syncResults.synced} synced, ${syncResults.failed} failed`);
+
+        // Run scheduled notifications (briefings, nudges based on user timezones)
+        const notifResults = await processScheduledNotifications(env.DB, env.AI);
+        console.log(`[Scheduled] Notifications: ${notifResults.sent} sent, ${notifResults.skipped} skipped, ${notifResults.failed} failed`);
       }
 
       // Run sleep compute (3am, 9am, 3pm, 9pm UTC)
