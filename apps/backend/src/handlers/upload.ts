@@ -10,7 +10,8 @@ import type { Context } from 'hono';
 import type { Bindings } from '../types';
 import { nanoid } from 'nanoid';
 import { createMemory } from '../lib/db/memories';
-import { enqueueProcessingJob, createProcessingJob } from '../lib/queue/producer';
+import { enqueueProcessingJob } from '../lib/queue/producer';
+import { createProcessingJob } from '../lib/processing/pipeline';
 
 // Supported audio formats
 const SUPPORTED_AUDIO_FORMATS = ['audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/m4a', 'audio/x-m4a'];
