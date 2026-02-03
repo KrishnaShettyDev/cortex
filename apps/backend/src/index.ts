@@ -27,6 +27,9 @@ import beliefsRouter from './handlers/beliefs';
 import outcomesRouter from './handlers/outcomes';
 import sleepRouter from './handlers/sleep';
 import briefingRouter from './handlers/briefing';
+import actionsRouter from './handlers/actions';
+import webhooksRouter from './handlers/webhooks';
+import mcpRouter from './handlers/mcp';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 import { handleSleepComputeCron } from './lib/cognitive/sleep/cron';
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
@@ -259,18 +262,38 @@ app.get('/auth/me', authHandlers.getCurrentUser);
 // REMOVED: Test token endpoint was a critical security vulnerability
 // Never expose test token generation in production
 
+// Helper function for JWT auth with proper error handling
+async function authenticateWithJwt(c: any, next: () => Promise<void>) {
+  try {
+    const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
+    await jwtMiddleware(c, next);
+  } catch (error: any) {
+    const message = error.message || 'Unauthorized';
+
+    if (message.includes('exp') || message.includes('expired') || message.includes('claim')) {
+      return c.json(
+        { error: 'Token expired', code: 'TOKEN_EXPIRED', message: 'Access token has expired. Please refresh your token.' },
+        401
+      );
+    }
+
+    if (message.includes('invalid') || message.includes('signature') || message.includes('malformed')) {
+      return c.json(
+        { error: 'Invalid token', code: 'TOKEN_INVALID', message: 'Access token is invalid. Please re-authenticate.' },
+        401
+      );
+    }
+
+    return c.json({ error: 'Unauthorized', code: 'UNAUTHORIZED', message }, 401);
+  }
+}
+
 // API key generation (protected)
-app.use('/auth/api-key', async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
-  return jwtMiddleware(c, next);
-});
+app.use('/auth/api-key', authenticateWithJwt);
 app.post('/auth/api-key', authHandlers.generateApiKey);
 
 // Account deletion (protected) - App Store compliance
-app.use('/auth/account', async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
-  return jwtMiddleware(c, next);
-});
+app.use('/auth/account', authenticateWithJwt);
 app.delete('/auth/account', authHandlers.deleteAccount);
 
 // Public stubs (mobile app compatibility)
@@ -292,15 +315,8 @@ app.get('/chat/briefing', (c) =>
 app.get('/autonomous-actions', (c) => c.json([]));
 
 // Protected middleware
-app.use('/api/*', async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
-  return jwtMiddleware(c, next);
-});
-
-app.use('/integrations/*', async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
-  return jwtMiddleware(c, next);
-});
+app.use('/api/*', authenticateWithJwt);
+app.use('/integrations/*', authenticateWithJwt);
 
 // Protected routes - Memories
 app.get('/api/memories', memoryHandlers.listMemories);
@@ -322,10 +338,7 @@ app.post('/integrations/calendar/sync', integrationHandlers.triggerCalendarSync)
 app.delete('/integrations/:provider', integrationHandlers.disconnectIntegration);
 
 // v3 API - Context Cloud (Supermemory-style)
-app.use('/v3/*', async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
-  await jwtMiddleware(c, next);
-});
+app.use('/v3/*', authenticateWithJwt);
 
 // Extract userId from JWT payload
 app.use('/v3/*', async (c, next) => {
@@ -411,6 +424,9 @@ app.route('/v3/sleep', sleepRouter);
 // Briefing endpoint (consolidated mobile home screen data)
 app.route('/v3/briefing', briefingRouter);
 
+// Actions endpoint (action execution via Composio)
+app.route('/v3/actions', actionsRouter);
+
 // Upload endpoints (audio transcription, text)
 app.post('/v3/upload/audio', uploadHandlers.uploadAudio);
 app.post('/v3/upload/text', uploadHandlers.uploadText);
@@ -425,16 +441,19 @@ app.get('/v3/sync/connections/:id/logs', syncHandlers.getSyncLogsHandler);
 app.get('/v3/sync/status', syncHandlers.getSyncStatusHandler);
 
 // Push notification endpoints (protected)
-app.use('/notifications/*', async (c, next) => {
-  const jwtMiddleware = jwt({ secret: c.env.JWT_SECRET, alg: 'HS256' });
-  return jwtMiddleware(c, next);
-});
+app.use('/notifications/*', authenticateWithJwt);
 app.post('/notifications/register', notificationHandlers.registerPushToken);
 app.post('/notifications/unregister', notificationHandlers.unregisterPushToken);
 app.get('/notifications/preferences', notificationHandlers.getNotificationPreferences);
 app.put('/notifications/preferences', notificationHandlers.updateNotificationPreferences);
 app.post('/notifications/test', notificationHandlers.sendTestNotification);
 app.get('/notifications/status', notificationHandlers.getNotificationStatus);
+
+// Webhooks (public - no auth, verified by signature)
+app.route('/webhooks', webhooksRouter);
+
+// MCP Server (Model Context Protocol for AI clients)
+app.route('/mcp', mcpRouter);
 
 export default {
   fetch: app.fetch,

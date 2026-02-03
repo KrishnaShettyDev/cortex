@@ -30,16 +30,33 @@ export async function handleError<T>(
   }
 }
 
+function isAuthError(message: string): boolean {
+  const authPatterns = [
+    'Unauthorized',
+    'token',
+    'exp',           // JWT expiration claim
+    'claim',         // JWT claim errors
+    'expired',
+    'invalid',
+    'signature',
+    'malformed',
+  ];
+  return authPatterns.some(pattern => message.toLowerCase().includes(pattern.toLowerCase()));
+}
+
 function getErrorStatus(message: string): number {
   if (message.includes('not found')) return 404;
-  if (message.includes('Unauthorized') || message.includes('token')) return 401;
+  if (isAuthError(message)) return 401;
   if (message.includes('empty') || message.includes('required')) return 400;
   return 500;
 }
 
 function getErrorType(message: string): string {
   if (message.includes('not found')) return 'Not found';
-  if (message.includes('Unauthorized') || message.includes('token')) return 'Unauthorized';
+  if (isAuthError(message)) {
+    if (message.includes('exp') || message.includes('expired')) return 'Token expired';
+    return 'Unauthorized';
+  }
   if (message.includes('OpenAI')) return 'AI service error';
   if (message.includes('empty') || message.includes('required')) return 'Invalid request';
   return 'Internal server error';
