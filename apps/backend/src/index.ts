@@ -21,20 +21,46 @@ import consolidationRouter from './handlers/consolidation';
 import commitmentsRouter from './handlers/commitments';
 import relationshipRouter from './handlers/relationship';
 import performanceRouter from './handlers/performance';
+import learningsRouter from './handlers/learnings';
+import beliefsRouter from './handlers/beliefs';
+import outcomesRouter from './handlers/outcomes';
+import sleepRouter from './handlers/sleep';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
+import { handleSleepComputeCron } from './lib/cognitive/sleep/cron';
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
-import { tenantScopeMiddleware, tenantAuditMiddleware } from './lib/multi-tenancy/middleware';
+import { tenantScopeMiddleware, tenantAuditMiddleware, tenantRateLimitMiddleware } from './lib/multi-tenancy/middleware';
 import { PerformanceTimer, logPerformance, trackPerformanceMetrics } from './lib/monitoring/performance';
 import { handleUncaughtError } from './lib/monitoring/errors';
 import { handleQueueBatch, type QueueEnv } from './lib/queue/consumer';
 import type { QueueMessage } from './lib/queue/producer';
+import { validateBody } from './lib/validation/middleware';
+import {
+  appleAuthSchema,
+  googleAuthSchema,
+  refreshTokenSchema,
+  createMemorySchema,
+  searchSchema,
+  recallSchema,
+} from './lib/validation/schemas';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 // Global middleware
 app.use('*', logger());
 app.use('*', cors({
-  origin: ['https://app.askcortex.plutas.in', 'http://localhost:3000'],
+  origin: (origin) => {
+    // Production origins
+    const allowedOrigins = [
+      'https://app.askcortex.plutas.in',
+      'https://askcortex.plutas.in',
+    ];
+    // Allow localhost only in development (check ENVIRONMENT variable)
+    if (origin && allowedOrigins.includes(origin)) {
+      return origin;
+    }
+    // Return first allowed origin for requests without origin (like mobile apps)
+    return allowedOrigins[0];
+  },
   credentials: true,
 }));
 
@@ -147,6 +173,44 @@ app.get('/', (c) =>
           stats: '/v3/performance/stats',
           metrics: '/v3/performance/metrics',
         },
+        learnings: {
+          list: '/v3/learnings',
+          get: '/v3/learnings/:id',
+          profile: '/v3/learnings/profile',
+          categories: '/v3/learnings/categories',
+          validate: '/v3/learnings/:id/validate',
+          invalidate: '/v3/learnings/:id/invalidate',
+          backfill: '/v3/learnings/backfill (POST to start, GET for progress)',
+          backfill_pause: '/v3/learnings/backfill/pause',
+        },
+        beliefs: {
+          list: '/v3/beliefs',
+          get: '/v3/beliefs/:id',
+          stats: '/v3/beliefs/stats',
+          conflicts: '/v3/beliefs/conflicts',
+          form: '/v3/beliefs/form (POST - form beliefs from learnings)',
+          add_evidence: '/v3/beliefs/:id/evidence (POST)',
+          update: '/v3/beliefs/:id/update (POST - Bayesian update)',
+          invalidate: '/v3/beliefs/:id/invalidate (POST)',
+          resolve_conflict: '/v3/beliefs/conflicts/:id/resolve (POST)',
+        },
+        outcomes: {
+          intelligent_recall: '/v3/recall/intelligent (POST - recall with tracking)',
+          list: '/v3/outcomes',
+          get: '/v3/outcomes/:id',
+          stats: '/v3/outcomes/stats',
+          reasoning: '/v3/outcomes/:id/reasoning',
+          feedback: '/v3/outcomes/:id/feedback (POST)',
+          propagate: '/v3/outcomes/:id/propagate (POST)',
+          propagate_pending: '/v3/outcomes/propagate-pending (POST)',
+        },
+        sleep: {
+          run: '/v3/sleep/run (POST - trigger sleep compute manually)',
+          jobs: '/v3/sleep/jobs',
+          job_detail: '/v3/sleep/jobs/:id',
+          context: '/v3/sleep/context (pre-computed session context)',
+          stats: '/v3/sleep/stats',
+        },
         provenance: {
           chain: '/v3/provenance/:artifactType/:artifactId',
           entity_sources: '/v3/provenance/entity/:entityId/sources',
@@ -176,15 +240,14 @@ app.get('/', (c) =>
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-// Public routes
-app.post('/auth/apple', authHandlers.appleLogin);
-app.post('/auth/google', authHandlers.googleLogin);
-app.post('/auth/refresh', authHandlers.refreshToken);
+// Public routes with validation
+app.post('/auth/apple', validateBody(appleAuthSchema), authHandlers.appleLogin);
+app.post('/auth/google', validateBody(googleAuthSchema), authHandlers.googleLogin);
+app.post('/auth/refresh', validateBody(refreshTokenSchema), authHandlers.refreshToken);
 app.get('/auth/me', authHandlers.getCurrentUser);
 
-// TEMPORARY: Development-only test token endpoint
-// WARNING: Remove this before public launch
-app.get('/auth/test-token', authHandlers.generateTestToken);
+// REMOVED: Test token endpoint was a critical security vulnerability
+// Never expose test token generation in production
 
 // API key generation (protected)
 app.use('/auth/api-key', async (c, next) => {
@@ -259,14 +322,16 @@ app.use('/v3/*', async (c, next) => {
 // Multi-tenancy middleware for v3 API
 app.use('/v3/*', tenantScopeMiddleware);
 app.use('/v3/*', tenantAuditMiddleware);
+app.use('/v3/*', tenantRateLimitMiddleware);
 
-app.post('/v3/memories', contextHandlers.addMemory);
+// Memory endpoints with validation
+app.post('/v3/memories', validateBody(createMemorySchema), contextHandlers.addMemory);
 app.post('/v3/memories/batch-contextual', contextHandlers.addContextualMemories);
 app.get('/v3/memories', contextHandlers.listMemories);
 app.put('/v3/memories/:id', contextHandlers.updateMemoryHandler);
 app.delete('/v3/memories/:id', contextHandlers.deleteMemory);
-app.post('/v3/search', contextHandlers.search);
-app.post('/v3/recall', contextHandlers.recall);
+app.post('/v3/search', validateBody(searchSchema), contextHandlers.search);
+app.post('/v3/recall', validateBody(recallSchema), contextHandlers.recall);
 app.get('/v3/profile', contextHandlers.getProfile);
 
 // Processing pipeline endpoints
@@ -313,6 +378,19 @@ app.route('/v3/nudges', relationshipRouter);
 // Performance monitoring endpoints
 app.route('/v3/performance', performanceRouter);
 
+// Cognitive layer endpoints (learnings)
+app.route('/v3/learnings', learningsRouter);
+
+// Cognitive layer endpoints (beliefs - Bayesian system)
+app.route('/v3/beliefs', beliefsRouter);
+
+// Cognitive layer endpoints (outcomes - learning loop)
+app.route('/v3/outcomes', outcomesRouter);
+app.route('/v3/recall', outcomesRouter);
+
+// Sleep compute endpoints
+app.route('/v3/sleep', sleepRouter);
+
 // Sync infrastructure endpoints
 app.get('/v3/sync/connections', syncHandlers.listSyncConnectionsHandler);
 app.post('/v3/sync/connections', syncHandlers.createSyncConnectionHandler);
@@ -357,8 +435,14 @@ export default {
         console.log(`[Scheduled] Syncs completed: ${results.synced} synced, ${results.failed} failed`);
       }
 
+      // Run sleep compute (3am, 9am, 3pm, 9pm UTC)
+      if (['0 3 * * *', '0 9 * * *', '0 15 * * *', '0 21 * * *'].includes(event.cron)) {
+        console.log('[Scheduled] Running sleep compute');
+        await handleSleepComputeCron(env);
+      }
+
       // Run weekly consolidation (Sunday 2am)
-      if (event.cron === '0 2 * * 0') {
+      if (event.cron === '0 2 * * SUN') {
         console.log('[Scheduled] Running weekly consolidation');
 
         // Get active users
