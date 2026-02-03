@@ -196,7 +196,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   user_id TEXT NOT NULL,
   key_hash TEXT NOT NULL UNIQUE, -- SHA-256 hash of actual key
   name TEXT NOT NULL,
-  prefix TEXT NOT NULL, -- First 8 chars for display (e.g., "sm_1234")
+  prefix TEXT NOT NULL, -- First 8 chars for display (e.g., "ctx_a1b2")
+  is_active INTEGER DEFAULT 1 CHECK(is_active IN (0, 1)),
   last_used_at TEXT,
   expires_at TEXT,
   created_at TEXT NOT NULL,
@@ -206,6 +207,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE INDEX idx_api_keys_user ON api_keys(user_id);
 CREATE INDEX idx_api_keys_hash ON api_keys(key_hash);
+CREATE INDEX idx_api_keys_active ON api_keys(key_hash) WHERE is_active = 1;
 
 -- Sessions (JWT refresh tokens)
 CREATE TABLE IF NOT EXISTS sessions (

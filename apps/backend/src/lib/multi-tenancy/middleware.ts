@@ -8,12 +8,13 @@
 import { Context, Next } from 'hono';
 import type { Bindings } from '../../types';
 import { ensureScope, validateContainerTag } from './scoping';
-import { TenantRateLimiter } from './isolation';
+import { KVRateLimiter } from './isolation';
 
 /**
- * Rate limiter instance (shared across requests)
+ * KV-based rate limiter for distributed rate limiting
+ * Uses Cloudflare KV for persistence across worker instances
  */
-const rateLimiter = new TenantRateLimiter({
+const rateLimiter = new KVRateLimiter({
   maxRequestsPerMinute: 60,
   maxRequestsPerHour: 1000,
 });
@@ -52,7 +53,7 @@ export async function tenantScopeMiddleware(
 }
 
 /**
- * Middleware: Rate limiting per tenant
+ * Middleware: Rate limiting per tenant using KV storage
  */
 export async function tenantRateLimitMiddleware(
   c: Context<{ Bindings: Bindings }>,
@@ -65,15 +66,36 @@ export async function tenantRateLimitMiddleware(
     return;
   }
 
-  const check = rateLimiter.checkLimit(scope);
+  // Use KV-based rate limiting (requires CACHE KV namespace)
+  const kv = c.env.CACHE;
+  if (!kv) {
+    // No KV configured, skip rate limiting but log warning
+    console.warn('[RateLimiter] CACHE KV namespace not configured - rate limiting disabled');
+    await next();
+    return;
+  }
+
+  const check = await rateLimiter.checkLimit(kv, scope);
   if (!check.allowed) {
+    // Add rate limit headers
+    c.header('X-RateLimit-Remaining-Minute', String(check.remaining?.minute ?? 0));
+    c.header('X-RateLimit-Remaining-Hour', String(check.remaining?.hour ?? 0));
+    c.header('Retry-After', '60');
+
     return c.json(
       {
         error: 'Rate limit exceeded',
         reason: check.reason,
+        retry_after_seconds: 60,
       },
       429
     );
+  }
+
+  // Add rate limit headers for successful requests
+  if (check.remaining) {
+    c.header('X-RateLimit-Remaining-Minute', String(check.remaining.minute));
+    c.header('X-RateLimit-Remaining-Hour', String(check.remaining.hour));
   }
 
   await next();

@@ -11,11 +11,13 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
 import { createMCPServer, type JsonRpcRequest } from '../lib/mcp';
+import { verifyApiKey } from '../lib/api-keys';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 /**
  * Authenticate MCP requests via API key
+ * SECURITY: Uses SHA-256 hashing for key verification
  */
 async function authenticateMCPRequest(
   c: any
@@ -27,21 +29,14 @@ async function authenticateMCPRequest(
     return null;
   }
 
-  // Look up API key
-  const keyRecord = await c.env.DB.prepare(
-    'SELECT user_id, expires_at FROM api_keys WHERE key_hash = ? AND is_active = 1'
-  ).bind(apiKey).first() as { user_id: string; expires_at: string | null } | null;
+  // Verify API key (hashes input and compares against stored hash)
+  const result = await verifyApiKey(c.env.DB, apiKey);
 
-  if (!keyRecord) {
+  if (!result.valid || !result.userId) {
     return null;
   }
 
-  // Check expiration
-  if (keyRecord.expires_at && new Date(keyRecord.expires_at) < new Date()) {
-    return null;
-  }
-
-  return { userId: keyRecord.user_id };
+  return { userId: result.userId };
 }
 
 /**

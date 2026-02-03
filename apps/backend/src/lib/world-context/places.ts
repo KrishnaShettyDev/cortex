@@ -2,11 +2,15 @@
  * Places Service
  *
  * Fetches nearby places and restaurants using Yelp Fusion API.
+ *
+ * RESILIENCE: All requests have timeouts to prevent hanging
  */
 
 import type { Place, PlacesSearchResponse } from './types';
+import { fetchWithTimeout, DEFAULT_TIMEOUTS } from '../fetch-with-timeout';
 
 const YELP_BASE = 'https://api.yelp.com/v3';
+const PLACES_TIMEOUT = DEFAULT_TIMEOUTS.NORMAL; // Places API timeout
 
 export interface PlacesServiceConfig {
   yelpApiKey?: string;
@@ -79,10 +83,11 @@ export class PlacesService {
         searchParams.append('categories', categories.join(','));
       }
 
-      const response = await fetch(`${YELP_BASE}/businesses/search?${searchParams}`, {
+      const response = await fetchWithTimeout(`${YELP_BASE}/businesses/search?${searchParams}`, {
         headers: {
           Authorization: `Bearer ${this.yelpApiKey}`,
         },
+        timeout: PLACES_TIMEOUT,
       });
 
       if (!response.ok) {
@@ -178,10 +183,11 @@ export class PlacesService {
         searchParams.append('open_now', 'true');
       }
 
-      const response = await fetch(`${YELP_BASE}/businesses/search?${searchParams}`, {
+      const response = await fetchWithTimeout(`${YELP_BASE}/businesses/search?${searchParams}`, {
         headers: {
           Authorization: `Bearer ${this.yelpApiKey}`,
         },
+        timeout: PLACES_TIMEOUT,
       });
 
       if (!response.ok) {
@@ -233,10 +239,11 @@ export class PlacesService {
     }
 
     try {
-      const response = await fetch(`${YELP_BASE}/businesses/${businessId}`, {
+      const response = await fetchWithTimeout(`${YELP_BASE}/businesses/${businessId}`, {
         headers: {
           Authorization: `Bearer ${this.yelpApiKey}`,
         },
+        timeout: PLACES_TIMEOUT,
       });
 
       if (!response.ok) {

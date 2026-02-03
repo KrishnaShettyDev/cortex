@@ -3,11 +3,15 @@
  *
  * Provides web search and news using Serper.dev API.
  * Falls back to simple fetch if no API key configured.
+ *
+ * RESILIENCE: All requests have timeouts to prevent hanging
  */
 
 import type { SearchResult, WebSearchResponse, NewsArticle, NewsResponse } from './types';
+import { fetchWithTimeout, DEFAULT_TIMEOUTS } from '../fetch-with-timeout';
 
 const SERPER_BASE = 'https://google.serper.dev';
+const SEARCH_TIMEOUT = DEFAULT_TIMEOUTS.NORMAL; // Search API timeout
 
 export interface SearchServiceConfig {
   serperApiKey?: string;
@@ -51,7 +55,7 @@ export class SearchService {
     }
 
     try {
-      const response = await fetch(`${SERPER_BASE}/search`, {
+      const response = await fetchWithTimeout(`${SERPER_BASE}/search`, {
         method: 'POST',
         headers: {
           'X-API-KEY': this.serperApiKey,
@@ -62,6 +66,7 @@ export class SearchService {
           num: numResults,
           gl: location || 'us',
         }),
+        timeout: SEARCH_TIMEOUT,
       });
 
       if (!response.ok) {
@@ -129,7 +134,7 @@ export class SearchService {
     }
 
     try {
-      const response = await fetch(`${SERPER_BASE}/news`, {
+      const response = await fetchWithTimeout(`${SERPER_BASE}/news`, {
         method: 'POST',
         headers: {
           'X-API-KEY': this.serperApiKey,
@@ -140,6 +145,7 @@ export class SearchService {
           num: numResults,
           gl: location || 'us',
         }),
+        timeout: SEARCH_TIMEOUT,
       });
 
       if (!response.ok) {

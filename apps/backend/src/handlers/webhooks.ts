@@ -4,12 +4,15 @@
  * Handles incoming webhooks from external services:
  * - Composio (Gmail, Calendar) push notifications
  * - Real-time event triggers
+ *
+ * SECURITY: All webhooks verify signatures before processing
  */
 
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
 import { createEmailImportanceScorer } from '../lib/email';
 import { sendPushNotification } from '../lib/notifications/push-service';
+import { verifyComposioSignature, verifyGooglePubSubWebhook } from '../lib/webhook-signature';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -53,14 +56,29 @@ interface CalendarEventPayload {
 /**
  * POST /webhooks/composio
  * Main Composio webhook endpoint
+ *
+ * SECURITY: Verifies HMAC-SHA256 signature before processing
  */
 app.post('/composio', async (c) => {
   try {
-    // Verify webhook signature (if configured)
-    const signature = c.req.header('x-composio-signature');
-    // TODO: Implement signature verification when Composio provides it
+    // Get raw body for signature verification
+    const rawBody = await c.req.text();
 
-    const payload: ComposioWebhookPayload = await c.req.json();
+    // Verify webhook signature
+    const signature = c.req.header('x-composio-signature');
+    const verificationResult = await verifyComposioSignature(
+      rawBody,
+      signature,
+      c.env.COMPOSIO_WEBHOOK_SECRET
+    );
+
+    if (!verificationResult.valid) {
+      console.error(`[Webhook] Composio signature verification failed: ${verificationResult.error}`);
+      return c.json({ error: 'Unauthorized: Invalid webhook signature' }, 401);
+    }
+
+    // Parse the verified payload
+    const payload: ComposioWebhookPayload = JSON.parse(rawBody);
 
     console.log(`[Webhook] Received ${payload.event_type} from Composio for user ${payload.entity_id}`);
 

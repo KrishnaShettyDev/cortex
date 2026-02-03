@@ -62,7 +62,7 @@ export async function determineAUDNAction(
   // 2. Fetch full memory content
   const similarMemories = await Promise.all(
     similarMatches.map(async (match) => {
-      const memory = await getMemoryById(env.DB, match.id);
+      const memory = await getMemoryById(env.DB, match.id, userId);
       return {
         id: match.id,
         content: memory?.content || '',

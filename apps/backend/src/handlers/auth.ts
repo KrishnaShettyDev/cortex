@@ -13,6 +13,12 @@ import {
   verifyToken,
 } from '../auth';
 import { handleError } from '../utils/errors';
+import {
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+  deleteApiKey,
+} from '../lib/api-keys';
 
 /**
  * Shared OAuth authentication flow
@@ -310,5 +316,151 @@ export async function deleteAccount(c: Context<{ Bindings: Bindings }>) {
       tablesProcessed: deletedTables,
       warnings: errors.length > 0 ? errors : undefined,
     });
+  });
+}
+
+/**
+ * POST /auth/api-keys
+ * Create a new API key for MCP access
+ *
+ * SECURITY: Key is returned ONCE - store it securely.
+ * Only the SHA-256 hash is stored in the database.
+ */
+export async function createApiKeyHandler(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing authorization header' }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+
+    const body = await c.req.json<{
+      name: string;
+      expires_in_days?: number;
+    }>();
+
+    if (!body.name || body.name.trim().length === 0) {
+      return c.json({ error: 'API key name is required' }, 400);
+    }
+
+    // Limit API keys per user
+    const existingKeys = await listApiKeys(c.env.DB, payload.sub);
+    if (existingKeys.length >= 10) {
+      return c.json({ error: 'Maximum 10 API keys allowed per user' }, 400);
+    }
+
+    const result = await createApiKey(
+      c.env.DB,
+      payload.sub,
+      body.name.trim(),
+      body.expires_in_days
+    );
+
+    console.log(`[Auth] API key created for user ${payload.sub}: ${result.prefix}...`);
+
+    return c.json({
+      key: result.key, // Only time raw key is returned!
+      id: result.id,
+      prefix: result.prefix,
+      name: result.name,
+      expires_at: result.expires_at,
+      created_at: result.created_at,
+      warning: 'Store this key securely. It will not be shown again.',
+    });
+  });
+}
+
+/**
+ * GET /auth/api-keys
+ * List all API keys for the current user
+ */
+export async function listApiKeysHandler(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing authorization header' }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+
+    const keys = await listApiKeys(c.env.DB, payload.sub);
+
+    return c.json({
+      api_keys: keys.map((k) => ({
+        id: k.id,
+        name: k.name,
+        prefix: k.prefix + '...',
+        last_used_at: k.last_used_at,
+        expires_at: k.expires_at,
+        is_active: k.is_active,
+        created_at: k.created_at,
+      })),
+      total: keys.length,
+    });
+  });
+}
+
+/**
+ * DELETE /auth/api-keys/:id
+ * Delete an API key
+ */
+export async function deleteApiKeyHandler(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing authorization header' }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+
+    const keyId = c.req.param('id');
+    if (!keyId) {
+      return c.json({ error: 'API key ID is required' }, 400);
+    }
+
+    const deleted = await deleteApiKey(c.env.DB, keyId, payload.sub);
+
+    if (!deleted) {
+      return c.json({ error: 'API key not found' }, 404);
+    }
+
+    console.log(`[Auth] API key deleted for user ${payload.sub}: ${keyId}`);
+
+    return c.json({ deleted: true });
+  });
+}
+
+/**
+ * POST /auth/api-keys/:id/revoke
+ * Revoke (deactivate) an API key without deleting it
+ */
+export async function revokeApiKeyHandler(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing authorization header' }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+
+    const keyId = c.req.param('id');
+    if (!keyId) {
+      return c.json({ error: 'API key ID is required' }, 400);
+    }
+
+    const revoked = await revokeApiKey(c.env.DB, keyId, payload.sub);
+
+    if (!revoked) {
+      return c.json({ error: 'API key not found' }, 404);
+    }
+
+    console.log(`[Auth] API key revoked for user ${payload.sub}: ${keyId}`);
+
+    return c.json({ revoked: true });
   });
 }

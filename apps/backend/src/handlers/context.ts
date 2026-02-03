@@ -408,9 +408,9 @@ export async function deleteMemory(c: Context<{ Bindings: Bindings }>) {
     const userId = c.get('jwtPayload').sub;
     const memoryId = c.req.param('id');
 
-    // Verify ownership
-    const memory = await getMemoryById(c.env.DB, memoryId);
-    if (!memory || memory.user_id !== userId) {
+    // Get memory (with user_id filter for security)
+    const memory = await getMemoryById(c.env.DB, memoryId, userId);
+    if (!memory) {
       return c.json({ error: 'Memory not found' }, 404);
     }
 
@@ -436,9 +436,9 @@ export async function updateMemoryHandler(c: Context<{ Bindings: Bindings }>) {
       relationType?: 'updates' | 'extends';
     }>();
 
-    // Verify ownership
-    const memory = await getMemoryById(c.env.DB, memoryId);
-    if (!memory || memory.user_id !== userId) {
+    // Get memory (with user_id filter for security)
+    const memory = await getMemoryById(c.env.DB, memoryId, userId);
+    if (!memory) {
       return c.json({ error: 'Memory not found' }, 404);
     }
 

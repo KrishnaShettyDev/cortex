@@ -133,7 +133,12 @@ app.get('/', (c) =>
         google: '/auth/google',
         refresh: '/auth/refresh',
         me: '/auth/me',
-        generate_api_key: '/auth/api-key (POST, requires auth)',
+        api_keys: {
+          create: '/auth/api-keys (POST, requires auth)',
+          list: '/auth/api-keys (GET, requires auth)',
+          delete: '/auth/api-keys/:id (DELETE, requires auth)',
+          revoke: '/auth/api-keys/:id/revoke (POST, requires auth)',
+        },
         delete_account: '/auth/account (DELETE, requires auth)',
       },
       v3: {
@@ -288,9 +293,21 @@ async function authenticateWithJwt(c: any, next: () => Promise<void>) {
   }
 }
 
-// API key generation (protected)
+// API key management (protected)
+// - POST /auth/api-keys: Create new API key (returns raw key ONCE)
+// - GET /auth/api-keys: List API keys (shows prefix only)
+// - DELETE /auth/api-keys/:id: Delete an API key
+// - POST /auth/api-keys/:id/revoke: Revoke (deactivate) an API key
+app.use('/auth/api-keys', authenticateWithJwt);
+app.use('/auth/api-keys/*', authenticateWithJwt);
+app.post('/auth/api-keys', authHandlers.createApiKeyHandler);
+app.get('/auth/api-keys', authHandlers.listApiKeysHandler);
+app.delete('/auth/api-keys/:id', authHandlers.deleteApiKeyHandler);
+app.post('/auth/api-keys/:id/revoke', authHandlers.revokeApiKeyHandler);
+
+// Legacy API key endpoint (redirects to new endpoint)
 app.use('/auth/api-key', authenticateWithJwt);
-app.post('/auth/api-key', authHandlers.generateApiKey);
+app.post('/auth/api-key', authHandlers.createApiKeyHandler);
 
 // Account deletion (protected) - App Store compliance
 app.use('/auth/account', authenticateWithJwt);

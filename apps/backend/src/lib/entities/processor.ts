@@ -153,7 +153,7 @@ export class EntityProcessor {
           console.log(
             `[EntityProcessor] Deduplicated: ${extracted.name} -> ${deduplicationResult.matched_entity_id} (${deduplicationResult.match_type}, confidence: ${deduplicationResult.confidence})`
           );
-          entity = await getEntityById(this.db, deduplicationResult.matched_entity_id);
+          entity = await getEntityById(this.db, deduplicationResult.matched_entity_id, userId);
           if (!entity) {
             throw new Error(`Matched entity ${deduplicationResult.matched_entity_id} not found`);
           }

@@ -12,6 +12,7 @@ export interface Bindings {
   OPENAI_API_KEY: string;
   JWT_SECRET: string;
   COMPOSIO_API_KEY: string;
+  COMPOSIO_WEBHOOK_SECRET?: string; // HMAC secret for webhook signature verification
   GOOGLE_CLIENT_ID?: string;
   // World context API keys
   OPENWEATHER_API_KEY?: string;

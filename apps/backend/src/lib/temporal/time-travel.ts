@@ -82,21 +82,23 @@ export async function timeTravelQuery(
 
 /**
  * Get memory history (all versions/supersessions)
+ * SECURITY: Always requires userId to prevent cross-tenant data access
  */
 export async function getMemoryHistory(
   db: D1Database,
-  memoryId: string
+  memoryId: string,
+  userId: string
 ): Promise<TemporalMemory[]> {
   try {
-    // Get the memory and trace back supersession chain
+    // Get the memory and trace back supersession chain (with user_id filter)
     const memory = await db
       .prepare(
         `SELECT id, user_id, content, valid_from, valid_to, event_date,
                 supersedes, superseded_by, memory_type, created_at, updated_at
          FROM memories
-         WHERE id = ?`
+         WHERE id = ? AND user_id = ?`
       )
-      .bind(memoryId)
+      .bind(memoryId, userId)
       .first<TemporalMemory>();
 
     if (!memory) {
@@ -105,7 +107,7 @@ export async function getMemoryHistory(
 
     const history: TemporalMemory[] = [memory];
 
-    // Trace back through supersedes chain
+    // Trace back through supersedes chain (with user_id filter)
     let currentId = memory.supersedes;
     while (currentId) {
       const predecessor = await db
@@ -113,9 +115,9 @@ export async function getMemoryHistory(
           `SELECT id, user_id, content, valid_from, valid_to, event_date,
                   supersedes, superseded_by, memory_type, created_at, updated_at
            FROM memories
-           WHERE id = ?`
+           WHERE id = ? AND user_id = ?`
         )
-        .bind(currentId)
+        .bind(currentId, userId)
         .first<TemporalMemory>();
 
       if (!predecessor) break;
@@ -130,7 +132,7 @@ export async function getMemoryHistory(
       }
     }
 
-    // Trace forward through superseded_by chain
+    // Trace forward through superseded_by chain (with user_id filter)
     currentId = memory.superseded_by;
     while (currentId) {
       const successor = await db
@@ -138,9 +140,9 @@ export async function getMemoryHistory(
           `SELECT id, user_id, content, valid_from, valid_to, event_date,
                   supersedes, superseded_by, memory_type, created_at, updated_at
            FROM memories
-           WHERE id = ?`
+           WHERE id = ? AND user_id = ?`
         )
-        .bind(currentId)
+        .bind(currentId, userId)
         .first<TemporalMemory>();
 
       if (!successor) break;

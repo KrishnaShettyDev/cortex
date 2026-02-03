@@ -67,9 +67,9 @@ export async function getEntity(c: Context<{ Bindings: Bindings }>) {
     const userId = c.get('jwtPayload').sub;
     const entityId = c.req.param('id');
 
-    // Get entity
-    const entity = await getEntityById(c.env.DB, entityId);
-    if (!entity || entity.user_id !== userId) {
+    // Get entity (with user_id filter for security)
+    const entity = await getEntityById(c.env.DB, entityId, userId);
+    if (!entity) {
       return c.json({ error: 'Entity not found' }, 404);
     }
 
@@ -90,7 +90,7 @@ export async function getEntity(c: Context<{ Bindings: Bindings }>) {
     });
 
     const relatedEntities = await Promise.all(
-      Array.from(relatedEntityIds).map((id) => getEntityById(c.env.DB, id))
+      Array.from(relatedEntityIds).map((id) => getEntityById(c.env.DB, id, userId))
     );
 
     const relatedEntitiesMap = new Map(
@@ -100,7 +100,7 @@ export async function getEntity(c: Context<{ Bindings: Bindings }>) {
     // Get recent memories
     const memoryIds = await getEntityMemories(c.env.DB, entityId, 10);
     const memories = await Promise.all(
-      memoryIds.map((id) => getMemoryById(c.env.DB, id))
+      memoryIds.map((id) => getMemoryById(c.env.DB, id, userId))
     );
 
     return c.json({
@@ -161,9 +161,9 @@ export async function getEntityRelationshipsHandler(
     const relationshipType = c.req.query('relationship_type');
     const validAt = c.req.query('valid_at'); // ISO date
 
-    // Verify entity belongs to user
-    const entity = await getEntityById(c.env.DB, entityId);
-    if (!entity || entity.user_id !== userId) {
+    // Verify entity belongs to user (with user_id filter for security)
+    const entity = await getEntityById(c.env.DB, entityId, userId);
+    if (!entity) {
       return c.json({ error: 'Entity not found' }, 404);
     }
 
@@ -181,7 +181,7 @@ export async function getEntityRelationshipsHandler(
     });
 
     const relatedEntities = await Promise.all(
-      Array.from(relatedEntityIds).map((id) => getEntityById(c.env.DB, id))
+      Array.from(relatedEntityIds).map((id) => getEntityById(c.env.DB, id, userId))
     );
 
     const entityMap = new Map(
@@ -225,15 +225,15 @@ export async function getEntityMemoriesHandler(
     const entityId = c.req.param('id');
     const limit = parseInt(c.req.query('limit') || '50');
 
-    // Verify entity belongs to user
-    const entity = await getEntityById(c.env.DB, entityId);
-    if (!entity || entity.user_id !== userId) {
+    // Verify entity belongs to user (with user_id filter for security)
+    const entity = await getEntityById(c.env.DB, entityId, userId);
+    if (!entity) {
       return c.json({ error: 'Entity not found' }, 404);
     }
 
     const memoryIds = await getEntityMemories(c.env.DB, entityId, limit);
     const memories = await Promise.all(
-      memoryIds.map((id) => getMemoryById(c.env.DB, id))
+      memoryIds.map((id) => getMemoryById(c.env.DB, id, userId))
     );
 
     return c.json({
@@ -253,6 +253,7 @@ export async function getEntityMemoriesHandler(
 /**
  * GET /v3/graph/search
  * Search entities by name or attributes
+ * SECURITY: Uses escaped LIKE patterns to prevent injection
  */
 export async function searchEntities(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
@@ -266,13 +267,16 @@ export async function searchEntities(c: Context<{ Bindings: Bindings }>) {
       return c.json({ error: 'Query is required' }, 400);
     }
 
-    // Simple search using LIKE
+    // Import escape utility
+    const { buildLikePattern } = await import('../lib/sql-escape');
+
+    // Simple search using LIKE (with escaped patterns)
     let sql = `
       SELECT * FROM entities
       WHERE user_id = ?
-      AND (name LIKE ? OR canonical_name LIKE ?)
+      AND (name LIKE ? ESCAPE '\\' OR canonical_name LIKE ? ESCAPE '\\')
     `;
-    const bindings: any[] = [userId, `%${query}%`, `%${query.toLowerCase()}%`];
+    const bindings: any[] = [userId, buildLikePattern(query, 'both'), buildLikePattern(query.toLowerCase(), 'both')];
 
     if (entityType) {
       sql += ' AND entity_type = ?';

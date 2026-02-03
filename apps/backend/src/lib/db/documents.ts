@@ -124,14 +124,16 @@ export async function updateDocumentStatus(
 
 /**
  * Get document by ID
+ * SECURITY: Always requires userId to prevent cross-tenant data access
  */
 export async function getDocumentById(
   db: D1Database,
-  documentId: string
+  documentId: string,
+  userId: string
 ): Promise<Document | null> {
   const result = await db
-    .prepare('SELECT * FROM documents WHERE id = ?')
-    .bind(documentId)
+    .prepare('SELECT * FROM documents WHERE id = ? AND user_id = ?')
+    .bind(documentId, userId)
     .first<Document>();
 
   return result;

@@ -3,11 +3,15 @@
  *
  * Fetches weather data using OpenWeatherMap API.
  * Supports current conditions, forecasts, and alerts.
+ *
+ * RESILIENCE: All requests have timeouts to prevent hanging
  */
 
 import type { WeatherData, DailyForecast, WeatherAlert } from './types';
+import { fetchWithTimeout, DEFAULT_TIMEOUTS } from '../fetch-with-timeout';
 
 const OPENWEATHERMAP_BASE = 'https://api.openweathermap.org/data/2.5';
+const WEATHER_TIMEOUT = DEFAULT_TIMEOUTS.FAST; // Weather API is fast
 
 export interface WeatherServiceConfig {
   apiKey: string;
@@ -42,13 +46,15 @@ export class WeatherService {
     }
 
     try {
-      // Fetch current weather and forecast in parallel
+      // Fetch current weather and forecast in parallel with timeout
       const [currentRes, forecastRes] = await Promise.all([
-        fetch(
-          `${OPENWEATHERMAP_BASE}/weather?lat=${latitude}&lon=${longitude}&units=${units}&appid=${this.apiKey}`
+        fetchWithTimeout(
+          `${OPENWEATHERMAP_BASE}/weather?lat=${latitude}&lon=${longitude}&units=${units}&appid=${this.apiKey}`,
+          { timeout: WEATHER_TIMEOUT }
         ),
-        fetch(
-          `${OPENWEATHERMAP_BASE}/forecast?lat=${latitude}&lon=${longitude}&units=${units}&appid=${this.apiKey}`
+        fetchWithTimeout(
+          `${OPENWEATHERMAP_BASE}/forecast?lat=${latitude}&lon=${longitude}&units=${units}&appid=${this.apiKey}`,
+          { timeout: WEATHER_TIMEOUT }
         ),
       ]);
 
@@ -106,8 +112,9 @@ export class WeatherService {
     }
 
     try {
-      const response = await fetch(
-        `${OPENWEATHERMAP_BASE}/weather?q=${encodeURIComponent(city)}&units=${units}&appid=${this.apiKey}`
+      const response = await fetchWithTimeout(
+        `${OPENWEATHERMAP_BASE}/weather?q=${encodeURIComponent(city)}&units=${units}&appid=${this.apiKey}`,
+        { timeout: WEATHER_TIMEOUT }
       );
 
       if (!response.ok) {
@@ -117,8 +124,9 @@ export class WeatherService {
       const current = await response.json();
 
       // Get forecast using coordinates
-      const forecastRes = await fetch(
-        `${OPENWEATHERMAP_BASE}/forecast?lat=${current.coord.lat}&lon=${current.coord.lon}&units=${units}&appid=${this.apiKey}`
+      const forecastRes = await fetchWithTimeout(
+        `${OPENWEATHERMAP_BASE}/forecast?lat=${current.coord.lat}&lon=${current.coord.lon}&units=${units}&appid=${this.apiKey}`,
+        { timeout: WEATHER_TIMEOUT }
       );
       const forecast = forecastRes.ok ? await forecastRes.json() : null;
 

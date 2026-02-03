@@ -111,14 +111,16 @@ export async function upsertEntity(
 
 /**
  * Get entity by ID
+ * SECURITY: Always requires userId to prevent cross-tenant data access
  */
 export async function getEntityById(
   db: D1Database,
-  entityId: string
+  entityId: string,
+  userId: string
 ): Promise<Entity | null> {
   const result = await db
-    .prepare('SELECT * FROM entities WHERE id = ?')
-    .bind(entityId)
+    .prepare('SELECT * FROM entities WHERE id = ? AND user_id = ?')
+    .bind(entityId, userId)
     .first<any>();
 
   if (!result) return null;

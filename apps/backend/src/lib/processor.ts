@@ -33,7 +33,7 @@ export async function processMemory(
 
   try {
     // Get memory
-    const memory = await getMemoryById(env.DB, memoryId);
+    const memory = await getMemoryById(env.DB, memoryId, userId);
     if (!memory) {
       throw new Error(`Memory ${memoryId} not found`);
     }

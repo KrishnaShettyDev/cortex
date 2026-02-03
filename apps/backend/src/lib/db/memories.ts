@@ -265,14 +265,16 @@ export async function getLatestMemories(
 
 /**
  * Get memory by ID
+ * SECURITY: Always requires userId to prevent cross-tenant data access
  */
 export async function getMemoryById(
   db: D1Database,
-  memoryId: string
+  memoryId: string,
+  userId: string
 ): Promise<Memory | null> {
   const result = await db
-    .prepare('SELECT * FROM memories WHERE id = ?')
-    .bind(memoryId)
+    .prepare('SELECT * FROM memories WHERE id = ? AND user_id = ?')
+    .bind(memoryId, userId)
     .first<Memory>();
 
   return result;
@@ -280,23 +282,25 @@ export async function getMemoryById(
 
 /**
  * Get memory version history
+ * SECURITY: Always requires userId to prevent cross-tenant data access
  */
 export async function getMemoryHistory(
   db: D1Database,
-  memoryId: string
+  memoryId: string,
+  userId: string
 ): Promise<Memory[]> {
-  // Get root ID
-  const memory = await getMemoryById(db, memoryId);
+  // Get root ID (with user_id filter)
+  const memory = await getMemoryById(db, memoryId, userId);
   if (!memory) return [];
 
   const rootId = memory.root_memory_id || memory.id;
 
-  // Get all versions in chain
+  // Get all versions in chain (with user_id filter)
   const result = await db
     .prepare(
-      'SELECT * FROM memories WHERE id = ? OR root_memory_id = ? ORDER BY version DESC'
+      'SELECT * FROM memories WHERE (id = ? OR root_memory_id = ?) AND user_id = ? ORDER BY version DESC'
     )
-    .bind(rootId, rootId)
+    .bind(rootId, rootId, userId)
     .all<Memory>();
 
   return result.results || [];
@@ -319,6 +323,7 @@ export async function forgetMemory(
 
 /**
  * Search memories by content (simple text search, vector search in separate module)
+ * SECURITY: Uses escapeLikePattern to prevent SQL injection via LIKE wildcards
  */
 export async function searchMemories(
   db: D1Database,
@@ -329,6 +334,9 @@ export async function searchMemories(
     limit?: number;
   }
 ): Promise<Memory[]> {
+  // Import escape utility (inline to avoid circular deps)
+  const { buildLikePattern, buildKeywordSearch } = await import('../sql-escape');
+
   // Tokenize query to avoid SQLite LIKE pattern complexity
   // Split on whitespace and filter out short words
   const keywords = query
@@ -339,14 +347,15 @@ export async function searchMemories(
 
   if (keywords.length === 0) {
     // Fallback: no valid keywords, try simple search
+    // SECURITY: Escape LIKE pattern to prevent wildcard injection
     let sql = `
       SELECT * FROM memories
       WHERE user_id = ?
         AND is_latest = 1
         AND is_forgotten = 0
-        AND content LIKE ?
+        AND content LIKE ? ESCAPE '\\'
     `;
-    const params: any[] = [userId, `%${query}%`];
+    const params: any[] = [userId, buildLikePattern(query, 'both')];
 
     if (options?.containerTag) {
       sql += ` AND container_tag = ?`;
@@ -361,15 +370,16 @@ export async function searchMemories(
   }
 
   // Build query with OR conditions for each keyword
-  const likeConditions = keywords.map(() => 'content LIKE ?').join(' OR ');
+  // SECURITY: Use buildKeywordSearch which escapes all patterns
+  const { condition, params: keywordParams } = buildKeywordSearch(keywords, 'content', 'OR');
   let sql = `
     SELECT * FROM memories
     WHERE user_id = ?
       AND is_latest = 1
       AND is_forgotten = 0
-      AND (${likeConditions})
+      AND ${condition}
   `;
-  const params: any[] = [userId, ...keywords.map((kw) => `%${kw}%`)];
+  const params: any[] = [userId, ...keywordParams];
 
   if (options?.containerTag) {
     sql += ` AND container_tag = ?`;

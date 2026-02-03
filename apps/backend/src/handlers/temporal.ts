@@ -76,12 +76,8 @@ export async function getMemoryHistoryHandler(
     const userId = c.get('jwtPayload').sub;
     const memoryId = c.req.param('id');
 
-    const history = await getMemoryHistory(c.env.DB, memoryId);
-
-    // Verify ownership (check first memory in history)
-    if (history.length > 0 && history[0].user_id !== userId) {
-      return c.json({ error: 'Memory not found' }, 404);
-    }
+    // Get memory history (with user_id filter for security)
+    const history = await getMemoryHistory(c.env.DB, memoryId, userId);
 
     return c.json({
       history: history.map((m) => ({

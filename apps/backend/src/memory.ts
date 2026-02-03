@@ -427,16 +427,23 @@ export async function searchMemories(
   // Generate query embedding
   const queryEmbedding = await generateEmbedding(query, openaiKey);
 
-  // Search in Vectorize
+  // Search in Vectorize with user filter
+  // SECURITY: Always filter by user_id at the vectorize level to prevent data leakage
+  const filter: Record<string, any> = { user_id: userId };
+  if (options.source) {
+    filter.source = options.source;
+  }
+
   const results = await vectorize.query(queryEmbedding, {
     topK: limit * 2, // Get more than needed for filtering
+    filter,
     returnMetadata: 'all',
   });
 
-  // Filter by user_id and source
+  // Additional filtering (safety net)
   const filtered = results.matches.filter((match) => {
+    // Double-check user_id in case filter wasn't applied
     if (match.metadata?.user_id !== userId) return false;
-    if (options.source && match.metadata?.source !== options.source) return false;
     return true;
   });
 

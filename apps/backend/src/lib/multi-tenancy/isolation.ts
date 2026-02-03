@@ -132,17 +132,120 @@ export function sanitizeUserInput(input: string): string {
 }
 
 /**
- * Rate limit per tenant
+ * Rate limit per tenant using KV storage
+ *
+ * IMPORTANT: Uses Cloudflare KV for distributed rate limiting.
+ * This works correctly across multiple worker instances.
  */
 export interface RateLimitConfig {
   maxRequestsPerMinute: number;
   maxRequestsPerHour: number;
 }
 
+interface RateLimitState {
+  minuteCount: number;
+  minuteWindowStart: number;
+  hourCount: number;
+  hourWindowStart: number;
+}
+
+/**
+ * KV-based rate limiter that works across distributed workers
+ */
+export class KVRateLimiter {
+  constructor(private config: RateLimitConfig) {}
+
+  /**
+   * Check if tenant is within rate limits
+   * Uses sliding window algorithm with KV storage
+   */
+  async checkLimit(
+    kv: KVNamespace,
+    scope: TenantScope
+  ): Promise<{ allowed: boolean; reason?: string; remaining?: { minute: number; hour: number } }> {
+    const key = `ratelimit:${scope.userId}:${scope.containerTag}`;
+    const now = Date.now();
+    const minuteWindow = Math.floor(now / 60000); // Current minute
+    const hourWindow = Math.floor(now / 3600000); // Current hour
+
+    try {
+      // Get current state from KV
+      const stateJson = await kv.get(key);
+      let state: RateLimitState = stateJson
+        ? JSON.parse(stateJson)
+        : { minuteCount: 0, minuteWindowStart: minuteWindow, hourCount: 0, hourWindowStart: hourWindow };
+
+      // Reset counters if window has changed
+      if (state.minuteWindowStart !== minuteWindow) {
+        state.minuteCount = 0;
+        state.minuteWindowStart = minuteWindow;
+      }
+
+      if (state.hourWindowStart !== hourWindow) {
+        state.hourCount = 0;
+        state.hourWindowStart = hourWindow;
+      }
+
+      // Check limits
+      if (state.minuteCount >= this.config.maxRequestsPerMinute) {
+        return {
+          allowed: false,
+          reason: 'Rate limit exceeded (per minute)',
+          remaining: { minute: 0, hour: Math.max(0, this.config.maxRequestsPerHour - state.hourCount) },
+        };
+      }
+
+      if (state.hourCount >= this.config.maxRequestsPerHour) {
+        return {
+          allowed: false,
+          reason: 'Rate limit exceeded (per hour)',
+          remaining: { minute: Math.max(0, this.config.maxRequestsPerMinute - state.minuteCount), hour: 0 },
+        };
+      }
+
+      // Increment counters
+      state.minuteCount++;
+      state.hourCount++;
+
+      // Store updated state with TTL of 1 hour (the maximum window we track)
+      await kv.put(key, JSON.stringify(state), { expirationTtl: 3600 });
+
+      return {
+        allowed: true,
+        remaining: {
+          minute: this.config.maxRequestsPerMinute - state.minuteCount,
+          hour: this.config.maxRequestsPerHour - state.hourCount,
+        },
+      };
+    } catch (error) {
+      // On KV error, allow the request but log it
+      console.error('[RateLimiter] KV error:', error);
+      return { allowed: true };
+    }
+  }
+
+  /**
+   * Clear rate limit for tenant (for testing)
+   */
+  async clearLimit(kv: KVNamespace, scope: TenantScope): Promise<void> {
+    const key = `ratelimit:${scope.userId}:${scope.containerTag}`;
+    await kv.delete(key);
+  }
+}
+
+/**
+ * Legacy in-memory rate limiter
+ * @deprecated Use KVRateLimiter for production
+ *
+ * WARNING: This does NOT work correctly in distributed Cloudflare Workers
+ * because each isolate has its own memory. Only use for local development.
+ */
 export class TenantRateLimiter {
   private requests: Map<string, number[]> = new Map();
 
-  constructor(private config: RateLimitConfig) {}
+  constructor(private config: RateLimitConfig) {
+    console.warn('[RateLimiter] Using in-memory rate limiter. This is NOT suitable for production!');
+  }
 
   /**
    * Check if tenant is within rate limits

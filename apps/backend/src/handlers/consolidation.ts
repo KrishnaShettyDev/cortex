@@ -22,15 +22,10 @@ app.post('/:memoryId/recalculate-importance', async (c) => {
   const userId = c.get('jwtPayload').sub;
   const { memoryId } = c.req.param();
 
-  // Get memory
-  const memory = await getMemoryById(c.env.DB, memoryId);
+  // Get memory (with user_id filter for security)
+  const memory = await getMemoryById(c.env.DB, memoryId, userId);
   if (!memory) {
     return c.json({ error: 'Memory not found' }, 404);
-  }
-
-  // Verify ownership
-  if (memory.user_id !== userId) {
-    return c.json({ error: 'Unauthorized' }, 403);
   }
 
   try {

@@ -3,9 +3,16 @@
  *
  * Handles OAuth flows, connected accounts, and tool execution for Gmail, Calendar, etc.
  * Base URL: https://backend.composio.dev/api/v3
+ *
+ * RESILIENCE: All requests have timeouts to prevent hanging
  */
 
+import { fetchWithTimeout, DEFAULT_TIMEOUTS, FetchTimeoutError } from './fetch-with-timeout';
+
 const COMPOSIO_API_BASE = 'https://backend.composio.dev/api/v3';
+
+/** Timeout for Composio API calls (30s - they can be slow) */
+const COMPOSIO_TIMEOUT = DEFAULT_TIMEOUTS.SLOW;
 
 export interface ComposioConfig {
   apiKey: string;
@@ -54,17 +61,26 @@ export class ComposioClient {
       ...options.headers,
     };
 
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
+    try {
+      const response = await fetchWithTimeout(url, {
+        ...options,
+        headers,
+        timeout: COMPOSIO_TIMEOUT,
+      });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Composio API error: ${response.status} - ${error}`);
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Composio API error: ${response.status} - ${error}`);
+      }
+
+      return response.json();
+    } catch (error: any) {
+      if (error instanceof FetchTimeoutError) {
+        console.error(`[Composio] Request to ${endpoint} timed out after ${COMPOSIO_TIMEOUT}ms`);
+        throw new Error(`Composio request timed out: ${endpoint}`);
+      }
+      throw error;
     }
-
-    return response.json();
   }
 
   /**
