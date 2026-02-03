@@ -29,3 +29,4 @@ export * from './AutonomousActionsList';
 export * from './ActionSuggestionPill';
 export * from './ActionReviewModal';
 export * from './GlassContainer';
+export * from './ProactiveNudges';

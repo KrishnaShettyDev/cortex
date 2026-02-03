@@ -77,4 +77,9 @@ export const queryKeys = {
     detail: (id: string) => ['autonomousActions', 'detail', id] as const,
     stats: () => ['autonomousActions', 'stats'] as const,
   },
+  // Nudges (proactive intelligence)
+  nudges: {
+    all: ['nudges'] as const,
+    list: () => ['nudges', 'list'] as const,
+  },
 };

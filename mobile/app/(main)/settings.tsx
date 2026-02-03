@@ -214,26 +214,6 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Menu</Text>
 
-          {/* Insights Row */}
-          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/insights')} activeOpacity={0.7}>
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="bulb-outline" size={20} color={colors.textSecondary} />
-            </View>
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Insights</Text>
-            <View style={{ flex: 1 }} />
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-
-          {/* Relationships Row */}
-          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/relationships')} activeOpacity={0.7}>
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="people-outline" size={20} color={colors.textSecondary} />
-            </View>
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Relationships</Text>
-            <View style={{ flex: 1 }} />
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-
           {/* Calendar Row */}
           <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/calendar')} activeOpacity={0.7}>
             <View style={styles.menuIconContainer}>

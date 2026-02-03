@@ -36,12 +36,11 @@ import {
   ThinkingIndicator,
   DailyBriefing,
   DayBriefingScroll,
-  AutonomousActionsList,
+  ProactiveNudges,
 } from '../../src/components';
-import { InsightsPillRow } from '../../src/components/InsightCards';
 import { useAuth } from '../../src/context/AuthContext';
 import { chatService, speechService, api, StatusUpdate } from '../../src/services';
-import { ChatMessage, PendingAction, MemoryReference, ProactiveInsightsResponse, ActionTaken } from '../../src/types';
+import { ChatMessage, PendingAction, MemoryReference, ActionTaken } from '../../src/types';
 import { colors, spacing, borderRadius, useTheme } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { useChatSuggestions, useGreeting } from '../../src/hooks/useChat';
@@ -94,10 +93,6 @@ export default function ChatScreen() {
   // Pull-to-refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Proactive insights state
-  const [insights, setInsights] = useState<ProactiveInsightsResponse | null>(null);
-  const [insightsLoading, setInsightsLoading] = useState(false);
-
   // Initialize input from draft
   useEffect(() => {
     if (chatDraft && !inputText) {
@@ -117,25 +112,6 @@ export default function ChatScreen() {
     }, [refetchSuggestions])
   );
 
-  // Fetch proactive insights when screen loads
-  const fetchInsights = useCallback(async () => {
-    try {
-      setInsightsLoading(true);
-      const data = await chatService.getInsights();
-      setInsights(data);
-    } catch (error) {
-      logger.warn('Failed to fetch insights:', error);
-    } finally {
-      setInsightsLoading(false);
-    }
-  }, []);
-
-  // Fetch insights on focus
-  useFocusEffect(
-    useCallback(() => {
-      fetchInsights();
-    }, [fetchInsights])
-  );
 
   // Auto-refresh suggestions when app comes to foreground
   useEffect(() => {
@@ -202,11 +178,11 @@ export default function ChatScreen() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await Promise.all([refetchSuggestions(), refetchGreeting(), fetchInsights()]);
+      await Promise.all([refetchSuggestions(), refetchGreeting()]);
     } finally {
       setIsRefreshing(false);
     }
-  }, [refetchSuggestions, refetchGreeting, fetchInsights]);
+  }, [refetchSuggestions, refetchGreeting]);
 
   // Action review state - now inline in chat
   const [actionToReview, setActionToReview] = useState<ActionData | null>(null);
@@ -531,32 +507,6 @@ export default function ChatScreen() {
     );
   };
 
-  // Handle insight pill tap - send query to chat
-  const handleInsightTap = () => {
-    if (!insights) return;
-
-    // Build a contextual message based on what needs attention
-    let message = '';
-
-    if (insights.pattern_warnings.length > 0) {
-      message = `Tell me about the "${insights.pattern_warnings[0].name}" pattern you noticed.`;
-    } else if (insights.upcoming_dates.length > 0) {
-      const d = insights.upcoming_dates[0];
-      message = `Remind me about ${d.person_name}'s ${d.date_label} and suggest gift ideas.`;
-    } else if (insights.neglected_relationships.length > 0) {
-      const r = insights.neglected_relationships[0];
-      message = `Help me reconnect with ${r.name}. What should I say?`;
-    } else if (insights.pending_promises.length > 0) {
-      message = `What promises have I made that I need to keep?`;
-    } else if (insights.pending_intentions.length > 0) {
-      message = `What have I committed to doing recently?`;
-    }
-
-    if (message) {
-      setInputText(message);
-    }
-  };
-
   // Handle briefing action tap - sends message to chat
   const handleBriefingAction = useCallback((actionPrompt: string) => {
     sendMessage(actionPrompt);
@@ -567,19 +517,10 @@ export default function ChatScreen() {
       <Text style={[styles.greetingText, { color: colors.textPrimary }]}>
         {getGreeting()}
       </Text>
-      {/* Autonomous Actions - Iris-style proactive suggestions */}
-      <AutonomousActionsList />
+      {/* Real proactive nudges from /v3/nudges */}
+      <ProactiveNudges onNudgeTap={sendMessage} maxNudges={3} />
       {/* Horizontal scroll day briefing */}
       <DayBriefingScroll onItemPress={handleBriefingAction} />
-      {/* Proactive Insights Pills */}
-      {insights && insights.total_attention_needed > 0 && (
-        <View style={styles.insightsContainer}>
-          <InsightsPillRow
-            insights={insights}
-            onPress={handleInsightTap}
-          />
-        </View>
-      )}
     </View>
   );
 
@@ -963,10 +904,6 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     marginBottom: spacing.xl,
     letterSpacing: 0.36,
-  },
-  insightsContainer: {
-    marginTop: spacing.md,
-    marginBottom: spacing.xl,
   },
   briefingPillContainer: {
     marginBottom: spacing.sm,
