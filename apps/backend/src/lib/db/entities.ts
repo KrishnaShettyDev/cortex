@@ -484,3 +484,348 @@ export async function invalidateRelationship(
     .bind(validToDate, new Date().toISOString(), relationshipId)
     .run();
 }
+
+// ============================================================================
+// BATCH OPERATIONS - Optimized for N+1 query prevention
+// ============================================================================
+
+/**
+ * Get multiple entities by IDs in a single query
+ * SECURITY: Always requires userId to prevent cross-tenant data access
+ *
+ * OPTIMIZATION: Single query instead of N queries
+ */
+export async function getEntitiesByIds(
+  db: D1Database,
+  entityIds: string[],
+  userId: string
+): Promise<Map<string, Entity>> {
+  if (entityIds.length === 0) {
+    return new Map();
+  }
+
+  // SQLite has a limit on number of placeholders, batch if needed
+  const BATCH_SIZE = 100;
+  const result = new Map<string, Entity>();
+
+  for (let i = 0; i < entityIds.length; i += BATCH_SIZE) {
+    const batch = entityIds.slice(i, i + BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+
+    const queryResult = await db
+      .prepare(
+        `SELECT * FROM entities WHERE id IN (${placeholders}) AND user_id = ?`
+      )
+      .bind(...batch, userId)
+      .all<any>();
+
+    for (const row of queryResult.results || []) {
+      result.set(row.id, {
+        ...row,
+        attributes: JSON.parse(row.attributes || '{}'),
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Find entities by multiple canonical names in a single query
+ * SECURITY: Always requires userId to prevent cross-tenant data access
+ *
+ * OPTIMIZATION: Single query for deduplication lookup
+ */
+export async function findEntitiesByCanonicalNames(
+  db: D1Database,
+  userId: string,
+  canonicalNames: string[]
+): Promise<Map<string, Entity[]>> {
+  if (canonicalNames.length === 0) {
+    return new Map();
+  }
+
+  const BATCH_SIZE = 100;
+  const result = new Map<string, Entity[]>();
+
+  for (let i = 0; i < canonicalNames.length; i += BATCH_SIZE) {
+    const batch = canonicalNames.slice(i, i + BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+
+    const queryResult = await db
+      .prepare(
+        `SELECT * FROM entities WHERE user_id = ? AND canonical_name IN (${placeholders})`
+      )
+      .bind(userId, ...batch)
+      .all<any>();
+
+    for (const row of queryResult.results || []) {
+      const entity: Entity = {
+        ...row,
+        attributes: JSON.parse(row.attributes || '{}'),
+      };
+
+      const existing = result.get(row.canonical_name) || [];
+      existing.push(entity);
+      result.set(row.canonical_name, existing);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Batch link memory to multiple entities
+ *
+ * OPTIMIZATION: Uses D1 batch for single round-trip
+ */
+export async function batchLinkMemoryToEntities(
+  db: D1Database,
+  memoryId: string,
+  links: Array<{
+    entityId: string;
+    role: EntityRole;
+    confidence: number;
+  }>
+): Promise<void> {
+  if (links.length === 0) {
+    return;
+  }
+
+  // Use D1 batch for atomic operation
+  const statements = links.map((link) =>
+    db
+      .prepare(
+        `INSERT OR REPLACE INTO memory_entities (memory_id, entity_id, role, confidence)
+         VALUES (?, ?, ?, ?)`
+      )
+      .bind(memoryId, link.entityId, link.role, link.confidence)
+  );
+
+  await db.batch(statements);
+}
+
+/**
+ * Batch upsert entities
+ *
+ * OPTIMIZATION: Single batch operation for multiple entities
+ * Returns a map of entity name -> entity for linking
+ */
+export async function batchUpsertEntities(
+  db: D1Database,
+  userId: string,
+  containerTag: string,
+  entities: Array<{
+    name: string;
+    entityType: string;
+    attributes: Record<string, any>;
+    importanceScore: number;
+  }>
+): Promise<Map<string, Entity>> {
+  if (entities.length === 0) {
+    return new Map();
+  }
+
+  const now = new Date().toISOString();
+  const result = new Map<string, Entity>();
+
+  // First, find all existing entities by canonical name
+  const canonicalNames = entities.map((e) =>
+    EntityExtractor.generateCanonicalName(e.name)
+  );
+  const existingMap = await findEntitiesByCanonicalNames(db, userId, canonicalNames);
+
+  // Separate into updates and inserts
+  const updates: D1PreparedStatement[] = [];
+  const inserts: D1PreparedStatement[] = [];
+  const entityMap = new Map<string, Entity>();
+
+  for (const entity of entities) {
+    const canonicalName = EntityExtractor.generateCanonicalName(entity.name);
+    const existingList = existingMap.get(canonicalName) || [];
+    const existing = existingList.find((e) => e.entity_type === entity.entityType);
+
+    if (existing) {
+      // Update existing
+      updates.push(
+        db
+          .prepare(
+            `UPDATE entities
+             SET name = ?, attributes = ?, importance_score = ?, mention_count = mention_count + 1, last_mentioned = ?, updated_at = ?
+             WHERE id = ?`
+          )
+          .bind(
+            entity.name,
+            JSON.stringify(entity.attributes),
+            Math.max(entity.importanceScore, existing.importance_score),
+            now,
+            now,
+            existing.id
+          )
+      );
+
+      const updated: Entity = {
+        ...existing,
+        name: entity.name,
+        attributes: entity.attributes,
+        importance_score: Math.max(entity.importanceScore, existing.importance_score),
+        mention_count: existing.mention_count + 1,
+        last_mentioned: now,
+        updated_at: now,
+      };
+      entityMap.set(entity.name, updated);
+      result.set(entity.name, updated);
+    } else {
+      // Insert new
+      const id = nanoid();
+      inserts.push(
+        db
+          .prepare(
+            `INSERT INTO entities (id, user_id, container_tag, name, canonical_name, entity_type, attributes, importance_score, mention_count, created_at, updated_at, last_mentioned)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            id,
+            userId,
+            containerTag,
+            entity.name,
+            canonicalName,
+            entity.entityType,
+            JSON.stringify(entity.attributes),
+            entity.importanceScore,
+            1,
+            now,
+            now,
+            now
+          )
+      );
+
+      const newEntity: Entity = {
+        id,
+        user_id: userId,
+        container_tag: containerTag,
+        name: entity.name,
+        canonical_name: canonicalName,
+        entity_type: entity.entityType,
+        attributes: entity.attributes,
+        importance_score: entity.importanceScore,
+        mention_count: 1,
+        created_at: now,
+        updated_at: now,
+        last_mentioned: now,
+      };
+      entityMap.set(entity.name, newEntity);
+      result.set(entity.name, newEntity);
+    }
+  }
+
+  // Execute batch operations
+  const allStatements = [...updates, ...inserts];
+  if (allStatements.length > 0) {
+    await db.batch(allStatements);
+  }
+
+  return result;
+}
+
+/**
+ * Batch upsert relationships
+ *
+ * OPTIMIZATION: Single batch operation for multiple relationships
+ */
+export async function batchUpsertRelationships(
+  db: D1Database,
+  userId: string,
+  memoryId: string,
+  relationships: Array<{
+    sourceEntityId: string;
+    targetEntityId: string;
+    relationshipType: string;
+    attributes?: Record<string, any>;
+    confidence?: number;
+  }>
+): Promise<void> {
+  if (relationships.length === 0) {
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  // First, find existing relationships
+  const checks = relationships.map((r) =>
+    `(source_entity_id = '${r.sourceEntityId}' AND target_entity_id = '${r.targetEntityId}' AND relationship_type = '${r.relationshipType}')`
+  );
+
+  const existingResult = await db
+    .prepare(
+      `SELECT id, source_entity_id, target_entity_id, relationship_type, source_memory_ids
+       FROM entity_relationships
+       WHERE (${checks.join(' OR ')}) AND valid_to IS NULL`
+    )
+    .all<any>();
+
+  const existingMap = new Map<string, any>();
+  for (const row of existingResult.results || []) {
+    const key = `${row.source_entity_id}:${row.target_entity_id}:${row.relationship_type}`;
+    existingMap.set(key, row);
+  }
+
+  // Build batch statements
+  const statements: D1PreparedStatement[] = [];
+
+  for (const rel of relationships) {
+    const key = `${rel.sourceEntityId}:${rel.targetEntityId}:${rel.relationshipType}`;
+    const existing = existingMap.get(key);
+
+    if (existing) {
+      // Update existing
+      const updatedMemoryIds = [
+        ...new Set([...JSON.parse(existing.source_memory_ids || '[]'), memoryId]),
+      ];
+
+      statements.push(
+        db
+          .prepare(
+            `UPDATE entity_relationships
+             SET attributes = ?, source_memory_ids = ?, confidence = ?, updated_at = ?
+             WHERE id = ?`
+          )
+          .bind(
+            JSON.stringify(rel.attributes || {}),
+            JSON.stringify(updatedMemoryIds),
+            rel.confidence || 0.8,
+            now,
+            existing.id
+          )
+      );
+    } else {
+      // Insert new
+      const id = nanoid();
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO entity_relationships (id, user_id, source_entity_id, target_entity_id, relationship_type, attributes, valid_from, valid_to, source_memory_ids, confidence, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            id,
+            userId,
+            rel.sourceEntityId,
+            rel.targetEntityId,
+            rel.relationshipType,
+            JSON.stringify(rel.attributes || {}),
+            now,
+            null,
+            JSON.stringify([memoryId]),
+            rel.confidence || 0.8,
+            now,
+            now
+          )
+      );
+    }
+  }
+
+  if (statements.length > 0) {
+    await db.batch(statements);
+  }
+}

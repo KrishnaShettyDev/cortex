@@ -13,11 +13,19 @@ export interface Bindings {
   JWT_SECRET: string;
   COMPOSIO_API_KEY: string;
   COMPOSIO_WEBHOOK_SECRET?: string; // HMAC secret for webhook signature verification
+  // Composio OAuth auth config IDs (from Composio dashboard)
+  COMPOSIO_GMAIL_AUTH_CONFIG_ID?: string;
+  COMPOSIO_CALENDAR_AUTH_CONFIG_ID?: string;
   GOOGLE_CLIENT_ID?: string;
   // World context API keys
   OPENWEATHER_API_KEY?: string;
   SERPER_API_KEY?: string;
   YELP_API_KEY?: string;
+  // APNs push notifications
+  APNS_KEY_ID?: string;
+  APNS_TEAM_ID?: string;
+  APNS_BUNDLE_ID?: string;
+  APNS_KEY_BASE64?: string; // Base64-encoded .p8 key
 }
 
 export interface ErrorResponse {

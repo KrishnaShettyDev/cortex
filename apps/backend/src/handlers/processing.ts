@@ -49,67 +49,39 @@ export async function createProcessingJob(c: Context<{ Bindings: Bindings }>) {
       scope.containerTag
     );
 
-    // Queue-based processing (if available) or fallback to sync
-    if (c.env.PROCESSING_QUEUE) {
-      // Async: Enqueue for background processing
-      await enqueueProcessingJob(
-        c.env.PROCESSING_QUEUE,
-        job.id,
-        memoryId,
-        scope.userId,
-        scope.containerTag
+    // Queue-based processing (required)
+    if (!c.env.PROCESSING_QUEUE) {
+      // No fallback - queue is required for reliable processing
+      console.error('[Processing] PROCESSING_QUEUE not configured. Queue is required for processing.');
+      return c.json(
+        {
+          error: 'Processing service unavailable',
+          message: 'Queue-based processing is required. Please ensure PROCESSING_QUEUE is configured.',
+        },
+        503
       );
-
-      return c.json({
-        success: true,
-        job: {
-          id: job.id,
-          memoryId: job.memoryId,
-          status: job.status,
-          currentStep: job.currentStep,
-          createdAt: job.createdAt,
-        },
-        message: 'Processing job queued. Use GET /v3/processing/jobs/:jobId to check status.',
-        processingMode: 'async',
-      });
-    } else {
-      // Fallback: Process synchronously in background (waitUntil)
-      console.warn('[Processing] Queue not available (requires Workers Paid plan), using waitUntil fallback');
-
-      const ctx = {
-        job,
-        env: {
-          DB: c.env.DB,
-          VECTORIZE: c.env.VECTORIZE,
-          AI: c.env.AI,
-        },
-      };
-
-      // Process in background (non-blocking)
-      c.executionCtx.waitUntil(
-        (async () => {
-          try {
-            const pipeline = new ProcessingPipeline(ctx);
-            await pipeline.execute();
-          } catch (error: any) {
-            console.error(`[Processing] Pipeline failed for job ${job.id}:`, error);
-          }
-        })()
-      );
-
-      return c.json({
-        success: true,
-        job: {
-          id: job.id,
-          memoryId: job.memoryId,
-          status: job.status,
-          currentStep: job.currentStep,
-          createdAt: job.createdAt,
-        },
-        message: 'Processing started in background. Use GET /v3/processing/jobs/:jobId to check status.',
-        processingMode: 'waitUntil',
-      });
     }
+
+    // Enqueue for background processing
+    await enqueueProcessingJob(
+      c.env.PROCESSING_QUEUE,
+      job.id,
+      memoryId,
+      scope.userId,
+      scope.containerTag
+    );
+
+    return c.json({
+      success: true,
+      job: {
+        id: job.id,
+        memoryId: job.memoryId,
+        status: job.status,
+        currentStep: job.currentStep,
+        createdAt: job.createdAt,
+      },
+      message: 'Processing job queued. Use GET /v3/processing/jobs/:jobId to check status.',
+    });
   } catch (error: any) {
     console.error('[Processing] Job creation failed:', error);
     return c.json(

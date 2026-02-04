@@ -115,6 +115,9 @@ export class BriefingIntelligence {
 
   /**
    * Generate a structured daily briefing for a user
+   *
+   * RESILIENCE: Uses Promise.allSettled for graceful degradation.
+   * If any data source fails, the briefing is still generated with partial data.
    */
   async generateBriefing(params: {
     userId: string;
@@ -131,19 +134,8 @@ export class BriefingIntelligence {
     // Get date boundaries in user's timezone
     const { todayStart, todayEnd, tomorrowEnd, weekEnd } = this.getDateBoundaries(timezone);
 
-    // Fetch all data in parallel
-    const [
-      userResult,
-      todayEventsResult,
-      overdueCommitmentsResult,
-      todayCommitmentsResult,
-      upcomingCommitmentsResult,
-      entitiesResult,
-      relationshipHealthResult,
-      memoriesCountResult,
-      recentLearningsResult,
-      worldContext,
-    ] = await Promise.all([
+    // RESILIENCE: Use Promise.allSettled so one failure doesn't break entire briefing
+    const results = await Promise.allSettled([
       // User info
       db.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first<{ name: string }>(),
 
@@ -220,29 +212,76 @@ export class BriefingIntelligence {
       this.fetchWorldContext({ latitude, longitude, city, timezone, db, userId }),
     ]);
 
-    // Parse results
-    const userName = userResult?.name || null;
-    const todayEvents = this.parseCalendarEvents(todayEventsResult?.results || []);
-    const overdueCommitments = this.parseCommitments(overdueCommitmentsResult?.results || [], 'overdue');
-    const todayCommitments = this.parseCommitments(todayCommitmentsResult?.results || [], 'pending');
-    const upcomingCommitments = this.parseCommitments(upcomingCommitmentsResult?.results || [], 'pending');
-    const entities = entitiesResult?.results || [];
-    const atRiskEntities = (relationshipHealthResult?.results || []).filter(
+    // Extract results with safe fallbacks
+    const [
+      userResult,
+      todayEventsResult,
+      overdueCommitmentsResult,
+      todayCommitmentsResult,
+      upcomingCommitmentsResult,
+      entitiesResult,
+      relationshipHealthResult,
+      memoriesCountResult,
+      recentLearningsResult,
+      worldContextResult,
+    ] = results;
+
+    // Log any failures for debugging (but don't crash)
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const queryNames = ['user', 'todayEvents', 'overdueCommitments', 'todayCommitments',
+          'upcomingCommitments', 'entities', 'relationshipHealth', 'memoriesCount',
+          'recentLearnings', 'worldContext'];
+        console.warn(`[Briefing] ${queryNames[index]} query failed:`, result.reason?.message || result.reason);
+      }
+    });
+
+    // Parse results with graceful degradation
+    const userName = userResult.status === 'fulfilled' ? userResult.value?.name || null : null;
+    const todayEvents = this.parseCalendarEvents(
+      todayEventsResult.status === 'fulfilled' ? todayEventsResult.value?.results || [] : []
+    );
+    const overdueCommitments = this.parseCommitments(
+      overdueCommitmentsResult.status === 'fulfilled' ? overdueCommitmentsResult.value?.results || [] : [],
+      'overdue'
+    );
+    const todayCommitments = this.parseCommitments(
+      todayCommitmentsResult.status === 'fulfilled' ? todayCommitmentsResult.value?.results || [] : [],
+      'pending'
+    );
+    const upcomingCommitments = this.parseCommitments(
+      upcomingCommitmentsResult.status === 'fulfilled' ? upcomingCommitmentsResult.value?.results || [] : [],
+      'pending'
+    );
+    const entities = entitiesResult.status === 'fulfilled' ? entitiesResult.value?.results || [] : [];
+    const relationshipHealthResults = relationshipHealthResult.status === 'fulfilled'
+      ? relationshipHealthResult.value?.results || []
+      : [];
+    const atRiskEntities = relationshipHealthResults.filter(
       (n: any) => n.nudge_type === 'at_risk'
     );
+    const worldContext = worldContextResult.status === 'fulfilled' ? worldContextResult.value : null;
 
-    // Generate meeting preps for next meeting
+    // Generate meeting preps for next meeting (with error handling)
     const nextMeeting = todayEvents.find(e => new Date(e.startTime) > now);
-    const meetingPreps = nextMeeting
-      ? await this.generateMeetingPrep(db, userId, nextMeeting, entities)
-      : [];
+    let meetingPreps: MeetingPrep[] = [];
+    try {
+      meetingPreps = nextMeeting
+        ? await this.generateMeetingPrep(db, userId, nextMeeting, entities)
+        : [];
+    } catch (error) {
+      console.warn('[Briefing] Meeting prep generation failed:', error);
+    }
 
     // Generate insights
+    const recentLearnings = recentLearningsResult.status === 'fulfilled'
+      ? recentLearningsResult.value?.results || []
+      : [];
     const insights = this.generateInsights({
       overdueCommitments,
       todayCommitments,
       atRiskEntities,
-      learnings: recentLearningsResult?.results || [],
+      learnings: recentLearnings,
       todayEvents,
     });
 
@@ -287,7 +326,7 @@ export class BriefingIntelligence {
       })),
 
       stats: {
-        totalMemories: memoriesCountResult?.count || 0,
+        totalMemories: memoriesCountResult.status === 'fulfilled' ? memoriesCountResult.value?.count || 0 : 0,
         totalEntities: entities.length,
         healthyRelationships: entities.length - atRiskEntities.length,
         atRiskRelationships: atRiskEntities.length,
