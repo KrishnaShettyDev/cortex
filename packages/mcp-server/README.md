@@ -7,10 +7,11 @@ Model Context Protocol server for Claude Desktop integration. Gives Claude acces
 | Feature | Cortex | Supermemory |
 |---------|--------|-------------|
 | **Security** | Encrypted API keys in config | Random URLs exposed |
-| **Tools** | 4 tools (search, add, profile, recall) | 2 tools (search, add) |
+| **Tools** | 8 tools (search, add, profile, recall, entities, commitments, nudges, learnings) | 2 tools (search, add) |
 | **Error Handling** | Graceful with clear messages | Often breaks silently |
 | **Performance** | Edge caching (fast) | Slower responses |
 | **Profile Support** | ✅ User context injection | ❌ No profile |
+| **Cognitive Layer** | ✅ Learnings, commitments, nudges | ❌ Basic storage only |
 | **Formatted Context** | ✅ Markdown recall | ❌ Raw JSON only |
 
 ## Installation
@@ -118,6 +119,57 @@ Recall memories formatted for conversation injection.
 ```json
 {
   "query": "work preferences",
+  "limit": 10
+}
+```
+
+### 5. `cortex_get_entities`
+
+Get key people, places, and organizations from memories.
+
+**Example**: "Who are the important people in my life?"
+
+```json
+{
+  "type": "person",
+  "limit": 10
+}
+```
+
+### 6. `cortex_get_commitments`
+
+Get pending tasks, promises, and deadlines.
+
+**Example**: "What do I need to do?"
+
+```json
+{
+  "status": "pending",
+  "limit": 10
+}
+```
+
+### 7. `cortex_get_nudges`
+
+Get relationship nudges - reminders to follow up with people.
+
+**Example**: "Anyone I should reach out to?"
+
+```json
+{
+  "limit": 5
+}
+```
+
+### 8. `cortex_get_learnings`
+
+Get auto-extracted learnings about user preferences and patterns.
+
+**Example**: "What have you learned about me?"
+
+```json
+{
+  "category": "preferences",
   "limit": 10
 }
 ```

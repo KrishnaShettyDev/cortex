@@ -1,19 +1,59 @@
 {
-  "name": "@cortex/core",
-  "version": "1.0.0",
+  "name": "@cortex/memory",
+  "version": "0.1.0",
+  "description": "Official TypeScript SDK for Cortex Memory API - the cognitive memory platform for AI",
   "type": "module",
   "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch"
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
   },
-  "dependencies": {
-    "openai": "^4.77.3",
-    "date-fns": "^4.1.0"
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "dev": "tsup src/index.ts --format esm,cjs --dts --watch",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "cortex",
+    "memory",
+    "ai",
+    "context",
+    "sdk",
+    "typescript",
+    "cognitive",
+    "beliefs",
+    "learnings",
+    "semantic-memory"
+  ],
+  "author": "Plutas Lab <team@plutaslab.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/plutaslab/cortex"
+  },
+  "homepage": "https://askcortex.in",
+  "bugs": {
+    "url": "https://github.com/plutaslab/cortex/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "@types/node": "^22.10.2"
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
