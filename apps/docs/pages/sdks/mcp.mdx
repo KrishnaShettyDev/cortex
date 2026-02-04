@@ -1,0 +1,303 @@
+# MCP Server
+
+Use Cortex with Claude Desktop, Cursor, and any MCP-compatible AI client. The MCP server exposes Cortex tools that AI assistants can use directly.
+
+## What is MCP?
+
+The Model Context Protocol (MCP) is an open standard that lets AI assistants use tools. When you install the Cortex MCP server, Claude Desktop or Cursor can:
+
+- Search your memories
+- Add new memories from conversations
+- Access your profile and beliefs
+- Get relationship nudges
+- Track commitments
+
+## Installation
+
+### Claude Desktop
+
+1. Find your config file:
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+2. Add the Cortex server:
+
+```json
+{
+  "mcpServers": {
+    "cortex": {
+      "command": "npx",
+      "args": ["-y", "@cortex/mcp"],
+      "env": {
+        "CORTEX_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+3. Restart Claude Desktop
+
+### Cursor
+
+1. Open Cursor settings
+2. Go to **MCP Servers**
+3. Add a new server with:
+   - **Name**: `cortex`
+   - **Command**: `npx -y @cortex/mcp`
+   - **Environment**: `CORTEX_API_KEY=your-api-key-here`
+
+Or edit `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "cortex": {
+      "command": "npx",
+      "args": ["-y", "@cortex/mcp"],
+      "env": {
+        "CORTEX_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}
+```
+
+## Available Tools
+
+Once installed, your AI assistant has access to these tools:
+
+### cortex_search
+
+Search memories by semantic similarity.
+
+```
+Tool: cortex_search
+Input: { "query": "project deadlines" }
+```
+
+### cortex_add_memory
+
+Save new information from the conversation.
+
+```
+Tool: cortex_add_memory
+Input: {
+  "content": "User mentioned they prefer morning meetings",
+  "source": "conversation"
+}
+```
+
+### cortex_recall
+
+Get relevant context including profile, beliefs, and learnings.
+
+```
+Tool: cortex_recall
+Input: {
+  "query": "What are the user's work preferences?",
+  "include_profile": true
+}
+```
+
+### cortex_get_profile
+
+Get the user's profile summary.
+
+```
+Tool: cortex_get_profile
+Input: {}
+```
+
+### cortex_get_entities
+
+List known entities (people, places, projects).
+
+```
+Tool: cortex_get_entities
+Input: { "type": "person" }
+```
+
+### cortex_get_commitments
+
+Get pending commitments and obligations.
+
+```
+Tool: cortex_get_commitments
+Input: { "status": "pending" }
+```
+
+### cortex_get_nudges
+
+Get proactive relationship nudges.
+
+```
+Tool: cortex_get_nudges
+Input: { "priority": "high" }
+```
+
+### cortex_get_learnings
+
+Get auto-extracted learnings about the user.
+
+```
+Tool: cortex_get_learnings
+Input: {}
+```
+
+## Usage Examples
+
+### Claude Desktop
+
+After installing, just talk to Claude naturally:
+
+> **You**: "Remember that I'm switching to a standing desk starting Monday"
+
+Claude will automatically use `cortex_add_memory` to save this.
+
+> **You**: "What do you know about my work setup?"
+
+Claude will use `cortex_recall` to search your memories and respond with context.
+
+> **You**: "Who should I follow up with this week?"
+
+Claude will use `cortex_get_nudges` to show you relationship suggestions.
+
+### Cursor
+
+In Cursor, you can use Cortex for coding context:
+
+> **You**: "What libraries does this project use? Check my memories."
+
+Cursor will use `cortex_search` to find relevant project information.
+
+> **You**: "Remember that we decided to use PostgreSQL for this project"
+
+Cursor will use `cortex_add_memory` to save the decision.
+
+## Configuration Options
+
+### Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `CORTEX_API_KEY` | Your API key | Yes |
+| `CORTEX_BASE_URL` | Custom API endpoint | No |
+| `CORTEX_CONTAINER_TAG` | Container for isolation | No |
+
+### Advanced Configuration
+
+```json
+{
+  "mcpServers": {
+    "cortex": {
+      "command": "npx",
+      "args": ["-y", "@cortex/mcp"],
+      "env": {
+        "CORTEX_API_KEY": "your-api-key",
+        "CORTEX_CONTAINER_TAG": "work-projects"
+      }
+    }
+  }
+}
+```
+
+## Multiple Containers
+
+You can set up multiple Cortex servers with different containers:
+
+```json
+{
+  "mcpServers": {
+    "cortex-work": {
+      "command": "npx",
+      "args": ["-y", "@cortex/mcp"],
+      "env": {
+        "CORTEX_API_KEY": "your-api-key",
+        "CORTEX_CONTAINER_TAG": "work"
+      }
+    },
+    "cortex-personal": {
+      "command": "npx",
+      "args": ["-y", "@cortex/mcp"],
+      "env": {
+        "CORTEX_API_KEY": "your-api-key",
+        "CORTEX_CONTAINER_TAG": "personal"
+      }
+    }
+  }
+}
+```
+
+Then tell Claude which context to use: "Using my work memories, what projects am I working on?"
+
+## Troubleshooting
+
+### Tools Not Appearing
+
+1. Check that Claude Desktop/Cursor is fully restarted
+2. Verify your API key is correct
+3. Check the config file path is correct
+4. Look for errors in the MCP server logs
+
+### Permission Errors
+
+On macOS, you may need to grant terminal access:
+1. Open **System Preferences** > **Security & Privacy** > **Privacy**
+2. Select **Full Disk Access**
+3. Add your terminal app (Terminal, iTerm, etc.)
+
+### Connection Issues
+
+If you see connection errors:
+
+```bash
+# Test the API key directly
+curl https://askcortex.plutas.in/v3/profile \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+If this fails, your API key may be invalid.
+
+## Building Custom MCP Servers
+
+You can extend the Cortex MCP server or build your own:
+
+```typescript
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { CortexClient } from '@cortex/memory';
+
+const server = new Server({
+  name: 'my-cortex-server',
+  version: '1.0.0',
+});
+
+const cortex = new CortexClient({
+  apiKey: process.env.CORTEX_API_KEY
+});
+
+server.setRequestHandler('tools/call', async (request) => {
+  const { name, arguments: args } = request.params;
+
+  if (name === 'my_custom_tool') {
+    const context = await cortex.recall({
+      query: args.query,
+      includeProfile: true
+    });
+
+    // Custom processing
+    return {
+      content: [{ type: 'text', text: JSON.stringify(context) }]
+    };
+  }
+});
+
+server.connect(new StdioServerTransport());
+```
+
+## Best Practices
+
+1. **Let AI decide** - Don't micromanage tool usage. Claude/Cursor will pick the right tool.
+2. **Be natural** - Just describe what you want. "Remember this" triggers add_memory automatically.
+3. **Use containers** - Separate work and personal memories for cleaner context.
+4. **Check nudges regularly** - Ask "Any relationships I should follow up on?" weekly.

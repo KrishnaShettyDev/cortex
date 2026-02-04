@@ -1,0 +1,212 @@
+# Proactive Intelligence
+
+Most memory systems are passive - they wait for you to ask. Cortex actively monitors relationships and surfaces insights before you need them.
+
+## The Problem with Passive Memory
+
+Traditional memory systems answer questions:
+
+> **You**: "When did I last talk to Sarah?"
+> **System**: "January 15th"
+
+But they don't tell you:
+
+- Sarah hasn't heard from you in 6 weeks
+- You promised to send her that document
+- Your relationship health is declining
+
+Cortex does.
+
+## Relationship Health Scoring
+
+Cortex continuously monitors the health of your relationships across five factors:
+
+### 1. Recency (30%)
+
+When was your last interaction?
+
+| Days Since Contact | Score | Status |
+|--------------------|-------|--------|
+| Under 7 | 1.0 | Excellent |
+| 7-14 | 0.8 | Good |
+| 14-30 | 0.5 | Attention Needed |
+| 30-90 | 0.2 | At Risk |
+| > 90 | 0.1 | Dormant |
+
+### 2. Frequency (25%)
+
+How often do you interact?
+
+The score is logarithmic - going from 0 to 5 interactions matters more than going from 50 to 55.
+
+### 3. Sentiment (20%)
+
+Are your interactions positive?
+
+Cortex analyzes the sentiment of memories mentioning each person. Trending negative is a warning sign.
+
+### 4. Commitment Health (15%)
+
+Are you keeping your promises?
+
+If you have overdue commitments to someone, the relationship score drops.
+
+### 5. Engagement Depth (10%)
+
+How meaningful are your interactions?
+
+Surface-level "hey how's it going" vs. deep discussions about projects and life.
+
+## Health Status
+
+Based on the composite score:
+
+| Status | Score | What It Means |
+|--------|-------|---------------|
+| `healthy` | 0.7+ | Relationship is thriving |
+| `attention_needed` | 0.5-0.7 | Should reach out soon |
+| `at_risk` | 0.3-0.5 | Relationship deteriorating |
+| `dormant` | Below 0.3 | No recent meaningful interaction |
+
+## Nudges
+
+Nudges are proactive suggestions from Cortex. They help you maintain relationships and meet commitments.
+
+### Nudge Types
+
+**Follow-up**
+> "Haven't connected with Sarah recently. It's been 32 days."
+
+Triggered when recency score drops below threshold.
+
+**Maintenance**
+> "Relationship with Mike needs attention. Health score: 58%"
+
+Triggered when overall health score drops.
+
+**Commitment Due**
+> "You promised to review Sarah's design docs. Due tomorrow."
+
+Triggered 2 days before commitment due dates.
+
+**At Risk**
+> "Relationship with David is at risk. Consider reaching out."
+
+Triggered when health drops to "at_risk" status.
+
+**Sentiment Decline**
+> "Interactions with the marketing team are trending negative."
+
+Triggered when sentiment analysis shows a downward trend.
+
+### Nudge Priority
+
+| Priority | Meaning |
+|----------|---------|
+| `high` | Needs attention today |
+| `medium` | Should address this week |
+| `low` | Good to know |
+
+## Key Stakeholders
+
+Cortex identifies your most important relationships using graph analysis:
+
+- **Centrality**: How connected is this person to other people you know?
+- **Frequency**: How often do you interact?
+- **Importance Score**: Based on entity extraction
+
+This surfaces the relationships that matter most - even if you haven't interacted recently.
+
+## Time-Based Intelligence
+
+### Daily Patterns
+
+Cortex notices when you typically interact with people:
+
+> "You usually email Sarah in the morning. It's 9am - good time to reach out."
+
+### Weekly Patterns
+
+> "You tend to have 1-on-1s with Mike on Thursdays."
+
+### Anniversary Tracking
+
+> "Tomorrow marks 1 year since you started working with the engineering team."
+
+## Using Proactive Data
+
+### Daily Briefing
+
+```typescript
+async function getDailyBriefing() {
+  const [nudges, atRisk, commitments] = await Promise.all([
+    cortex.nudges.list({ priority: "high" }),
+    cortex.relationships.health({ status: "at_risk" }),
+    cortex.commitments.list({ status: "pending" })
+  ]);
+
+  return {
+    peopleToContact: nudges.filter(n => n.type === "follow_up"),
+    relationshipsAtRisk: atRisk,
+    dueToday: commitments.filter(c => isToday(c.dueDate))
+  };
+}
+```
+
+### AI Integration
+
+Give your AI assistant access to proactive data:
+
+```typescript
+const systemPrompt = `
+You are helping the user stay on top of their relationships.
+
+Current nudges:
+${nudges.map(n => `- ${n.title}: ${n.message}`).join('\n')}
+
+At-risk relationships:
+${atRisk.map(r => `- ${r.entityName}: ${r.recommendations[0]}`).join('\n')}
+
+Pending commitments:
+${commitments.map(c => `- ${c.title} (due ${c.dueDate})`).join('\n')}
+`;
+```
+
+## Sentiment Analysis
+
+Cortex analyzes the emotional tone of memories mentioning each entity.
+
+### How It Works
+
+1. Memories are analyzed for sentiment (-1 to +1)
+2. Trend is calculated (comparing recent vs. older)
+3. Status is assigned: `improving`, `stable`, `declining`
+
+### Sentiment Signals
+
+| Signal | Interpretation |
+|--------|----------------|
+| Positive words about work | Professional respect |
+| Negative words about interactions | Friction |
+| Enthusiasm | Strong relationship |
+| Neutral/transactional | Surface-level |
+
+### Acting on Sentiment
+
+```typescript
+const health = await cortex.relationships.healthFor("ent_sarah");
+
+if (health.factors.sentiment.trend === "declining") {
+  // Sarah relationship needs attention
+  console.log("Recent interactions with Sarah seem less positive");
+  console.log(health.recommendations[0]);
+}
+```
+
+## Best Practices
+
+1. **Check nudges daily** - Make it part of your routine
+2. **Act on high-priority first** - These are time-sensitive
+3. **Dismiss when done** - Keep your nudge list clean
+4. **Review at-risk weekly** - Don't let relationships go dormant
+5. **Use in AI prompts** - Let AI help you draft follow-ups

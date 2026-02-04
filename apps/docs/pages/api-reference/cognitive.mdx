@@ -1,0 +1,351 @@
+# Cognitive API
+
+The Cognitive API gives you access to extracted beliefs, learnings, and the user profile. These are automatically derived from memories - you don't need to create them manually.
+
+## How It Works
+
+When you add a memory, Cortex automatically:
+
+1. **Extracts Beliefs** - Stable facts about preferences, opinions, and characteristics
+2. **Discovers Learnings** - Patterns and insights from multiple memories
+3. **Builds Profile** - A continuously updated summary of who the user is
+
+This happens asynchronously. After adding a memory, these will appear within a few seconds.
+
+## Beliefs
+
+Beliefs are stable facts extracted from memories. They represent what Cortex "believes" about the user.
+
+import { Tabs, Tab } from 'nextra/components'
+
+### List Beliefs
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const beliefs = await cortex.beliefs.list();
+
+for (const belief of beliefs) {
+  console.log(belief.content);     // "User prefers React over Angular"
+  console.log(belief.confidence);  // 0.85
+  console.log(belief.category);    // "preference"
+}
+```
+  </Tab>
+  <Tab>
+```python
+beliefs = cortex.cognitive.beliefs()
+
+for belief in beliefs:
+    print(belief.content)     # "User prefers React over Angular"
+    print(belief.confidence)  # 0.85
+    print(belief.category)    # "preference"
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/beliefs" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "beliefs": [
+    {
+      "id": "belief_abc123",
+      "content": "User prefers React over Angular for frontend development",
+      "category": "preference",
+      "confidence": 0.85,
+      "sourceMemoryIds": ["mem_1", "mem_2", "mem_3"],
+      "validFrom": "2024-01-15T10:00:00Z",
+      "validTo": null,
+      "createdAt": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "total": 15
+}
+```
+
+### Belief Categories
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| `preference` | User likes/dislikes | "Prefers dark mode" |
+| `characteristic` | Personal traits | "Detail-oriented" |
+| `opinion` | Views and stances | "Thinks AI will transform healthcare" |
+| `knowledge` | What they know | "Expert in distributed systems" |
+| `behavior` | How they act | "Usually responds to emails in the morning" |
+
+### Filter Beliefs
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+// Get only preference beliefs
+const preferences = await cortex.beliefs.list({
+  category: "preference"
+});
+
+// Get high-confidence beliefs
+const confident = await cortex.beliefs.list({
+  minConfidence: 0.8
+});
+```
+  </Tab>
+  <Tab>
+```python
+# Get only preference beliefs
+preferences = cortex.cognitive.beliefs(category="preference")
+
+# Get high-confidence beliefs
+confident = cortex.cognitive.beliefs(min_confidence=0.8)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/beliefs?category=preference&min_confidence=0.8" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Learnings
+
+Learnings are insights discovered from patterns across multiple memories. They're higher-level than beliefs - more like "aha" moments.
+
+### List Learnings
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const learnings = await cortex.learnings.list();
+
+for (const learning of learnings) {
+  console.log(learning.content);
+  console.log(learning.source);  // How it was discovered
+}
+```
+  </Tab>
+  <Tab>
+```python
+learnings = cortex.cognitive.learnings()
+
+for learning in learnings:
+    print(learning.content)
+    print(learning.source)  # How it was discovered
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/learnings" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "learnings": [
+    {
+      "id": "learn_xyz789",
+      "content": "User tends to overcommit on project timelines",
+      "source": "pattern_analysis",
+      "confidence": 0.72,
+      "supportingMemoryCount": 8,
+      "createdAt": "2024-01-20T14:00:00Z"
+    }
+  ],
+  "total": 7
+}
+```
+
+### Learning Sources
+
+| Source | Description |
+|--------|-------------|
+| `pattern_analysis` | Discovered from repeated patterns |
+| `consolidation` | Emerged during memory consolidation |
+| `contradiction_resolution` | Resolved from conflicting information |
+| `explicit` | User explicitly stated something |
+
+## Profile
+
+The profile is a continuously updated summary of the user. It's regenerated as new memories are added.
+
+### Get Profile
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const profile = await cortex.profile.get();
+
+console.log(profile.summary);
+console.log(profile.traits);
+console.log(profile.interests);
+```
+  </Tab>
+  <Tab>
+```python
+profile = cortex.cognitive.profile()
+
+print(profile.summary)
+print(profile.traits)
+print(profile.interests)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/profile" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "summary": "Senior product manager with 8+ years of experience. Focused on mobile-first development and user research. Based in San Francisco. Works closely with Sarah (engineering lead) and Mike (design lead).",
+  "traits": [
+    "detail-oriented",
+    "data-driven",
+    "collaborative"
+  ],
+  "interests": [
+    "mobile development",
+    "user research",
+    "product analytics"
+  ],
+  "communication_style": "concise, bullet-points preferred",
+  "lastUpdated": "2024-01-22T09:00:00Z"
+}
+```
+
+## Commitments
+
+Commitments are promises, tasks, or obligations extracted from memories. Cortex tracks them with due dates and status.
+
+### List Commitments
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+// Get pending commitments
+const pending = await cortex.commitments.list({
+  status: "pending"
+});
+
+// Get overdue commitments
+const overdue = await cortex.commitments.list({
+  status: "overdue"
+});
+```
+  </Tab>
+  <Tab>
+```python
+# Get pending commitments
+pending = cortex.cognitive.commitments(status="pending")
+
+# Get overdue commitments
+overdue = cortex.cognitive.commitments(status="overdue")
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/commitments?status=pending" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "commitments": [
+    {
+      "id": "commit_abc",
+      "title": "Send Q4 roadmap to Sarah",
+      "description": "Draft roadmap document and share for review",
+      "status": "pending",
+      "dueDate": "2024-01-25T17:00:00Z",
+      "relatedEntityId": "ent_sarah",
+      "sourceMemoryId": "mem_meeting",
+      "createdAt": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "total": 3
+}
+```
+
+### Commitment Status
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Not yet completed |
+| `completed` | Marked as done |
+| `overdue` | Past due date and not completed |
+| `cancelled` | No longer relevant |
+
+### Update Commitment
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+await cortex.commitments.update("commit_abc", {
+  status: "completed"
+});
+```
+  </Tab>
+  <Tab>
+```python
+cortex.cognitive.update_commitment("commit_abc", status="completed")
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X PATCH "https://askcortex.plutas.in/v3/commitments/commit_abc" \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "completed"}'
+```
+  </Tab>
+</Tabs>
+
+## Using Cognitive Data in AI Prompts
+
+Here's how to use cognitive data to build better AI interactions:
+
+```typescript
+const context = await cortex.recall({
+  query: userMessage,
+  includeProfile: true,
+  includeBeliefs: true
+});
+
+const systemPrompt = `
+You are helping ${context.profile.summary}
+
+Key beliefs about this user:
+${context.beliefs.map(b => `- ${b.content}`).join('\n')}
+
+Relevant context:
+${context.memories.map(m => m.content).join('\n\n')}
+`;
+
+const response = await openai.chat.completions.create({
+  model: "gpt-4",
+  messages: [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userMessage }
+  ]
+});
+```
+
+This creates AI interactions that truly understand the user.

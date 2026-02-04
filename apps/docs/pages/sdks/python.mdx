@@ -1,0 +1,405 @@
+# Python SDK
+
+The official Python SDK for Cortex. Pythonic interface with dataclasses, type hints, and async support.
+
+## Installation
+
+```bash
+pip install cortex-memory
+```
+
+## Quick Start
+
+```python
+from cortex_memory import CortexClient
+
+cortex = CortexClient(api_key="YOUR_API_KEY")
+
+# Add a memory
+memory = cortex.memories.add(
+    "User prefers dark mode for all editors",
+    source="manual"
+)
+
+# Search memories
+results = cortex.memories.search("editor preferences")
+
+# Recall with context
+context = cortex.recall(
+    query="What are the user's preferences?",
+    include_profile=True
+)
+```
+
+## Configuration
+
+```python
+from cortex_memory import CortexClient
+
+cortex = CortexClient(
+    # Required
+    api_key=os.environ["CORTEX_API_KEY"],
+
+    # Optional
+    base_url="https://askcortex.plutas.in",  # Custom endpoint
+    container_tag="my-project",               # Multi-tenant isolation
+    timeout=30,                               # Request timeout in seconds
+    max_retries=3,                            # Number of retries
+)
+```
+
+## Memories
+
+### Add
+
+```python
+memory = cortex.memories.add(
+    "Meeting notes: Q4 roadmap discussion",
+    source="meeting_notes",
+    metadata={
+        "meeting_id": "mtg_123",
+        "attendees": ["sarah@example.com"]
+    }
+)
+
+print(memory.id)                # "mem_abc123"
+print(memory.processing_status) # "queued"
+```
+
+### Search
+
+```python
+results = cortex.memories.search(
+    "Q4 roadmap",
+    limit=10,
+    threshold=0.5,
+    source="meeting_notes"
+)
+
+for memory in results.memories:
+    print(memory.content)
+    print(memory.score)
+```
+
+### List
+
+```python
+page = cortex.memories.list(limit=20, offset=0, source="email")
+
+print(page.memories)
+print(page.total)
+```
+
+### Get
+
+```python
+memory = cortex.memories.get("mem_abc123")
+```
+
+### Delete
+
+```python
+cortex.memories.delete("mem_abc123")
+```
+
+### Batch Add
+
+```python
+results = cortex.memories.add_batch([
+    {"content": "First memory", "source": "import"},
+    {"content": "Second memory", "source": "import"},
+    {"content": "Third memory", "source": "import"}
+])
+
+print(results.created)
+print(results.failed)
+```
+
+## Recall
+
+The most powerful method - returns relevant memories plus cognitive context.
+
+```python
+context = cortex.recall(
+    query="What should we focus on this quarter?",
+    include_profile=True,
+    include_beliefs=True,
+    include_learnings=True,
+    include_entities=True,
+    limit=10
+)
+
+# Use in AI prompts
+system_prompt = f"""
+You are helping: {context.profile}
+
+Relevant context:
+{chr(10).join(m.content for m in context.memories)}
+
+User beliefs:
+{chr(10).join(b.content for b in context.beliefs)}
+"""
+```
+
+## Cognitive
+
+### Beliefs
+
+```python
+# List all beliefs
+beliefs = cortex.cognitive.beliefs()
+
+# Filter by category
+preferences = cortex.cognitive.beliefs(category="preference")
+
+# Filter by confidence
+strong = cortex.cognitive.beliefs(min_confidence=0.8)
+
+for belief in beliefs:
+    print(belief.content)
+    print(belief.confidence)
+    print(belief.category)
+```
+
+### Learnings
+
+```python
+learnings = cortex.cognitive.learnings()
+
+for learning in learnings:
+    print(learning.content)
+    print(learning.source)
+```
+
+### Commitments
+
+```python
+# List pending
+pending = cortex.cognitive.commitments(status="pending")
+
+# List overdue
+overdue = cortex.cognitive.commitments(status="overdue")
+
+# Mark as completed
+cortex.cognitive.update_commitment("commit_abc", status="completed")
+```
+
+### Profile
+
+```python
+profile = cortex.cognitive.profile()
+
+print(profile.summary)
+print(profile.traits)
+print(profile.interests)
+```
+
+## Entities
+
+```python
+# List all entities
+entities = cortex.entities.list()
+
+# Filter by type
+people = cortex.entities.list(type="person")
+
+# Get entity details
+entity = cortex.entities.get("ent_sarah")
+print(entity.relationships)
+
+# Get knowledge graph
+graph = cortex.entities.graph(depth=2, min_confidence=0.7)
+print(graph.nodes)
+print(graph.edges)
+```
+
+## Proactive
+
+### Nudges
+
+```python
+# Get all nudges
+nudges = cortex.proactive.nudges()
+
+# High priority only
+urgent = cortex.proactive.nudges(priority="high")
+
+# Dismiss
+cortex.proactive.dismiss_nudge("nudge_abc")
+```
+
+### Relationship Health
+
+```python
+# All relationships
+health = cortex.proactive.relationship_health()
+
+# At-risk only
+at_risk = cortex.proactive.relationship_health(status="at_risk")
+
+# Specific person
+sarah = cortex.proactive.relationship_health_for("ent_sarah")
+print(sarah.health_score)
+print(sarah.recommendations)
+```
+
+### Stakeholders
+
+```python
+stakeholders = cortex.proactive.stakeholders(limit=10)
+
+for person in stakeholders:
+    print(person.name, person.importance)
+```
+
+## Async Support
+
+The SDK also supports async operations:
+
+```python
+import asyncio
+from cortex_memory import AsyncCortexClient
+
+async def main():
+    cortex = AsyncCortexClient(api_key="YOUR_API_KEY")
+
+    # All methods are async
+    memory = await cortex.memories.add(
+        "Async memory",
+        source="api"
+    )
+
+    results = await cortex.memories.search("async")
+
+    context = await cortex.recall(
+        query="What do I know?",
+        include_profile=True
+    )
+
+asyncio.run(main())
+```
+
+## Error Handling
+
+```python
+from cortex_memory import CortexClient, CortexError
+
+try:
+    memory = cortex.memories.add("Test memory")
+except CortexError as e:
+    print(e.code)     # "rate_limited"
+    print(e.message)  # "Rate limit exceeded"
+    print(e.status)   # 429
+```
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `unauthorized` | Invalid or missing API key |
+| `not_found` | Resource not found |
+| `rate_limited` | Too many requests |
+| `validation_error` | Invalid request parameters |
+| `server_error` | Internal server error |
+
+## Type Hints
+
+The SDK is fully typed. Use type hints in your code:
+
+```python
+from cortex_memory import CortexClient
+from cortex_memory.types import Memory, Belief, RecallResponse
+
+def process_memory(memory: Memory) -> None:
+    print(memory.content)
+
+def handle_context(context: RecallResponse) -> str:
+    return context.profile or ""
+```
+
+## Framework Integration
+
+### FastAPI
+
+```python
+from fastapi import FastAPI, Depends
+from cortex_memory import CortexClient
+
+app = FastAPI()
+
+def get_cortex() -> CortexClient:
+    return CortexClient(api_key=os.environ["CORTEX_API_KEY"])
+
+@app.post("/memory")
+async def create_memory(
+    content: str,
+    cortex: CortexClient = Depends(get_cortex)
+):
+    memory = cortex.memories.add(content, source="api")
+    return {"id": memory.id}
+
+@app.post("/recall")
+async def recall_context(
+    query: str,
+    cortex: CortexClient = Depends(get_cortex)
+):
+    context = cortex.recall(query=query, include_profile=True)
+    return context
+```
+
+### Flask
+
+```python
+from flask import Flask, request, jsonify
+from cortex_memory import CortexClient
+
+app = Flask(__name__)
+cortex = CortexClient(api_key=os.environ["CORTEX_API_KEY"])
+
+@app.route("/memory", methods=["POST"])
+def create_memory():
+    data = request.json
+    memory = cortex.memories.add(
+        data["content"],
+        source=data.get("source", "api")
+    )
+    return jsonify({"id": memory.id})
+```
+
+### LangChain
+
+```python
+from langchain.memory import BaseChatMemory
+from cortex_memory import CortexClient
+
+class CortexMemory(BaseChatMemory):
+    def __init__(self, api_key: str, user_id: str):
+        self.cortex = CortexClient(
+            api_key=api_key,
+            container_tag=user_id
+        )
+
+    def load_memory_variables(self, inputs: dict) -> dict:
+        context = self.cortex.recall(
+            query=inputs.get("input", ""),
+            include_profile=True
+        )
+        return {
+            "history": context.memories,
+            "profile": context.profile
+        }
+
+    def save_context(self, inputs: dict, outputs: dict) -> None:
+        self.cortex.memories.add(
+            f"User: {inputs['input']}\nAssistant: {outputs['output']}",
+            source="conversation"
+        )
+```
+
+## Best Practices
+
+1. **Reuse the client** - Create one `CortexClient` instance and reuse it
+2. **Use containers** - Isolate memories per user with `container_tag`
+3. **Handle errors** - Always wrap calls in try/except
+4. **Use recall** - For AI context, `recall()` is better than `search()`
+5. **Async for production** - Use `AsyncCortexClient` for high-throughput apps

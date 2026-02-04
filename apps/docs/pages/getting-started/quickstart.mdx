@@ -1,0 +1,167 @@
+# Quickstart
+
+Get Cortex running in under 5 minutes.
+
+## 1. Get an API Key
+
+Sign up at [console.askcortex.in](https://console.askcortex.in) and create an API key.
+
+## 2. Install the SDK
+
+import { Tabs, Tab } from 'nextra/components'
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```bash
+npm install @cortex/memory
+```
+  </Tab>
+  <Tab>
+```bash
+pip install cortex-memory
+```
+  </Tab>
+  <Tab>
+No installation needed - just use the REST API directly.
+  </Tab>
+</Tabs>
+
+## 3. Initialize the Client
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+import { CortexClient } from '@cortex/memory';
+
+const cortex = new CortexClient({
+  apiKey: process.env.CORTEX_API_KEY
+});
+```
+  </Tab>
+  <Tab>
+```python
+from cortex_memory import CortexClient
+
+cortex = CortexClient(api_key=os.environ["CORTEX_API_KEY"])
+```
+  </Tab>
+  <Tab>
+```bash
+# Set your API key
+export CORTEX_API_KEY="your-api-key"
+```
+  </Tab>
+</Tabs>
+
+## 4. Store Your First Memory
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const memory = await cortex.memories.create({
+  content: "User prefers dark mode for all editors",
+  source: "manual"
+});
+
+console.log(memory.id); // mem_abc123
+```
+  </Tab>
+  <Tab>
+```python
+memory = cortex.memories.add(
+    "User prefers dark mode for all editors",
+    source="manual"
+)
+
+print(memory.id)  # mem_abc123
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST https://askcortex.plutas.in/v3/memories \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "User prefers dark mode for all editors", "source": "manual"}'
+```
+  </Tab>
+</Tabs>
+
+## 5. Search Memories
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const results = await cortex.memories.search({
+  query: "editor preferences"
+});
+
+for (const memory of results.memories) {
+  console.log(memory.content);
+}
+```
+  </Tab>
+  <Tab>
+```python
+results = cortex.memories.search("editor preferences")
+
+for memory in results.memories:
+    print(memory.content)
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST https://askcortex.plutas.in/v3/search \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "editor preferences", "limit": 10}'
+```
+  </Tab>
+</Tabs>
+
+## 6. Recall with Context
+
+The `recall` method is the most powerful feature. It returns relevant memories plus the user's profile, beliefs, and learnings - everything an AI needs for context.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const context = await cortex.recall({
+  query: "What are the user's preferences?",
+  includeProfile: true
+});
+
+console.log(context.profile);    // User profile summary
+console.log(context.memories);   // Relevant memories
+console.log(context.beliefs);    // Extracted beliefs
+console.log(context.learnings);  // Discovered learnings
+```
+  </Tab>
+  <Tab>
+```python
+context = cortex.recall(
+    query="What are the user's preferences?",
+    include_profile=True
+)
+
+print(context.profile)    # User profile summary
+print(context.memories)   # Relevant memories
+print(context.beliefs)    # Extracted beliefs
+print(context.learnings)  # Discovered learnings
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST https://askcortex.plutas.in/v3/recall \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the user preferences?", "include_profile": true}'
+```
+  </Tab>
+</Tabs>
+
+## What's Next?
+
+- [Authentication](/getting-started/authentication) - Learn about API keys and auth methods
+- [Memories API](/api-reference/memories) - Full memories API reference
+- [Cognitive API](/api-reference/cognitive) - Beliefs, learnings, and more
+- [MCP Server](/sdks/mcp) - Use Cortex with Claude Desktop or Cursor

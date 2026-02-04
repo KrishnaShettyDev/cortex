@@ -1,0 +1,362 @@
+# Entities & Knowledge Graph
+
+Cortex automatically extracts entities (people, places, organizations, things) from your memories and builds a knowledge graph of relationships between them.
+
+## How Entity Extraction Works
+
+When you add a memory like:
+
+> "Had coffee with Sarah yesterday. She mentioned she's moving to the London office."
+
+Cortex extracts:
+
+1. **Entity: Sarah** (person) - with attribute "moving to London office"
+2. **Entity: London office** (place) - related to Sarah
+3. **Relationship**: Sarah → "relocating to" → London office
+
+This happens automatically during memory processing.
+
+## List Entities
+
+import { Tabs, Tab } from 'nextra/components'
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const entities = await cortex.entities.list();
+
+for (const entity of entities) {
+  console.log(entity.name);        // "Sarah"
+  console.log(entity.type);        // "person"
+  console.log(entity.attributes);  // { title: "Engineering Lead", office: "London" }
+  console.log(entity.mentionCount); // 15
+}
+```
+  </Tab>
+  <Tab>
+```python
+entities = cortex.entities.list()
+
+for entity in entities:
+    print(entity.name)         # "Sarah"
+    print(entity.type)         # "person"
+    print(entity.attributes)   # { "title": "Engineering Lead" }
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/entities" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "entities": [
+    {
+      "id": "ent_abc123",
+      "name": "Sarah",
+      "type": "person",
+      "attributes": {
+        "title": "Engineering Lead",
+        "office": "London",
+        "email": "sarah@example.com"
+      },
+      "mentionCount": 15,
+      "lastMentionedAt": "2024-01-22T10:00:00Z",
+      "importanceScore": 0.85,
+      "createdAt": "2024-01-01T09:00:00Z"
+    }
+  ],
+  "total": 42
+}
+```
+
+### Entity Types
+
+| Type | Description | Examples |
+|------|-------------|----------|
+| `person` | Individual people | Sarah, John Smith |
+| `organization` | Companies, teams | Acme Corp, Engineering Team |
+| `place` | Locations | London office, Central Park |
+| `project` | Projects, initiatives | Q4 Roadmap, Mobile App |
+| `technology` | Tools, languages | React, PostgreSQL |
+| `product` | Products, services | Slack, Notion |
+| `event` | Meetings, conferences | Q4 Review, Annual Summit |
+| `concept` | Abstract ideas | Agile, User Research |
+
+### Filter Entities
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+// Get only people
+const people = await cortex.entities.list({
+  type: "person"
+});
+
+// Get highly mentioned entities
+const important = await cortex.entities.list({
+  minMentions: 5,
+  sortBy: "mentionCount"
+});
+```
+  </Tab>
+  <Tab>
+```python
+# Get only people
+people = cortex.entities.list(type="person")
+
+# Get highly mentioned entities
+important = cortex.entities.list(min_mentions=5, sort_by="mention_count")
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/entities?type=person&min_mentions=5" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Get Entity Details
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const entity = await cortex.entities.get("ent_abc123");
+
+console.log(entity.relationships);  // Related entities
+console.log(entity.memories);       // Memories mentioning this entity
+console.log(entity.timeline);       // How knowledge evolved over time
+```
+  </Tab>
+  <Tab>
+```python
+entity = cortex.entities.get("ent_abc123")
+print(entity.relationships)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/entities/ent_abc123" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "id": "ent_abc123",
+  "name": "Sarah",
+  "type": "person",
+  "attributes": {
+    "title": "Engineering Lead",
+    "office": "London"
+  },
+  "relationships": [
+    {
+      "targetEntityId": "ent_mike",
+      "targetEntityName": "Mike",
+      "relationshipType": "works_with",
+      "confidence": 0.9
+    },
+    {
+      "targetEntityId": "ent_mobile_team",
+      "targetEntityName": "Mobile Team",
+      "relationshipType": "leads",
+      "confidence": 0.95
+    }
+  ],
+  "recentMemories": [
+    {
+      "id": "mem_xyz",
+      "content": "Sarah mentioned the London migration is ahead of schedule",
+      "createdAt": "2024-01-22T10:00:00Z"
+    }
+  ]
+}
+```
+
+## Relationships
+
+Relationships connect entities together, forming a knowledge graph.
+
+### Get Relationships
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const relationships = await cortex.entities.relationships({
+  entityId: "ent_abc123"  // Get relationships for Sarah
+});
+
+for (const rel of relationships) {
+  console.log(`${rel.sourceEntity} ${rel.type} ${rel.targetEntity}`);
+  // "Sarah leads Mobile Team"
+}
+```
+  </Tab>
+  <Tab>
+```python
+relationships = cortex.entities.relationships(entity_id="ent_abc123")
+
+for rel in relationships:
+    print(f"{rel.source_entity} {rel.type} {rel.target_entity}")
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/entities/ent_abc123/relationships" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Relationship Types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `works_with` | Professional collaboration | Sarah works_with Mike |
+| `reports_to` | Reporting structure | Sarah reports_to John |
+| `leads` | Leadership | Sarah leads Mobile Team |
+| `member_of` | Membership | Sarah member_of Engineering |
+| `located_at` | Physical location | Sarah located_at London |
+| `knows` | General connection | Sarah knows David |
+| `related_to` | Generic relationship | Project related_to Q4 Goals |
+
+## Knowledge Graph
+
+Get the full knowledge graph for visualization or analysis.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const graph = await cortex.entities.graph({
+  depth: 2,           // How many hops from center
+  minConfidence: 0.7  // Only strong relationships
+});
+
+// Returns nodes and edges for visualization
+console.log(graph.nodes);  // Entities
+console.log(graph.edges);  // Relationships
+```
+  </Tab>
+  <Tab>
+```python
+graph = cortex.entities.graph(depth=2, min_confidence=0.7)
+print(graph.nodes)
+print(graph.edges)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/entities/graph?depth=2&min_confidence=0.7" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "nodes": [
+    {
+      "id": "ent_sarah",
+      "name": "Sarah",
+      "type": "person",
+      "importance": 0.85
+    },
+    {
+      "id": "ent_mike",
+      "name": "Mike",
+      "type": "person",
+      "importance": 0.72
+    }
+  ],
+  "edges": [
+    {
+      "source": "ent_sarah",
+      "target": "ent_mike",
+      "type": "works_with",
+      "confidence": 0.9
+    }
+  ]
+}
+```
+
+## Entity Timeline
+
+See how your knowledge about an entity evolved over time.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const timeline = await cortex.entities.timeline("ent_sarah");
+
+for (const event of timeline) {
+  console.log(event.date, event.type, event.description);
+  // "2024-01-15" "attribute_added" "Added title: Engineering Lead"
+  // "2024-01-20" "attribute_updated" "Office changed: SF → London"
+}
+```
+  </Tab>
+  <Tab>
+```python
+timeline = cortex.entities.timeline("ent_sarah")
+for event in timeline:
+    print(event.date, event.type, event.description)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/entities/ent_sarah/timeline" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Merge Entities
+
+Sometimes the same entity is extracted with different names. Merge them:
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+// Merge "Sarah Smith" into "Sarah"
+await cortex.entities.merge({
+  sourceId: "ent_sarah_smith",
+  targetId: "ent_sarah"
+});
+```
+  </Tab>
+  <Tab>
+```python
+# Merge "Sarah Smith" into "Sarah"
+cortex.entities.merge(
+    source_id="ent_sarah_smith",
+    target_id="ent_sarah"
+)
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST "https://askcortex.plutas.in/v3/entities/merge" \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"source_id": "ent_sarah_smith", "target_id": "ent_sarah"}'
+```
+  </Tab>
+</Tabs>
+
+After merging:
+- All memories referencing the source entity now reference the target
+- Relationships are combined
+- Attributes are merged (target takes precedence on conflicts)
+- Source entity is archived for audit trail

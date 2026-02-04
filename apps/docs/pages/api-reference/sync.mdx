@@ -1,0 +1,339 @@
+# Sync Integrations
+
+Cortex can automatically sync memories from external sources like Gmail and Google Calendar. This turns your emails and events into searchable, AI-ready context.
+
+## How Sync Works
+
+1. **Connect** - Link your account (Gmail, Calendar, etc.)
+2. **Initial Sync** - Cortex pulls historical data
+3. **Continuous Sync** - New emails/events synced automatically
+4. **Processing** - Entities, relationships, and commitments extracted
+
+## Sync Connections
+
+### List Connections
+
+import { Tabs, Tab } from 'nextra/components'
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const connections = await cortex.sync.listConnections();
+
+for (const conn of connections) {
+  console.log(conn.provider);      // "gmail"
+  console.log(conn.isActive);      // true
+  console.log(conn.lastSyncAt);    // "2024-01-22T08:00:00Z"
+  console.log(conn.syncFrequency); // "hourly"
+}
+```
+  </Tab>
+  <Tab>
+```python
+connections = cortex.sync.list_connections()
+
+for conn in connections:
+    print(conn.provider)
+    print(conn.is_active)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/sync/connections" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "connections": [
+    {
+      "id": "sync_abc123",
+      "provider": "gmail",
+      "accountId": "user@example.com",
+      "isActive": true,
+      "syncEnabled": true,
+      "lastSyncAt": "2024-01-22T08:00:00Z",
+      "nextSyncAt": "2024-01-22T09:00:00Z",
+      "syncFrequency": "hourly",
+      "stats": {
+        "itemsSynced": 1250,
+        "lastDurationMs": 4500
+      },
+      "createdAt": "2024-01-01T10:00:00Z"
+    }
+  ]
+}
+```
+
+### Supported Providers
+
+| Provider | What's Synced | Status |
+|----------|--------------|--------|
+| `gmail` | Emails, attachments (metadata) | Available |
+| `google_calendar` | Events, attendees | Available |
+| `slack` | Messages, threads | Coming Soon |
+| `notion` | Pages, databases | Coming Soon |
+
+## Connect Gmail
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+// Initiate OAuth flow
+const authUrl = await cortex.sync.connectGmail();
+// Redirect user to authUrl
+
+// After OAuth callback
+const connection = await cortex.sync.completeConnection({
+  provider: "gmail",
+  authCode: "oauth_code_from_callback"
+});
+```
+  </Tab>
+  <Tab>
+```python
+# Initiate OAuth flow
+auth_url = cortex.sync.connect_gmail()
+# Redirect user to auth_url
+
+# After OAuth callback
+connection = cortex.sync.complete_connection(
+    provider="gmail",
+    auth_code="oauth_code_from_callback"
+)
+```
+  </Tab>
+  <Tab>
+```bash
+# Get OAuth URL
+curl "https://askcortex.plutas.in/v3/sync/gmail/connect" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+
+# Complete connection
+curl -X POST "https://askcortex.plutas.in/v3/sync/connections" \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "gmail", "authCode": "..."}'
+```
+  </Tab>
+</Tabs>
+
+## Connect Google Calendar
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const authUrl = await cortex.sync.connectCalendar();
+// Same OAuth flow as Gmail
+```
+  </Tab>
+  <Tab>
+```python
+auth_url = cortex.sync.connect_calendar()
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/sync/calendar/connect" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Trigger Manual Sync
+
+Force an immediate sync instead of waiting for the scheduled time.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const result = await cortex.sync.trigger("sync_abc123");
+
+console.log(result.status);          // "running"
+console.log(result.itemsProcessed);  // 0 (still running)
+```
+  </Tab>
+  <Tab>
+```python
+result = cortex.sync.trigger("sync_abc123")
+print(result.status)
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST "https://askcortex.plutas.in/v3/sync/connections/sync_abc123/sync" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Sync Logs
+
+View the history of sync operations.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const logs = await cortex.sync.logs("sync_abc123");
+
+for (const log of logs) {
+  console.log(log.syncType);        // "delta"
+  console.log(log.status);          // "completed"
+  console.log(log.itemsProcessed);  // 25
+  console.log(log.memoriesCreated); // 25
+  console.log(log.durationMs);      // 3200
+}
+```
+  </Tab>
+  <Tab>
+```python
+logs = cortex.sync.logs("sync_abc123")
+for log in logs:
+    print(log.sync_type, log.status, log.items_processed)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/sync/connections/sync_abc123/logs" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "logs": [
+    {
+      "id": "log_xyz",
+      "connectionId": "sync_abc123",
+      "syncType": "delta",
+      "status": "completed",
+      "itemsProcessed": 25,
+      "memoriesCreated": 25,
+      "errors": [],
+      "startedAt": "2024-01-22T08:00:00Z",
+      "completedAt": "2024-01-22T08:00:03Z",
+      "durationMs": 3200
+    }
+  ],
+  "total": 150
+}
+```
+
+### Sync Types
+
+| Type | Description |
+|------|-------------|
+| `full` | Complete sync of all data |
+| `delta` | Only new/changed items since last sync |
+| `manual` | User-triggered sync |
+
+## Update Connection Settings
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+await cortex.sync.updateConnection("sync_abc123", {
+  syncEnabled: true,
+  syncFrequency: "daily"  // hourly, daily, realtime, manual
+});
+```
+  </Tab>
+  <Tab>
+```python
+cortex.sync.update_connection(
+    "sync_abc123",
+    sync_enabled=True,
+    sync_frequency="daily"
+)
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X PATCH "https://askcortex.plutas.in/v3/sync/connections/sync_abc123" \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"syncEnabled": true, "syncFrequency": "daily"}'
+```
+  </Tab>
+</Tabs>
+
+### Sync Frequencies
+
+| Frequency | Description |
+|-----------|-------------|
+| `realtime` | Every 5 minutes (best for active use) |
+| `hourly` | Once per hour (balanced) |
+| `daily` | Once per day (minimal API usage) |
+| `manual` | Only when manually triggered |
+
+## Disconnect
+
+Remove a sync connection. Historical memories are preserved.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+await cortex.sync.disconnect("sync_abc123");
+```
+  </Tab>
+  <Tab>
+```python
+cortex.sync.disconnect("sync_abc123")
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X DELETE "https://askcortex.plutas.in/v3/sync/connections/sync_abc123" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## What Gets Extracted
+
+### From Gmail
+
+- **Memories**: One memory per email
+- **Entities**: Sender extracted as person entity
+- **Relationships**: Email frequency → relationship strength
+- **Commitments**: "I'll send you..." → tracked commitment
+
+### From Calendar
+
+- **Memories**: One memory per event
+- **Entities**: Attendees extracted as person entities
+- **Relationships**: Meeting frequency → relationship strength
+- **Commitments**: Action items in event description
+
+## Example: Email-Aware AI
+
+```typescript
+// User asks about a project
+const context = await cortex.recall({
+  query: "What did Sarah say about the mobile launch?",
+  includeProfile: true
+});
+
+// Cortex returns memories from emails, meetings, and manual notes
+// All unified into a single searchable context
+
+const response = await ai.chat({
+  messages: [
+    {
+      role: "system",
+      content: `You have access to the user's email and calendar context.
+
+Recent relevant information:
+${context.memories.map(m => `[${m.source}] ${m.content}`).join('\n\n')}`
+    },
+    { role: "user", content: "What did Sarah say about the mobile launch?" }
+  ]
+});
+```

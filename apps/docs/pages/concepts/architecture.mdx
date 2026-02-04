@@ -1,0 +1,344 @@
+# Architecture
+
+How Cortex is built and why it's designed this way.
+
+## High-Level Overview
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                         SDKs                                  │
+│  TypeScript (@cortex/memory)  │  Python (cortex-memory)      │
+│  MCP Server (@cortex/mcp)     │  REST API                    │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│                      API Gateway                              │
+│  Authentication │ Rate Limiting │ Request Routing            │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    Processing Layer                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
+│  │   Entity    │  │  Temporal   │  │ Commitment  │          │
+│  │  Extractor  │  │  Resolver   │  │  Extractor  │          │
+│  └─────────────┘  └─────────────┘  └─────────────┘          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
+│  │ Importance  │  │   Profile   │  │ Consolidation│          │
+│  │   Scorer    │  │  Generator  │  │   Engine    │          │
+│  └─────────────┘  └─────────────┘  └─────────────┘          │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│                     Storage Layer                             │
+│  ┌─────────────────┐    ┌─────────────────┐                  │
+│  │   D1 (SQLite)   │    │    Vectorize    │                  │
+│  │  Structured Data │    │   Embeddings    │                  │
+│  └─────────────────┘    └─────────────────┘                  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Infrastructure
+
+Cortex runs on Cloudflare Workers - serverless compute at the edge.
+
+### Why Cloudflare?
+
+- **Global edge**: Requests handled close to users (~20ms latency)
+- **Serverless**: No servers to manage
+- **D1 Database**: SQLite at the edge with automatic replication
+- **Vectorize**: Native vector search without external services
+- **Queues**: Async processing without managing infrastructure
+
+### Stack
+
+| Component | Technology |
+|-----------|------------|
+| Compute | Cloudflare Workers |
+| Database | Cloudflare D1 (SQLite) |
+| Vector DB | Cloudflare Vectorize |
+| Queue | Cloudflare Queues |
+| Embeddings | @cf/baai/bge-base-en-v1.5 |
+| LLM (extraction) | Llama 3.1-8B |
+| LLM (critical) | GPT-4o-mini |
+
+## Data Model
+
+### Core Tables
+
+```sql
+memories
+├── id (primary key)
+├── user_id (foreign key)
+├── container_tag (multi-tenant isolation)
+├── content (the memory text)
+├── source (email, chat, manual, etc.)
+├── memory_type (episodic, semantic)
+├── importance_score (0-1)
+├── processing_status
+├── valid_from / valid_to (temporal)
+├── supersedes / superseded_by
+└── created_at / updated_at
+
+entities
+├── id (primary key)
+├── user_id
+├── name ("Sarah")
+├── entity_type (person, place, org, etc.)
+├── attributes (JSON: title, email, etc.)
+├── importance_score
+└── created_at / updated_at
+
+entity_relationships
+├── source_entity_id
+├── target_entity_id
+├── relationship_type (works_with, reports_to, etc.)
+├── confidence
+├── valid_from / valid_to
+└── source_memory_ids (provenance)
+
+beliefs
+├── id
+├── user_id
+├── content ("User prefers dark mode")
+├── category (preference, characteristic, etc.)
+├── confidence (0-1)
+├── source_memory_ids
+└── valid_from / valid_to
+
+commitments
+├── id
+├── user_id
+├── title
+├── description
+├── status (pending, completed, overdue)
+├── due_date
+├── related_entity_id
+└── source_memory_id
+```
+
+### Vector Storage
+
+Memories are embedded using BGE embeddings (768 dimensions) and stored in Vectorize for semantic search.
+
+```
+namespace: cortex-memories
+id: mem_abc123
+vector: [0.123, -0.456, ...]
+metadata: { userId, containerTag, source }
+```
+
+## Processing Pipeline
+
+When you add a memory, it goes through multiple processing stages:
+
+```
+Memory Created
+      │
+      ▼
+┌─────────────┐
+│   Queued    │ ← Immediately returns, processing is async
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│ Extracting  │ ← Extract metadata, dates, entities
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│  Chunking   │ ← Split long content if needed
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│ Embedding   │ ← Generate vector embeddings
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│  Indexing   │ ← Store in Vectorize
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│  Temporal   │ ← Extract event dates, check conflicts
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│  Entities   │ ← Extract and link entities
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│ Importance  │ ← Score importance
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│Commitments  │ ← Extract obligations
+└─────────────┘
+      │
+      ▼
+┌─────────────┐
+│    Done     │
+└─────────────┘
+```
+
+### Async Processing
+
+Processing happens asynchronously using Cloudflare Queues. This means:
+
+1. `POST /v3/memories` returns immediately
+2. Processing happens in background
+3. Full data available within seconds
+
+For synchronous needs, poll `processingStatus` or use webhooks.
+
+## Search Architecture
+
+Cortex uses hybrid search - combining semantic and keyword search for best results.
+
+### Hybrid Search Flow
+
+```
+Query: "project deadlines"
+        │
+        ▼
+┌───────────────────┐
+│  Generate Query   │ ← Create embedding for query
+│     Embedding     │
+└───────────────────┘
+        │
+        ├──────────────────────┐
+        ▼                      ▼
+┌───────────────┐    ┌───────────────┐
+│ Vector Search │    │ Keyword Search│
+│  (Vectorize)  │    │    (D1 FTS)   │
+└───────────────┘    └───────────────┘
+        │                      │
+        └──────────┬───────────┘
+                   ▼
+         ┌─────────────────┐
+         │  Fusion Scoring │ ← Combine and rerank
+         └─────────────────┘
+                   │
+                   ▼
+         ┌─────────────────┐
+         │ Importance Boost│ ← Boost high-importance
+         └─────────────────┘
+                   │
+                   ▼
+              Results
+```
+
+### Reranking
+
+Results are reranked using:
+
+1. **Semantic score**: Cosine similarity of embeddings
+2. **Keyword score**: FTS relevance
+3. **Importance boost**: Higher importance memories ranked up
+4. **Recency decay**: Recent memories slightly preferred
+
+## Multi-Tenancy
+
+Cortex supports multi-tenant isolation through containers.
+
+### How It Works
+
+Every query is scoped by:
+- `user_id`: From JWT token
+- `container_tag`: Optional namespace within user
+
+```sql
+-- Every query includes these filters
+SELECT * FROM memories
+WHERE user_id = ? AND container_tag = ?
+```
+
+### Use Cases
+
+- **Per-user isolation**: Each user's memories are private
+- **Per-project isolation**: Separate memories by project/workspace
+- **Per-environment isolation**: Separate test and production
+
+## LLM Strategy
+
+Cortex uses a "quality-first" approach to LLM usage:
+
+### Fast Model (Llama 3.1-8B)
+
+Used for:
+- Entity extraction
+- Basic classification
+- Sentiment analysis
+- Importance scoring
+
+Characteristics:
+- Very fast (~100ms)
+- Good enough for most extractions
+- Low cost
+
+### Quality Model (GPT-4o-mini)
+
+Used for:
+- Profile generation
+- Semantic consolidation
+- Conflict resolution
+- Complex reasoning
+
+Characteristics:
+- Higher quality output
+- Slower (~500ms)
+- Used sparingly
+
+### Fallback Strategy
+
+If LLM calls fail:
+1. Retry with exponential backoff
+2. Fall back to simpler extraction
+3. Never block the pipeline
+4. Log for manual review
+
+## Security
+
+### Authentication
+
+- JWT tokens for API access
+- API keys stored hashed (bcrypt)
+- Keys can be revoked instantly
+
+### Data Isolation
+
+- Row-level security via `user_id`
+- Container isolation via `container_tag`
+- No cross-user data access possible
+
+### Encryption
+
+- TLS 1.3 for all API traffic
+- Data encrypted at rest in D1
+- API keys never logged
+
+## Scalability
+
+### Current Limits
+
+| Metric | Limit |
+|--------|-------|
+| Memories per user | 1,000,000 |
+| Entities per user | 50,000 |
+| Memory size | 32KB |
+| Batch size | 100 |
+| Requests/second | 1,000 |
+
+### Why These Work
+
+- D1 handles millions of rows efficiently
+- Vectorize scales to millions of vectors
+- Edge compute eliminates bottlenecks
+- Async processing absorbs spikes

@@ -1,0 +1,335 @@
+# Proactive Intelligence
+
+Cortex doesn't just store memories - it actively helps you maintain relationships and track commitments. The Proactive API provides nudges, relationship health scores, and smart reminders.
+
+## Nudges
+
+Nudges are proactive suggestions from Cortex. They help you:
+- Follow up with people you haven't contacted in a while
+- Complete commitments before they're overdue
+- Maintain important relationships
+
+import { Tabs, Tab } from 'nextra/components'
+
+### Get Nudges
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const nudges = await cortex.nudges.list();
+
+for (const nudge of nudges) {
+  console.log(nudge.type);        // "follow_up"
+  console.log(nudge.priority);    // "high"
+  console.log(nudge.title);       // "Haven't connected with Sarah recently"
+  console.log(nudge.message);     // "It's been 32 days since your last interaction"
+  console.log(nudge.suggestedAction); // "Send a quick message or schedule a call"
+}
+```
+  </Tab>
+  <Tab>
+```python
+nudges = cortex.proactive.nudges()
+
+for nudge in nudges:
+    print(nudge.type)
+    print(nudge.priority)
+    print(nudge.title)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/nudges" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "nudges": [
+    {
+      "id": "nudge_abc",
+      "type": "follow_up",
+      "priority": "high",
+      "title": "Haven't connected with Sarah recently",
+      "message": "It's been 32 days since your last interaction with Sarah.",
+      "suggestedAction": "Send a quick message or schedule a call with Sarah",
+      "entityId": "ent_sarah",
+      "entityName": "Sarah",
+      "context": {
+        "daysSinceContact": 32,
+        "healthStatus": "attention_needed"
+      },
+      "createdAt": "2024-01-22T08:00:00Z"
+    },
+    {
+      "id": "nudge_xyz",
+      "type": "commitment_due",
+      "priority": "high",
+      "title": "Commitment to Mike due tomorrow",
+      "message": "\"Review design mockups\" is due tomorrow",
+      "suggestedAction": "Complete review and send feedback",
+      "entityId": "ent_mike",
+      "dueDate": "2024-01-23T17:00:00Z"
+    }
+  ],
+  "total": 5
+}
+```
+
+### Nudge Types
+
+| Type | Description | When Generated |
+|------|-------------|----------------|
+| `follow_up` | Haven't contacted someone in a while | 30+ days since last interaction |
+| `maintenance` | Relationship needs attention | Health score dropping |
+| `commitment_due` | Commitment deadline approaching | 2 days before due date |
+| `at_risk` | Relationship at risk | Health score below 0.3 |
+| `milestone` | Important date coming up | Birthdays, anniversaries |
+
+### Filter Nudges
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+// Get only high priority nudges
+const urgent = await cortex.nudges.list({
+  priority: "high"
+});
+
+// Get nudges for a specific person
+const sarahNudges = await cortex.nudges.list({
+  entityId: "ent_sarah"
+});
+```
+  </Tab>
+  <Tab>
+```python
+urgent = cortex.proactive.nudges(priority="high")
+sarah_nudges = cortex.proactive.nudges(entity_id="ent_sarah")
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/nudges?priority=high" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Dismiss a Nudge
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+await cortex.nudges.dismiss("nudge_abc");
+```
+  </Tab>
+  <Tab>
+```python
+cortex.proactive.dismiss_nudge("nudge_abc")
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST "https://askcortex.plutas.in/v3/nudges/nudge_abc/dismiss" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Relationship Health
+
+Cortex continuously monitors the health of your relationships based on:
+- **Recency** - When was your last interaction?
+- **Frequency** - How often do you interact?
+- **Sentiment** - Are interactions positive?
+- **Commitments** - Are you keeping your promises?
+- **Engagement** - How deep are your conversations?
+
+### Get All Relationship Health Scores
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const health = await cortex.relationships.health();
+
+for (const rel of health) {
+  console.log(rel.entityName);      // "Sarah"
+  console.log(rel.healthScore);     // 0.65
+  console.log(rel.healthStatus);    // "attention_needed"
+  console.log(rel.factors.recency); // { score: 0.4, daysSince: 32 }
+  console.log(rel.recommendations); // ["Reach out to catch up"]
+}
+```
+  </Tab>
+  <Tab>
+```python
+health = cortex.proactive.relationship_health()
+
+for rel in health:
+    print(rel.entity_name)
+    print(rel.health_score)
+    print(rel.health_status)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/relationships/health" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "relationships": [
+    {
+      "entityId": "ent_sarah",
+      "entityName": "Sarah",
+      "entityType": "person",
+      "healthScore": 0.65,
+      "healthStatus": "attention_needed",
+      "factors": {
+        "recency": {
+          "score": 0.4,
+          "lastInteractionDate": "2023-12-20T10:00:00Z",
+          "daysSince": 32
+        },
+        "frequency": {
+          "score": 0.7,
+          "interactionCount": 15,
+          "avgDaysBetween": 8
+        },
+        "sentiment": {
+          "score": 0.85,
+          "avgSentiment": 0.7,
+          "trend": "stable"
+        },
+        "commitmentHealth": {
+          "score": 0.9,
+          "pending": 1,
+          "completed": 8,
+          "completionRate": 0.89
+        },
+        "engagementDepth": {
+          "score": 0.6,
+          "avgMemoryLength": 350,
+          "topicsDiscussed": 5
+        }
+      },
+      "recommendations": [
+        "Reach out to catch up - it's been over a month",
+        "Consider scheduling a regular check-in"
+      ],
+      "riskFactors": [
+        "No contact in 32 days"
+      ],
+      "calculatedAt": "2024-01-22T08:00:00Z"
+    }
+  ]
+}
+```
+
+### Health Status
+
+| Status | Score Range | Meaning |
+|--------|-------------|---------|
+| `healthy` | 0.7 - 1.0 | Relationship is thriving |
+| `attention_needed` | 0.5 - 0.7 | Should reach out soon |
+| `at_risk` | 0.3 - 0.5 | Relationship deteriorating |
+| `dormant` | 0 - 0.3 | No recent meaningful interaction |
+
+### Get Health for Specific Person
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const sarahHealth = await cortex.relationships.healthFor("ent_sarah");
+
+console.log(sarahHealth.healthScore);    // 0.65
+console.log(sarahHealth.recommendations); // ["Reach out..."]
+```
+  </Tab>
+  <Tab>
+```python
+sarah_health = cortex.proactive.relationship_health_for("ent_sarah")
+print(sarah_health.health_score)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/relationships/health/ent_sarah" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Key Stakeholders
+
+Get your most important relationships ranked by centrality and importance.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const stakeholders = await cortex.relationships.stakeholders({
+  limit: 10
+});
+
+// Returns people who are most central to your network
+for (const person of stakeholders) {
+  console.log(person.name, person.importance, person.healthScore);
+}
+```
+  </Tab>
+  <Tab>
+```python
+stakeholders = cortex.proactive.stakeholders(limit=10)
+for person in stakeholders:
+    print(person.name, person.importance)
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/relationships/stakeholders?limit=10" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Using Proactive Data
+
+Here's how to build proactive features into your AI:
+
+```typescript
+// Daily briefing
+async function generateDailyBriefing() {
+  const [nudges, health, commitments] = await Promise.all([
+    cortex.nudges.list({ priority: "high" }),
+    cortex.relationships.health({ status: "at_risk" }),
+    cortex.commitments.list({ status: "pending" })
+  ]);
+
+  const briefing = `
+    Today's priorities:
+
+    ${nudges.length} people to follow up with:
+    ${nudges.map(n => `- ${n.title}`).join('\n')}
+
+    ${health.length} relationships need attention:
+    ${health.map(r => `- ${r.entityName}: ${r.recommendations[0]}`).join('\n')}
+
+    ${commitments.length} commitments due soon:
+    ${commitments.map(c => `- ${c.title} (${c.dueDate})`).join('\n')}
+  `;
+
+  return briefing;
+}
+```
+
+This creates AI assistants that proactively help users maintain their relationships and commitments.

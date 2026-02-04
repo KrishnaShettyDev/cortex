@@ -1,0 +1,355 @@
+# TypeScript SDK
+
+The official TypeScript SDK for Cortex. Full type safety, automatic retries, and comprehensive TypeScript types.
+
+## Installation
+
+```bash
+npm install @cortex/memory
+# or
+yarn add @cortex/memory
+# or
+pnpm add @cortex/memory
+```
+
+## Quick Start
+
+```typescript
+import { CortexClient } from '@cortex/memory';
+
+const cortex = new CortexClient({
+  apiKey: process.env.CORTEX_API_KEY
+});
+
+// Add a memory
+const memory = await cortex.memories.create({
+  content: "User prefers dark mode for all editors",
+  source: "manual"
+});
+
+// Search memories
+const results = await cortex.memories.search({
+  query: "editor preferences"
+});
+
+// Recall with context
+const context = await cortex.recall({
+  query: "What are the user's preferences?",
+  includeProfile: true
+});
+```
+
+## Configuration
+
+```typescript
+const cortex = new CortexClient({
+  // Required
+  apiKey: process.env.CORTEX_API_KEY,
+
+  // Optional
+  baseUrl: 'https://askcortex.plutas.in',  // Custom API endpoint
+  containerTag: 'my-project',               // Multi-tenant isolation
+  timeout: 30000,                           // Request timeout in ms
+  retries: 3,                               // Number of retries on failure
+});
+```
+
+## Memories
+
+### Create
+
+```typescript
+const memory = await cortex.memories.create({
+  content: "Meeting notes: Q4 roadmap discussion with team",
+  source: "meeting_notes",
+  metadata: {
+    meetingId: "mtg_123",
+    attendees: ["sarah@example.com", "mike@example.com"]
+  }
+});
+
+console.log(memory.id);               // "mem_abc123"
+console.log(memory.processingStatus); // "queued"
+```
+
+### Search
+
+```typescript
+const results = await cortex.memories.search({
+  query: "Q4 roadmap",
+  limit: 10,
+  threshold: 0.5,           // Minimum similarity score
+  source: "meeting_notes"   // Filter by source
+});
+
+for (const memory of results.memories) {
+  console.log(memory.content);
+  console.log(memory.score);  // Similarity score
+}
+```
+
+### List
+
+```typescript
+const page = await cortex.memories.list({
+  limit: 20,
+  offset: 0,
+  source: "email"
+});
+
+console.log(page.memories);
+console.log(page.total);
+```
+
+### Get
+
+```typescript
+const memory = await cortex.memories.get("mem_abc123");
+```
+
+### Delete
+
+```typescript
+await cortex.memories.delete("mem_abc123");
+```
+
+### Batch Create
+
+```typescript
+const results = await cortex.memories.createBatch([
+  { content: "First memory", source: "import" },
+  { content: "Second memory", source: "import" },
+  { content: "Third memory", source: "import" }
+]);
+
+console.log(results.created);  // Number created
+console.log(results.failed);   // Number failed
+```
+
+## Recall
+
+The most powerful method - returns relevant memories plus cognitive context.
+
+```typescript
+const context = await cortex.recall({
+  query: "What should we focus on this quarter?",
+  includeProfile: true,
+  includeBeliefs: true,
+  includeLearnings: true,
+  includeEntities: true,
+  limit: 10
+});
+
+// Use in AI prompts
+const systemPrompt = `
+You are helping: ${context.profile}
+
+Relevant context:
+${context.memories.map(m => m.content).join('\n')}
+
+User beliefs:
+${context.beliefs.map(b => b.content).join('\n')}
+`;
+```
+
+## Beliefs
+
+```typescript
+// List all beliefs
+const beliefs = await cortex.beliefs.list();
+
+// Filter by category
+const preferences = await cortex.beliefs.list({
+  category: "preference"
+});
+
+// Filter by confidence
+const strongBeliefs = await cortex.beliefs.list({
+  minConfidence: 0.8
+});
+```
+
+## Learnings
+
+```typescript
+const learnings = await cortex.learnings.list();
+
+for (const learning of learnings) {
+  console.log(learning.content);
+  console.log(learning.source);      // How it was discovered
+  console.log(learning.confidence);
+}
+```
+
+## Commitments
+
+```typescript
+// List pending commitments
+const pending = await cortex.commitments.list({
+  status: "pending"
+});
+
+// List overdue
+const overdue = await cortex.commitments.list({
+  status: "overdue"
+});
+
+// Mark as completed
+await cortex.commitments.update("commit_abc", {
+  status: "completed"
+});
+```
+
+## Entities
+
+```typescript
+// List all entities
+const entities = await cortex.entities.list();
+
+// Filter by type
+const people = await cortex.entities.list({
+  type: "person"
+});
+
+// Get entity details with relationships
+const entity = await cortex.entities.get("ent_sarah");
+console.log(entity.relationships);
+console.log(entity.recentMemories);
+
+// Get knowledge graph
+const graph = await cortex.entities.graph({
+  depth: 2,
+  minConfidence: 0.7
+});
+```
+
+## Profile
+
+```typescript
+const profile = await cortex.profile.get();
+
+console.log(profile.summary);
+console.log(profile.traits);
+console.log(profile.interests);
+```
+
+## Proactive
+
+```typescript
+// Get nudges
+const nudges = await cortex.nudges.list();
+const highPriority = await cortex.nudges.list({ priority: "high" });
+
+// Dismiss nudge
+await cortex.nudges.dismiss("nudge_abc");
+
+// Relationship health
+const health = await cortex.relationships.health();
+const atRisk = await cortex.relationships.health({ status: "at_risk" });
+
+// Key stakeholders
+const stakeholders = await cortex.relationships.stakeholders({ limit: 10 });
+```
+
+## Error Handling
+
+```typescript
+import { CortexClient, CortexError } from '@cortex/memory';
+
+try {
+  const memory = await cortex.memories.create({
+    content: "Test memory"
+  });
+} catch (error) {
+  if (error instanceof CortexError) {
+    console.log(error.code);    // "rate_limited"
+    console.log(error.message); // "Rate limit exceeded"
+    console.log(error.status);  // 429
+  }
+}
+```
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `unauthorized` | Invalid or missing API key |
+| `not_found` | Resource not found |
+| `rate_limited` | Too many requests |
+| `validation_error` | Invalid request parameters |
+| `server_error` | Internal server error |
+
+## TypeScript Types
+
+All types are exported for use in your code:
+
+```typescript
+import type {
+  Memory,
+  Belief,
+  Learning,
+  Commitment,
+  Entity,
+  Nudge,
+  RelationshipHealth,
+  RecallResponse,
+  SearchResponse,
+} from '@cortex/memory';
+
+function processMemory(memory: Memory) {
+  console.log(memory.content);
+}
+```
+
+## Framework Integration
+
+### Next.js
+
+```typescript
+// app/api/chat/route.ts
+import { CortexClient } from '@cortex/memory';
+
+const cortex = new CortexClient({
+  apiKey: process.env.CORTEX_API_KEY
+});
+
+export async function POST(request: Request) {
+  const { message, userId } = await request.json();
+
+  const context = await cortex.recall({
+    query: message,
+    includeProfile: true,
+    containerTag: userId  // Per-user isolation
+  });
+
+  // Use context in your AI response
+  return Response.json({ context });
+}
+```
+
+### Express
+
+```typescript
+import express from 'express';
+import { CortexClient } from '@cortex/memory';
+
+const app = express();
+const cortex = new CortexClient({
+  apiKey: process.env.CORTEX_API_KEY
+});
+
+app.post('/memory', async (req, res) => {
+  const memory = await cortex.memories.create({
+    content: req.body.content,
+    source: req.body.source
+  });
+  res.json(memory);
+});
+```
+
+## Best Practices
+
+1. **Reuse the client** - Create one `CortexClient` instance and reuse it
+2. **Use containers** - Isolate memories per user with `containerTag`
+3. **Handle errors** - Always wrap calls in try/catch
+4. **Use recall** - For AI context, `recall()` is better than `search()`

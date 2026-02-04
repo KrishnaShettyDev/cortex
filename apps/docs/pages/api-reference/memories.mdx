@@ -1,0 +1,362 @@
+# Memories API
+
+Memories are the core primitive in Cortex. Everything starts with storing memories, which Cortex then processes to extract beliefs, entities, and more.
+
+## Create a Memory
+
+Store a new memory. Cortex automatically processes it to extract entities, beliefs, temporal information, and importance scores.
+
+import { Tabs, Tab } from 'nextra/components'
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const memory = await cortex.memories.create({
+  content: "Had a great meeting with Sarah about the Q4 roadmap. She wants to prioritize mobile.",
+  source: "meeting_notes",
+  metadata: {
+    meeting_id: "mtg_123",
+    attendees: ["sarah@example.com"]
+  }
+});
+```
+  </Tab>
+  <Tab>
+```python
+memory = cortex.memories.add(
+    "Had a great meeting with Sarah about the Q4 roadmap. She wants to prioritize mobile.",
+    source="meeting_notes",
+    metadata={
+        "meeting_id": "mtg_123",
+        "attendees": ["sarah@example.com"]
+    }
+)
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST https://askcortex.plutas.in/v3/memories \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "Had a great meeting with Sarah about the Q4 roadmap",
+    "source": "meeting_notes",
+    "metadata": {"meeting_id": "mtg_123"}
+  }'
+```
+  </Tab>
+</Tabs>
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `content` | string | Yes | The memory content (up to 32KB) |
+| `source` | string | No | Origin of the memory (e.g., "email", "chat", "manual") |
+| `metadata` | object | No | Arbitrary JSON metadata |
+| `containerTag` | string | No | Container for multi-tenant isolation |
+
+### Response
+
+```json
+{
+  "id": "mem_abc123",
+  "content": "Had a great meeting with Sarah...",
+  "source": "meeting_notes",
+  "metadata": {"meeting_id": "mtg_123"},
+  "importanceScore": 0.75,
+  "createdAt": "2024-01-15T10:30:00Z",
+  "processing": {
+    "status": "queued",
+    "jobId": "job_xyz789"
+  }
+}
+```
+
+## Search Memories
+
+Search memories using hybrid search (semantic + keyword).
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const results = await cortex.memories.search({
+  query: "mobile roadmap",
+  limit: 10,
+  threshold: 0.5
+});
+
+for (const result of results.memories) {
+  console.log(result.content, result.score);
+}
+```
+  </Tab>
+  <Tab>
+```python
+results = cortex.memories.search(
+    "mobile roadmap",
+    limit=10,
+    threshold=0.5
+)
+
+for result in results.memories:
+    print(result.content, result.score)
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST https://askcortex.plutas.in/v3/search \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "mobile roadmap", "limit": 10}'
+```
+  </Tab>
+</Tabs>
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | Required | Search query |
+| `limit` | number | 10 | Max results to return |
+| `threshold` | number | 0.3 | Minimum similarity score (0-1) |
+| `source` | string | - | Filter by source |
+| `containerTag` | string | - | Filter by container |
+
+### Response
+
+```json
+{
+  "memories": [
+    {
+      "id": "mem_abc123",
+      "content": "Had a great meeting with Sarah...",
+      "score": 0.89,
+      "source": "meeting_notes",
+      "createdAt": "2024-01-15T10:30:00Z"
+    }
+  ],
+  "total": 1,
+  "searchId": "search_xyz"
+}
+```
+
+## Recall with Context
+
+The most powerful endpoint. Returns relevant memories plus cognitive context (profile, beliefs, learnings).
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const context = await cortex.recall({
+  query: "What should we focus on for Q4?",
+  includeProfile: true,
+  includeBeliefs: true,
+  includeLearnings: true,
+  limit: 5
+});
+
+console.log(context.profile);     // User profile summary
+console.log(context.memories);    // Relevant memories
+console.log(context.beliefs);     // Related beliefs
+console.log(context.learnings);   // Related learnings
+```
+  </Tab>
+  <Tab>
+```python
+context = cortex.recall(
+    query="What should we focus on for Q4?",
+    include_profile=True,
+    include_beliefs=True,
+    include_learnings=True,
+    limit=5
+)
+
+print(context.profile)
+print(context.memories)
+print(context.beliefs)
+print(context.learnings)
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST https://askcortex.plutas.in/v3/recall \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What should we focus on for Q4?",
+    "include_profile": true,
+    "include_beliefs": true,
+    "include_learnings": true,
+    "limit": 5
+  }'
+```
+  </Tab>
+</Tabs>
+
+### Response
+
+```json
+{
+  "profile": "Senior product manager focused on mobile-first strategy...",
+  "memories": [...],
+  "beliefs": [
+    {
+      "id": "belief_123",
+      "content": "User prioritizes mobile development",
+      "confidence": 0.9
+    }
+  ],
+  "learnings": [
+    {
+      "id": "learn_456",
+      "content": "Q4 planning typically happens in September",
+      "source": "pattern"
+    }
+  ],
+  "entities": [
+    {
+      "id": "ent_789",
+      "name": "Sarah",
+      "type": "person",
+      "relationship": "colleague"
+    }
+  ]
+}
+```
+
+## List Memories
+
+Get all memories with pagination.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const page = await cortex.memories.list({
+  limit: 20,
+  offset: 0,
+  source: "email"
+});
+```
+  </Tab>
+  <Tab>
+```python
+page = cortex.memories.list(limit=20, offset=0, source="email")
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/memories?limit=20&offset=0&source=email" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Get a Memory
+
+Retrieve a single memory by ID.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const memory = await cortex.memories.get("mem_abc123");
+```
+  </Tab>
+  <Tab>
+```python
+memory = cortex.memories.get("mem_abc123")
+```
+  </Tab>
+  <Tab>
+```bash
+curl "https://askcortex.plutas.in/v3/memories/mem_abc123" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Delete a Memory
+
+Soft-delete a memory. It's marked as forgotten but preserved for audit.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+await cortex.memories.delete("mem_abc123");
+```
+  </Tab>
+  <Tab>
+```python
+cortex.memories.delete("mem_abc123")
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X DELETE "https://askcortex.plutas.in/v3/memories/mem_abc123" \
+  -H "Authorization: Bearer $CORTEX_API_KEY"
+```
+  </Tab>
+</Tabs>
+
+## Batch Operations
+
+Create multiple memories at once for better performance.
+
+<Tabs items={['TypeScript', 'Python', 'cURL']}>
+  <Tab>
+```typescript
+const results = await cortex.memories.createBatch([
+  { content: "First memory", source: "import" },
+  { content: "Second memory", source: "import" },
+  { content: "Third memory", source: "import" }
+]);
+```
+  </Tab>
+  <Tab>
+```python
+results = cortex.memories.add_batch([
+    {"content": "First memory", "source": "import"},
+    {"content": "Second memory", "source": "import"},
+    {"content": "Third memory", "source": "import"}
+])
+```
+  </Tab>
+  <Tab>
+```bash
+curl -X POST https://askcortex.plutas.in/v3/memories/batch \
+  -H "Authorization: Bearer $CORTEX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "memories": [
+      {"content": "First memory", "source": "import"},
+      {"content": "Second memory", "source": "import"}
+    ]
+  }'
+```
+  </Tab>
+</Tabs>
+
+## Processing Status
+
+Check the processing status of a memory.
+
+```typescript
+const memory = await cortex.memories.get("mem_abc123");
+
+if (memory.processingStatus === "done") {
+  // Memory fully processed - entities, beliefs extracted
+} else if (memory.processingStatus === "queued") {
+  // Still being processed
+} else if (memory.processingStatus === "failed") {
+  // Processing failed - check processingError
+}
+```
+
+Processing stages:
+1. `queued` - Waiting to be processed
+2. `extracting` - Extracting content and metadata
+3. `chunking` - Splitting into chunks if needed
+4. `embedding` - Creating vector embeddings
+5. `indexing` - Indexing in vector store
+6. `done` - Fully processed
+7. `failed` - Processing failed

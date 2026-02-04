@@ -1,0 +1,201 @@
+# Cognitive Memory
+
+Traditional memory systems just store and retrieve text. Cortex goes further - it thinks about what memories mean.
+
+## The Memory Stack
+
+Cortex organizes information into layers, from raw observations to stable knowledge:
+
+```
+┌─────────────────────────────────────┐
+│           Profile                    │  ← Who is this person? (summary)
+├─────────────────────────────────────┤
+│           Beliefs                    │  ← Stable facts and preferences
+├─────────────────────────────────────┤
+│          Learnings                   │  ← Patterns discovered over time
+├─────────────────────────────────────┤
+│       Semantic Memories              │  ← Consolidated knowledge
+├─────────────────────────────────────┤
+│       Episodic Memories              │  ← Raw observations
+└─────────────────────────────────────┘
+```
+
+### Episodic Memories
+
+The foundation. Raw observations stored as they happened.
+
+> "Had coffee with Sarah at Blue Bottle. She mentioned she's moving to London."
+
+These are timestamped events - what happened, when it happened, where it happened.
+
+### Semantic Memories
+
+Consolidated knowledge extracted from multiple episodic memories. Created when Cortex notices patterns.
+
+> "Sarah is relocating from SF to London office."
+
+This is a fact, not tied to a specific moment. It's knowledge.
+
+### Learnings
+
+Insights discovered from patterns across many memories.
+
+> "User tends to overcommit on project timelines."
+
+Learnings are higher-level than individual facts. They're "aha" moments from watching behavior over time.
+
+### Beliefs
+
+Stable facts about preferences, opinions, and characteristics. High confidence, unlikely to change.
+
+> "User prefers React over Angular for frontend development."
+
+Beliefs are what Cortex is confident about. They persist until contradicted.
+
+### Profile
+
+A continuously updated summary of who the user is. Generated from all other layers.
+
+> "Senior product manager. Detail-oriented, prefers concise communication. Works closely with Sarah (engineering) and Mike (design)."
+
+## How Extraction Works
+
+When you add a memory, Cortex runs multiple extractors in parallel:
+
+```
+Memory Input
+    │
+    ├──→ Entity Extractor ──→ People, places, things
+    │
+    ├──→ Temporal Extractor ──→ Dates, durations
+    │
+    ├──→ Fact Extractor ──→ Beliefs, preferences
+    │
+    ├──→ Commitment Extractor ──→ Promises, obligations
+    │
+    └──→ Importance Scorer ──→ How significant?
+```
+
+### Example
+
+**Input memory**:
+> "Promised Sarah I'd review her design docs by Friday. She's been working really hard on the mobile redesign."
+
+**Extracted**:
+- **Entity**: Sarah (person, designer)
+- **Commitment**: Review design docs, due Friday
+- **Temporal**: Event date = this week
+- **Learning**: Sarah is working on mobile redesign
+- **Importance**: High (commitment + person mention)
+
+## Memory Consolidation
+
+Over time, episodic memories get consolidated into semantic memories. This is like how human memory works - you forget the details but remember the gist.
+
+### Before Consolidation
+
+```
+2024-01-15: "Sarah said mobile app needs better onboarding"
+2024-01-18: "Sarah mentioned users drop off at step 3"
+2024-01-22: "Sarah shared heatmap showing onboarding issues"
+```
+
+### After Consolidation
+
+```
+Semantic memory: "Mobile app has onboarding problems, especially at step 3. Sarah has been investigating this."
+```
+
+The original episodic memories are archived (not deleted) but the semantic memory is what gets retrieved.
+
+## Temporal Tracking
+
+Memories aren't static - knowledge changes over time. Cortex tracks:
+
+- **valid_from**: When did this become true?
+- **valid_to**: When did it stop being true?
+- **supersedes**: What older memory does this update?
+
+### Example
+
+```
+2024-01-01: "Sarah works in SF office"
+           valid_from: 2024-01-01, valid_to: null
+
+2024-03-15: "Sarah moved to London office"
+           valid_from: 2024-03-15, valid_to: null
+           supersedes: <previous memory>
+
+           Previous memory now has:
+           valid_to: 2024-03-15
+```
+
+This enables time-travel queries: "Where did Sarah work in February?"
+
+## Confidence Scores
+
+Not all knowledge is equally certain. Cortex tracks confidence:
+
+| Confidence | Meaning | Source Example |
+|------------|---------|----------------|
+| 0.9 and above | Definite | "I use React" (explicit statement) |
+| 0.7 to 0.9 | Likely | "User seems to prefer..." (inferred) |
+| 0.5 to 0.7 | Possible | "User might..." (weak signal) |
+| Below 0.5 | Uncertain | Contradictory signals |
+
+Higher confidence beliefs are more likely to be used in AI prompts.
+
+## Contradiction Handling
+
+What happens when memories contradict?
+
+1. **Newer wins**: Recent information updates older beliefs
+2. **Explicit wins**: Direct statements beat inferences
+3. **Frequent wins**: Often-mentioned facts beat one-offs
+
+Example:
+```
+Memory 1: "I love Python" (2024-01, direct statement)
+Memory 2: "User has been coding in TypeScript" (2024-06, behavior)
+
+Result: Both stored. Belief "loves Python" remains.
+        Learning "currently using TypeScript" added.
+```
+
+## Importance Scoring
+
+Not all memories are equally important. Importance is calculated from:
+
+- **Recency**: How recent is this?
+- **Frequency**: How often is this topic mentioned?
+- **Entities**: Does it mention important people?
+- **Commitments**: Does it contain obligations?
+- **Sentiment**: Strong emotions = more important
+
+High-importance memories are:
+- More likely to be returned in search
+- Protected from consolidation longer
+- Given more weight in profile generation
+
+## Using Cognitive Data
+
+The real power is in the `recall` endpoint:
+
+```typescript
+const context = await cortex.recall({
+  query: "What should I know before my meeting with Sarah?",
+  includeProfile: true,
+  includeBeliefs: true,
+  includeLearnings: true
+});
+
+// Returns:
+// - Profile: Who you are
+// - Beliefs: Your stable preferences
+// - Learnings: Patterns about your relationship with Sarah
+// - Memories: Recent interactions with Sarah
+// - Entities: Sarah's details (role, office, relationships)
+// - Commitments: Outstanding obligations to Sarah
+```
+
+This gives AI assistants everything they need for a contextual response.

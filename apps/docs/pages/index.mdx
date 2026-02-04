@@ -1,0 +1,66 @@
+# Cortex
+
+**Memory infrastructure for AI agents that actually remembers.**
+
+Cortex gives your AI agents persistent memory with automatic extraction of beliefs, learnings, entities, and commitments. It's like giving your AI a brain that learns and grows with every conversation.
+
+## What makes Cortex different?
+
+Most memory systems just store and retrieve text. Cortex goes further:
+
+- **Cognitive Memory** - Automatically extracts beliefs, learnings, and preferences from conversations
+- **Knowledge Graph** - Builds entity relationships and tracks how they evolve over time
+- **Proactive Intelligence** - Generates nudges, relationship health scores, and commitment tracking
+- **Time Travel** - Query what was true at any point in time, not just now
+
+## Quick Example
+
+```typescript
+import { CortexClient } from '@cortex/memory';
+
+const cortex = new CortexClient({ apiKey: 'YOUR_API_KEY' });
+
+// Store a memory
+await cortex.memories.create({
+  content: "User mentioned they're switching from React to Vue for their next project",
+  source: "chat"
+});
+
+// Cortex automatically extracts:
+// - Belief: "User prefers Vue over React for new projects"
+// - Entity: "React" (technology, mentioned negatively)
+// - Entity: "Vue" (technology, mentioned positively)
+// - Learning: "User is exploring new frontend frameworks"
+
+// Later, recall context
+const context = await cortex.recall({
+  query: "What frontend framework should I recommend?",
+  includeProfile: true
+});
+// Returns: User prefers Vue, has React experience, exploring new options
+```
+
+## Get Started
+
+import { Cards, Card } from 'nextra/components'
+
+<Cards>
+  <Card title="Quickstart" href="/getting-started/quickstart" />
+  <Card title="Authentication" href="/getting-started/authentication" />
+  <Card title="TypeScript SDK" href="/sdks/typescript" />
+  <Card title="Python SDK" href="/sdks/python" />
+</Cards>
+
+## Core Concepts
+
+- **Memories** - Raw information stored with automatic processing
+- **Beliefs** - Stable facts about the user extracted from memories
+- **Learnings** - Insights and patterns discovered over time
+- **Entities** - People, places, things with tracked relationships
+- **Commitments** - Promises and obligations with due dates
+
+## SDKs
+
+- [TypeScript](/sdks/typescript) - `npm install @cortex/memory`
+- [Python](/sdks/python) - `pip install cortex-memory`
+- [MCP Server](/sdks/mcp) - Works with Claude Desktop, Cursor, and other MCP clients
