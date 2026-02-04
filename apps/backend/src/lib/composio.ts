@@ -166,12 +166,20 @@ export class ComposioClient {
     userId: string; // Our internal user ID
     callbackUrl: string; // Redirect URL after OAuth
   }): Promise<AuthLinkResponse> {
-    // Always use GOOGLESUPER which combines Gmail + Calendar + other Google services
+    // V3 API format from composio SDK source code
+    // https://github.com/composiohq/composio/blob/next/python/composio/core/models/connected_accounts.py
     const requestBody = {
-      appName: 'GOOGLESUPER',
-      authConfigId: this.googleSuperAuthConfigId,
-      entityId: params.userId,
-      redirectUrl: params.callbackUrl,
+      auth_config: {
+        id: this.googleSuperAuthConfigId,
+      },
+      connection: {
+        user_id: params.userId,
+        callback_url: params.callbackUrl,
+        state: {
+          authScheme: 'OAUTH2',
+          status: 'INITIALIZING',
+        },
+      },
     };
 
     console.log('[Composio] Creating connection with GOOGLESUPER:', JSON.stringify(requestBody));
@@ -183,8 +191,8 @@ export class ComposioClient {
 
     console.log('[Composio] createAuthLink response:', JSON.stringify(response));
 
-    // v3 API returns redirectUrl in the response
-    const redirectUrl = response.redirectUrl || response.redirect_url || response.authUrl || '';
+    // v3 API returns redirect_url in the response
+    const redirectUrl = response.redirect_url || response.redirectUrl || response.authUrl || '';
 
     if (!redirectUrl) {
       throw new Error(`No redirectUrl in Composio response: ${JSON.stringify(response)}`);

@@ -339,6 +339,10 @@ app.get('/chat/briefing', (c) =>
 );
 app.get('/autonomous-actions', (c) => c.json([]));
 
+// PUBLIC: OAuth callback routes (no auth required - Composio redirects here)
+app.get('/integrations/gmail/callback', integrationHandlers.gmailCallback);
+app.get('/integrations/calendar/callback', integrationHandlers.calendarCallback);
+
 // Protected middleware
 app.use('/api/*', authenticateWithJwt);
 app.use('/integrations/*', authenticateWithJwt);
@@ -352,12 +356,10 @@ app.delete('/api/memories/:id', memoryHandlers.deleteExistingMemory);
 app.post('/api/search', memoryHandlers.search);
 app.post('/api/chat', memoryHandlers.chatWithMemories);
 
-// Protected routes - Integrations
+// Protected routes - Integrations (callbacks are public, defined above)
 app.get('/integrations/status', integrationHandlers.getIntegrationStatus);
 app.post('/integrations/gmail/connect', integrationHandlers.connectGmail);
 app.post('/integrations/calendar/connect', integrationHandlers.connectCalendar);
-app.get('/integrations/gmail/callback', integrationHandlers.gmailCallback);
-app.get('/integrations/calendar/callback', integrationHandlers.calendarCallback);
 app.post('/integrations/gmail/sync', integrationHandlers.triggerGmailSync);
 app.post('/integrations/calendar/sync', integrationHandlers.triggerCalendarSync);
 app.delete('/integrations/:provider', integrationHandlers.disconnectIntegration);

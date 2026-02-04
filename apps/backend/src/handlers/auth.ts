@@ -490,9 +490,9 @@ export async function connectGoogle(c: Context<{ Bindings: Bindings }>) {
 
     console.log(`[Auth] Google connect initiated for user ${userId}`);
 
-    // Build callback URL for Composio OAuth
+    // Build callback URL for Composio OAuth (include userId so callback knows who connected)
     const baseUrl = new URL(c.req.url).origin;
-    const callbackUrl = `${baseUrl}/integrations/gmail/callback`;
+    const callbackUrl = `${baseUrl}/integrations/gmail/callback?userId=${encodeURIComponent(userId)}`;
 
     // Create OAuth link via Composio (uses managed OAuth by default)
     const composio = createComposioServices(c.env.COMPOSIO_API_KEY);

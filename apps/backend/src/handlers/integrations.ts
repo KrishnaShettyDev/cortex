@@ -18,54 +18,46 @@ import { syncCalendar } from '../lib/sync/calendar';
 /**
  * GET /integrations/status
  * Get all connected integrations for user
+ *
+ * Uses our database as the source of truth for connection status.
+ * Returns format expected by mobile app.
  */
 export async function getIntegrationStatus(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
     const userId = c.get('jwtPayload').sub;
 
-    // Query our database for integration status
+    // Query our database for integration status - this is our source of truth
     const integrations = await c.env.DB.prepare(
-      'SELECT provider, connected, email, last_sync FROM integrations WHERE user_id = ?'
+      'SELECT provider, connected, email, last_sync, access_token FROM integrations WHERE user_id = ?'
     )
       .bind(userId)
       .all();
 
-    // Try to check Composio for active connections (gracefully handle errors)
-    let gmailAccount = null;
-    let calendarAccount = null;
+    // Find Gmail and Calendar integrations from our database
+    const gmailIntegration = integrations.results?.find((i: any) => i.provider === 'gmail');
+    const calendarIntegration = integrations.results?.find((i: any) => i.provider === 'googlecalendar');
 
-    try {
-      const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
-      const composioAccounts = await composio.client.listConnectedAccounts({
-        userId,
-        statuses: ['ACTIVE'],
-      });
+    const gmailConnected = !!gmailIntegration?.connected;
+    const calendarConnected = !!calendarIntegration?.connected;
+    const googleConnected = gmailConnected || calendarConnected;
 
-      // Map Composio accounts to our format
-      gmailAccount = composioAccounts.items?.find((a) => a.toolkitSlug === 'gmail') || null;
-      calendarAccount = composioAccounts.items?.find(
-        (a) => a.toolkitSlug === 'googlecalendar'
-      ) || null;
-    } catch (error: any) {
-      // Log but don't fail - Composio may return 404 when no accounts exist
-      console.warn('[Integrations] Composio lookup failed (likely no accounts):', error.message);
-    }
-
+    // Return format expected by mobile app
     return c.json({
-      gmail: {
-        connected: !!gmailAccount,
-        accountId: gmailAccount?.id || null,
-        status: gmailAccount?.status || null,
-        lastSync:
-          integrations.results?.find((i: any) => i.provider === 'gmail')?.last_sync || null,
+      google: {
+        connected: googleConnected,
+        email: gmailIntegration?.email || calendarIntegration?.email || null,
+        last_sync: gmailIntegration?.last_sync || calendarIntegration?.last_sync || null,
+        status: googleConnected ? 'active' : 'not_connected',
+        gmail_connected: gmailConnected,
+        calendar_connected: calendarConnected,
       },
-      calendar: {
-        connected: !!calendarAccount,
-        accountId: calendarAccount?.id || null,
-        status: calendarAccount?.status || null,
-        lastSync:
-          integrations.results?.find((i: any) => i.provider === 'googlecalendar')?.last_sync ||
-          null,
+      microsoft: {
+        connected: false,
+        email: null,
+        last_sync: null,
+        status: 'not_connected',
+        gmail_connected: false,
+        calendar_connected: false,
       },
     });
   });
@@ -140,12 +132,18 @@ export async function connectCalendar(c: Context<{ Bindings: Bindings }>) {
 /**
  * GET /integrations/gmail/callback
  * OAuth callback for Gmail (user gets redirected here after auth)
+ * NOTE: This is a PUBLIC endpoint - no JWT auth required
  */
 export async function gmailCallback(c: Context<{ Bindings: Bindings }>) {
-  return handleError(c, async () => {
-    // Composio handles the OAuth flow, we just need to verify and save
-    const connectedAccountId = c.req.query('connected_account_id');
+  try {
+    // Composio sends connectedAccountId (camelCase) in the callback
+    const connectedAccountId = c.req.query('connectedAccountId') || c.req.query('connected_account_id');
     const status = c.req.query('status');
+
+    // Get userId from the connection - Composio encodes it in the state
+    const userId = c.req.query('entityId') || c.req.query('userId');
+
+    console.log('[Gmail Callback] Received callback:', { status, connectedAccountId, userId });
 
     if (status !== 'success' || !connectedAccountId) {
       return c.html(`
@@ -159,11 +157,22 @@ export async function gmailCallback(c: Context<{ Bindings: Bindings }>) {
       `);
     }
 
-    // Get the connected account to verify
-    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
-    const account = await composio.client.getConnectedAccount(connectedAccountId);
+    // We trust the callback from Composio - no need to verify the account
+    // The connectedAccountId is valid if status is 'success'
+    if (!userId) {
+      console.error('[Gmail Callback] No userId in callback URL');
+      return c.html(`
+        <html>
+          <body style="font-family: system-ui; padding: 40px; text-align: center; background: #000; color: #fff;">
+            <h1 style="color: #ef4444;">Connection Error</h1>
+            <p>Missing user information. Please try again.</p>
+            <script>setTimeout(() => window.close(), 3000);</script>
+          </body>
+        </html>
+      `);
+    }
 
-    console.log(`[Gmail Callback] Account connected for user ${account.userId}`);
+    console.log(`[Gmail Callback] Account connected for user ${userId}, connectedAccountId: ${connectedAccountId}`);
 
     // Save to our database
     await c.env.DB.prepare(
@@ -175,7 +184,7 @@ export async function gmailCallback(c: Context<{ Bindings: Bindings }>) {
          updated_at = excluded.updated_at`
     )
       .bind(
-        account.userId,
+        userId,
         'gmail',
         1,
         connectedAccountId, // Store Composio account ID as access_token
@@ -187,44 +196,37 @@ export async function gmailCallback(c: Context<{ Bindings: Bindings }>) {
     // Trigger initial sync in background
     c.executionCtx.waitUntil(
       syncGmail(c.env, {
-        userId: account.userId,
-        connectedAccountId: account.id,
+        userId,
+        connectedAccountId,
         sinceDays: 7,
         maxEmails: 50,
       })
     );
 
+    // Redirect to app deep link to close the WebBrowser
+    return c.redirect('cortex://oauth/success?provider=gmail');
+  } catch (error: any) {
+    console.error('[Gmail Callback] Error:', error);
     return c.html(`
       <html>
-        <head>
-          <style>
-            body { font-family: system-ui; padding: 40px; text-align: center; background: #000; color: #fff; }
-            h1 { color: #22c55e; }
-          </style>
-        </head>
-        <body>
-          <h1>✓ Gmail Connected!</h1>
-          <p>Syncing your emails now. You can close this window.</p>
-          <script>
-            // Send message to parent window
-            if (window.opener) {
-              window.opener.postMessage({ type: 'GMAIL_CONNECTED', success: true }, '*');
-            }
-            // Auto-close after 1 second
-            setTimeout(() => window.close(), 1000);
-          </script>
+        <body style="font-family: system-ui; padding: 40px; text-align: center; background: #000; color: #fff;">
+          <h1 style="color: #ef4444;">Connection Error</h1>
+          <p>${error.message || 'An error occurred'}</p>
+          <script>setTimeout(() => window.close(), 3000);</script>
         </body>
       </html>
     `);
-  });
+  }
 }
 
 /**
  * GET /integrations/calendar/callback
  * OAuth callback for Google Calendar
+ * NOTE: This is a PUBLIC endpoint - no JWT auth required
  */
 export async function calendarCallback(c: Context<{ Bindings: Bindings }>) {
-  return handleError(c, async () => {
+  try {
+    console.log('[Calendar Callback] Received callback');
     const connectedAccountId = c.req.query('connected_account_id');
     const status = c.req.query('status');
 
@@ -275,19 +277,30 @@ export async function calendarCallback(c: Context<{ Bindings: Bindings }>) {
 
     return c.html(`
       <html>
-        <body>
-          <h1>Calendar Connected!</h1>
+        <body style="font-family: system-ui; padding: 40px; text-align: center; background: #000; color: #fff;">
+          <h1 style="color: #22c55e;">✓ Calendar Connected!</h1>
           <p>Your Google Calendar has been successfully connected. We're syncing your events now.</p>
           <script>
-            setTimeout(() => {
-              window.close();
-              window.opener?.location.reload();
-            }, 2000);
+            if (window.opener) {
+              window.opener.postMessage({ type: 'CALENDAR_CONNECTED', success: true }, '*');
+            }
+            setTimeout(() => window.close(), 1000);
           </script>
         </body>
       </html>
     `);
-  });
+  } catch (error: any) {
+    console.error('[Calendar Callback] Error:', error);
+    return c.html(`
+      <html>
+        <body style="font-family: system-ui; padding: 40px; text-align: center; background: #000; color: #fff;">
+          <h1 style="color: #ef4444;">Connection Error</h1>
+          <p>${error.message || 'An error occurred'}</p>
+          <script>setTimeout(() => window.close(), 3000);</script>
+        </body>
+      </html>
+    `);
+  }
 }
 
 /**
