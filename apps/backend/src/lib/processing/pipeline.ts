@@ -109,10 +109,7 @@ export class ProcessingPipeline {
         await this.runCommitmentExtraction();
       });
 
-      // Step 9: Extract learnings (patterns and preferences)
-      await this.runStep('learning_extraction', async () => {
-        await this.runLearningExtraction();
-      });
+      // DELETED: Step 9 (learning extraction) - cognitive layer purged for Supermemory++
 
       // Mark as done
       await this.markDone();
@@ -129,14 +126,12 @@ export class ProcessingPipeline {
       console.log(`  entity_extraction: ${(job.metrics.entityExtractionDurationMs || 0).toString().padStart(6)}ms`);
       console.log(`  importance:        ${(job.metrics.importanceScoringDurationMs || 0).toString().padStart(6)}ms`);
       console.log(`  commitment:        ${(job.metrics.commitmentExtractionDurationMs || 0).toString().padStart(6)}ms`);
-      console.log(`  learning:          ${(job.metrics.learningExtractionDurationMs || 0).toString().padStart(6)}ms`);
       console.log(`  TOTAL:             ${job.metrics.totalDurationMs.toString().padStart(6)}ms`);
 
       console.log(`[Pipeline] Extraction Results:`);
       console.log(`  entities:     ${job.metrics.entitiesExtracted || 0}`);
       console.log(`  relationships: ${job.metrics.relationshipsExtracted || 0}`);
       console.log(`  commitments:  ${job.metrics.commitmentsExtracted || 0}`);
-      console.log(`  learnings:    ${job.metrics.learningsExtracted || 0}`);
       console.log(`  importance:   ${(job.metrics.importanceScore || 0).toFixed(3)}`);
 
       console.log(`[Pipeline] ========== EXECUTE COMPLETE ==========`);
@@ -674,47 +669,7 @@ export class ProcessingPipeline {
     }
   }
 
-  /**
-   * Step 9: Extract learnings (patterns and preferences)
-   */
-  private async runLearningExtraction() {
-    const memory = await this.getMemory();
-    const { job } = this.ctx;
-    const { extractAndSaveLearnings } = await import('../cognitive/learning/extractor');
-
-    try {
-      const result = await extractAndSaveLearnings(
-        this.ctx.env.DB,
-        this.ctx.env.AI,
-        job.userId,
-        job.containerTag,
-        memory.id,
-        memory.content
-      );
-      const learnings = result.saved || [];
-
-      this.ctx.learningResult = {
-        learnings: learnings.map(l => ({
-          id: l.id,
-          category: l.category,
-          statement: l.statement,
-          confidence: l.confidence,
-        })),
-        totalLearnings: learnings.length,
-        conflictsDetected: result.conflicts?.length || 0,
-      };
-
-      console.log(`[Pipeline] Extracted ${learnings.length} learnings (${result.conflicts?.length || 0} conflicts)`);
-    } catch (error) {
-      // Non-blocking - learning extraction failure shouldn't stop pipeline
-      console.warn(`[Pipeline] Learning extraction failed (non-critical):`, error);
-      this.ctx.learningResult = {
-        learnings: [],
-        totalLearnings: 0,
-        conflictsDetected: 0,
-      };
-    }
-  }
+  // DELETED: runLearningExtraction() - cognitive layer purged for Supermemory++
 
   /**
    * Get appropriate extractor based on content type
