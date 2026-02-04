@@ -1,9 +1,12 @@
 import { api } from './api';
-import { Memory, MemoryCreateResponse, MemoryListResponse, MemorySearchResponse } from '../types';
+import { Memory, MemoryListResponse, MemorySearchResponse } from '../types';
 
 interface CreateMemoryRequest {
   content: string;
   source?: string;
+  memory_type?: 'text' | 'voice' | 'photo';
+  photo_url?: string;
+  audio_url?: string;
   metadata?: {
     entities?: string[];
     location_lat?: number;

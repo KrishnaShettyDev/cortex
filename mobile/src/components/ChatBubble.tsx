@@ -171,38 +171,38 @@ function RichContentFromAction({ action }: { action: ActionTaken }) {
   const result = action.result;
 
   // Email search results
-  if (action.tool === 'search_emails' && result.emails?.length > 0) {
+  if (action.tool === 'search_emails' && result.emails && result.emails.length > 0) {
     const emails: EmailData[] = (result.emails as RawEmailResponse[]).map((e) => ({
       id: e.id,
-      thread_id: e.thread_id,
-      subject: e.subject,
-      from: e.from,
-      date: e.date,
-      snippet: e.snippet,
+      thread_id: e.thread_id || '',
+      subject: e.subject || '',
+      from: e.from || '',
+      date: e.date || '',
+      snippet: e.snippet || '',
       is_unread: e.is_unread,
     }));
     return <EmailList emails={emails} />;
   }
 
   // Email thread
-  if (action.tool === 'get_email_thread' && result.messages?.length > 0) {
+  if (action.tool === 'get_email_thread' && result.messages && result.messages.length > 0) {
     const emails: EmailData[] = (result.messages as RawEmailResponse[]).map((m) => ({
       id: m.id,
-      subject: m.subject,
-      from: m.from,
-      date: m.date,
-      snippet: m.snippet || m.body?.substring(0, 150),
+      subject: m.subject || '',
+      from: m.from || '',
+      date: m.date || '',
+      snippet: m.snippet || m.body?.substring(0, 150) || '',
     }));
     return <EmailList emails={emails} />;
   }
 
   // Calendar events search
-  if ((action.tool === 'get_calendar_events' || action.tool === 'search_calendar') && result.events?.length > 0) {
+  if ((action.tool === 'get_calendar_events' || action.tool === 'search_calendar') && result.events && result.events.length > 0) {
     const events: CalendarEventData[] = (result.events as RawCalendarEventResponse[]).map((e) => ({
       id: e.id,
-      title: e.title || e.summary,
-      start_time: e.start_time || e.start,
-      end_time: e.end_time || e.end,
+      title: e.title || e.summary || '',
+      start_time: e.start_time || e.start || '',
+      end_time: e.end_time || e.end || '',
       location: e.location,
       attendees: e.attendees,
       event_url: e.event_url || e.htmlLink,
@@ -211,17 +211,17 @@ function RichContentFromAction({ action }: { action: ActionTaken }) {
   }
 
   // Free time slots
-  if (action.tool === 'find_free_time' && result.free_slots?.length > 0) {
+  if (action.tool === 'find_free_time' && result.free_slots && result.free_slots.length > 0) {
     const slots: TimeSlotData[] = (result.free_slots as RawTimeSlotResponse[]).map((s) => ({
-      start: s.start,
-      end: s.end,
-      duration_minutes: s.duration_minutes,
+      start: s.start || s.start_time || '',
+      end: s.end || s.end_time || '',
+      duration_minutes: s.duration_minutes || 0,
     }));
     return <FreeTimeSlots slots={slots} />;
   }
 
   // Places search
-  if (action.tool === 'search_places' && result.places?.length > 0) {
+  if (action.tool === 'search_places' && result.places && result.places.length > 0) {
     const places: PlaceData[] = (result.places as RawPlaceResponse[]).map((p) => ({
       name: p.name,
       address: p.address || p.formatted_address,
@@ -429,11 +429,11 @@ export function ChatBubble({ message, onReviewAction, onFeedback }: ChatBubblePr
   const hasRichContent = hasActions && message.actionsTaken!.some(action => {
     const result = action.result;
     return (
-      (action.tool === 'search_emails' && result.emails?.length > 0) ||
-      (action.tool === 'get_email_thread' && result.messages?.length > 0) ||
-      ((action.tool === 'get_calendar_events' || action.tool === 'search_calendar') && result.events?.length > 0) ||
-      (action.tool === 'find_free_time' && result.free_slots?.length > 0) ||
-      (action.tool === 'search_places' && result.places?.length > 0)
+      (action.tool === 'search_emails' && (result.emails?.length ?? 0) > 0) ||
+      (action.tool === 'get_email_thread' && (result.messages?.length ?? 0) > 0) ||
+      ((action.tool === 'get_calendar_events' || action.tool === 'search_calendar') && (result.events?.length ?? 0) > 0) ||
+      (action.tool === 'find_free_time' && (result.free_slots?.length ?? 0) > 0) ||
+      (action.tool === 'search_places' && (result.places?.length ?? 0) > 0)
     );
   });
 

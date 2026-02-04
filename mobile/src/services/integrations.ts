@@ -47,6 +47,27 @@ export interface CalendarEventItem {
   meeting_type: MeetingType;
 }
 
+export interface TimeSlot {
+  // Primary format used by UI
+  start: string;
+  end: string;
+  duration_minutes?: number;
+  // Alternative format from backend
+  start_time?: string;
+  end_time?: string;
+}
+
+export interface CreateCalendarEventRequest {
+  title: string;
+  start_time: string;
+  end_time: string;
+  description?: string;
+  location?: string;
+  attendees?: string[];
+  add_meet_link?: boolean;
+  send_notifications?: boolean;
+}
+
 class IntegrationsService {
   /**
    * Get the connection status of all integrations
@@ -163,6 +184,27 @@ class IntegrationsService {
   async getCalendarEvents(_startDate: Date, _endDate: Date): Promise<{ events: CalendarEventItem[] }> {
     console.warn('IntegrationsService: getCalendarEvents not implemented in backend');
     return { events: [] };
+  }
+
+  /**
+   * @deprecated Calendar CRUD not implemented in backend yet
+   */
+  async createCalendarEvent(_request: CreateCalendarEventRequest): Promise<{ success: boolean; event_id?: string; message?: string }> {
+    console.warn('IntegrationsService: createCalendarEvent not implemented in backend');
+    return { success: false, message: 'Calendar event creation not yet available' };
+  }
+
+  /**
+   * @deprecated Calendar availability not implemented in backend yet
+   */
+  async getCalendarAvailability(
+    _date: string,
+    _durationMinutes: number,
+    _startHour?: number,
+    _endHour?: number
+  ): Promise<{ success: boolean; free_slots: TimeSlot[]; message?: string }> {
+    console.warn('IntegrationsService: getCalendarAvailability not implemented in backend');
+    return { success: false, free_slots: [], message: 'Calendar availability not yet available' };
   }
 
   // ============== Email CRUD ==============

@@ -74,18 +74,24 @@ export async function getIntegrationStatus(c: Context<{ Bindings: Bindings }>) {
 /**
  * POST /integrations/gmail/connect
  * Start OAuth flow for Gmail
+ *
+ * Uses Composio's managed OAuth by default (avoids Google verification)
  */
 export async function connectGmail(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
     const userId = c.get('jwtPayload').sub;
 
-    console.log(`[Gmail Connect] Creating auth link for user ${userId}`);
+    // Build callback URL for this backend
+    const baseUrl = new URL(c.req.url).origin;
+    const callbackUrl = `${baseUrl}/integrations/gmail/callback`;
+
+    console.log(`[Gmail Connect] Creating auth link for user ${userId}, callback: ${callbackUrl}`);
 
     const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
     const authLink = await composio.client.createAuthLink({
       toolkitSlug: 'gmail',
       userId,
-      callbackUrl: '', // v3 uses auth config's redirect URL
+      callbackUrl,
     });
 
     console.log(`[Gmail Connect] Auth link created:`, authLink);
@@ -101,16 +107,18 @@ export async function connectGmail(c: Context<{ Bindings: Bindings }>) {
 /**
  * POST /integrations/calendar/connect
  * Start OAuth flow for Google Calendar
+ *
+ * Uses Composio's managed OAuth by default (avoids Google verification)
  */
 export async function connectCalendar(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
     const userId = c.get('jwtPayload').sub;
 
-    const body = await c.req.json().catch(() => ({}));
-    const callbackUrl =
-      body.callbackUrl || `${new URL(c.req.url).origin}/integrations/calendar/callback`;
+    // Build callback URL for this backend
+    const baseUrl = new URL(c.req.url).origin;
+    const callbackUrl = `${baseUrl}/integrations/calendar/callback`;
 
-    console.log(`[Calendar Connect] Creating auth link for user ${userId}`);
+    console.log(`[Calendar Connect] Creating auth link for user ${userId}, callback: ${callbackUrl}`);
 
     const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
     const authLink = await composio.client.createAuthLink({
@@ -118,6 +126,8 @@ export async function connectCalendar(c: Context<{ Bindings: Bindings }>) {
       userId,
       callbackUrl,
     });
+
+    console.log(`[Calendar Connect] Auth link created:`, authLink);
 
     return c.json({
       redirectUrl: authLink.redirectUrl,

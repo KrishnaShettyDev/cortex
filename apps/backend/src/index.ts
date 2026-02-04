@@ -317,6 +317,10 @@ app.post('/auth/api-key', authHandlers.createApiKeyHandler);
 app.use('/auth/account', authenticateWithJwt);
 app.delete('/auth/account', authHandlers.deleteAccount);
 
+// Google OAuth connect (protected) - Initiates Composio OAuth for Gmail/Calendar
+app.use('/auth/google/connect', authenticateWithJwt);
+app.post('/auth/google/connect', authHandlers.connectGoogle);
+
 // Public stubs (mobile app compatibility)
 app.get('/chat/greeting', (c) =>
   c.json({ greeting: 'Welcome back!', contextual_message: null })

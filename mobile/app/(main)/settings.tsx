@@ -8,12 +8,13 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import * as Google from 'expo-auth-session/providers/google';
+import * as ExpoLinking from 'expo-linking';
 
 import { useAuth } from '../../src/context/AuthContext';
 import { integrationsService, IntegrationsStatus, authService } from '../../src/services';
@@ -22,9 +23,8 @@ import { logger } from '../../src/utils/logger';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
 import { useAppStore } from '../../src/stores/appStore';
-import { GOOGLE_CLIENT_ID } from '../../src/config/env';
 
-// Required for Google Sign In
+// Required for OAuth callback handling
 WebBrowser.maybeCompleteAuthSession();
 
 const goBack = () => {
@@ -50,58 +50,7 @@ export default function SettingsScreen() {
   // Only show loading if we have no cached data
   const [isLoadingStatus, setIsLoadingStatus] = useState(!cachedIntegrationStatus);
 
-  // Google OAuth for connecting services (Gmail/Calendar)
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    iosClientId: GOOGLE_CLIENT_ID.ios,
-    androidClientId: GOOGLE_CLIENT_ID.android,
-    webClientId: GOOGLE_CLIENT_ID.web,
-    scopes: [
-      'https://www.googleapis.com/auth/gmail.readonly',
-      'https://www.googleapis.com/auth/calendar.readonly',
-    ],
-  });
-
-  // Debug: Log the redirect URI being used
-  useEffect(() => {
-    if (request) {
-      console.log('🔐 OAuth Request redirect URI:', request.redirectUri);
-      console.log('🔐 OAuth Request URL:', request.url);
-    }
-  }, [request]);
-
-  // Handle Google OAuth response
-  useEffect(() => {
-    if (response?.type === 'success') {
-      const { authentication } = response;
-      if (authentication?.accessToken) {
-        handleGoogleConnected(authentication.accessToken);
-      }
-    } else if (response?.type === 'error') {
-      setIsConnecting(false);
-      Alert.alert('Error', response.error?.message || 'Failed to connect Google');
-    } else if (response?.type === 'dismiss') {
-      setIsConnecting(false);
-    }
-  }, [response]);
-
-  const handleGoogleConnected = async (accessToken: string) => {
-    try {
-      // TODO: Send access token to backend to store for syncing
-      // For now, just refresh the status
-      await loadIntegrationStatus();
-      posthog?.capture('google_connected', { source: 'settings' });
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to complete Google connection');
-    } finally {
-      setIsConnecting(false);
-    }
-  };
-
-  // Track settings screen viewed
-  useEffect(() => {
-    posthog?.capture(ANALYTICS_EVENTS.SETTINGS_OPENED);
-  }, []);
-
+  // Define loadIntegrationStatus first (before useEffects that depend on it)
   const loadIntegrationStatus = useCallback(async () => {
     try {
       const status = await integrationsService.getStatus();
@@ -113,22 +62,58 @@ export default function SettingsScreen() {
     }
   }, [setIntegrationStatus]);
 
+  // Listen for OAuth callback via deep linking
+  useEffect(() => {
+    const handleDeepLink = (event: { url: string }) => {
+      const { url } = event;
+      logger.log('OAuth deep link received:', url);
+      if (url.includes('oauth/success') || url.includes('oauth/callback')) {
+        // OAuth completed, refresh status
+        loadIntegrationStatus();
+        setIsConnecting(false);
+        posthog?.capture('google_connected', { source: 'settings' });
+      }
+    };
+
+    const subscription = ExpoLinking.addEventListener('url', handleDeepLink);
+    return () => subscription.remove();
+  }, [loadIntegrationStatus, posthog]);
+
+  // Track settings screen viewed
+  useEffect(() => {
+    posthog?.capture(ANALYTICS_EVENTS.SETTINGS_OPENED);
+  }, []);
+
   // Load in background (won't show loading if we have cached data)
   useEffect(() => {
     loadIntegrationStatus();
   }, [loadIntegrationStatus]);
 
   const handleConnectGoogle = async () => {
-    if (!request) {
-      Alert.alert('Error', 'Google Sign In is not ready yet. Please try again.');
-      return;
-    }
     setIsConnecting(true);
     try {
-      await promptAsync();
+      // Get OAuth URL from backend (uses Composio's managed OAuth)
+      const returnUrl = ExpoLinking.createURL('oauth/success');
+      logger.log('Getting Google connect URL, return URL:', returnUrl);
+
+      const oauthUrl = await integrationsService.getGoogleConnectUrl(returnUrl);
+      logger.log('Opening OAuth URL:', oauthUrl);
+
+      // Open OAuth flow in browser
+      const result = await WebBrowser.openAuthSessionAsync(oauthUrl, returnUrl);
+
+      if (result.type === 'success') {
+        // OAuth completed successfully
+        await loadIntegrationStatus();
+        posthog?.capture('google_connected', { source: 'settings' });
+      } else if (result.type === 'cancel' || result.type === 'dismiss') {
+        logger.log('OAuth cancelled by user');
+      }
     } catch (error: any) {
-      setIsConnecting(false);
+      logger.error('Google connect error:', error);
       Alert.alert('Error', error.message || 'Failed to connect Google');
+    } finally {
+      setIsConnecting(false);
     }
   };
 

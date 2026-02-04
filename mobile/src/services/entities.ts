@@ -272,5 +272,4 @@ class EntitiesService {
 
 export const entitiesService = new EntitiesService();
 
-// Also export as peopleService for backwards compatibility
-export const peopleService = entitiesService;
+// Note: For backwards compatibility, use peopleService from './people' instead

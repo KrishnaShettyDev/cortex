@@ -241,6 +241,7 @@ class ChatService {
       response: response.response,
       conversation_id: conversationId || '',
       memories_used: [],
+      actions_taken: [],
       pending_actions: [],
     };
   }

@@ -19,6 +19,7 @@ import {
   revokeApiKey,
   deleteApiKey,
 } from '../lib/api-keys';
+import { createComposioServices } from '../lib/composio';
 
 /**
  * Shared OAuth authentication flow
@@ -462,5 +463,51 @@ export async function revokeApiKeyHandler(c: Context<{ Bindings: Bindings }>) {
     console.log(`[Auth] API key revoked for user ${payload.sub}: ${keyId}`);
 
     return c.json({ revoked: true });
+  });
+}
+
+/**
+ * POST /auth/google/connect
+ * Start OAuth flow for connecting Google services (Gmail + Calendar)
+ *
+ * Uses Composio's managed OAuth - no Google verification required.
+ * Mobile app opens the returned URL in a WebBrowser for OAuth.
+ */
+export async function connectGoogle(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const authHeader = c.req.header('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) {
+      return c.json({ error: 'Missing authorization header' }, 401);
+    }
+
+    const token = authHeader.substring(7);
+    const payload = await verifyToken(token, c.env.JWT_SECRET);
+    const userId = payload.sub;
+
+    // Get return URL from request body
+    const body = await c.req.json().catch(() => ({}));
+    const returnUrl = body.return_url;
+
+    console.log(`[Auth] Google connect initiated for user ${userId}`);
+
+    // Build callback URL for Composio OAuth
+    const baseUrl = new URL(c.req.url).origin;
+    const callbackUrl = `${baseUrl}/integrations/gmail/callback`;
+
+    // Create OAuth link via Composio (uses managed OAuth by default)
+    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+    const authLink = await composio.client.createAuthLink({
+      toolkitSlug: 'gmail',
+      userId,
+      callbackUrl,
+    });
+
+    console.log(`[Auth] Google connect OAuth URL created for user ${userId}`);
+
+    return c.json({
+      redirect_url: authLink.redirectUrl,
+      link_token: authLink.linkToken,
+      expires_at: authLink.expiresAt,
+    });
   });
 }

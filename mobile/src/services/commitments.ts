@@ -235,5 +235,4 @@ class CommitmentsService {
 
 export const commitmentsService = new CommitmentsService();
 
-// Also export as remindersService for backwards compatibility
-export const remindersService = commitmentsService;
+// Note: For backwards compatibility, use remindersService from './reminders' instead

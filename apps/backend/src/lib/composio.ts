@@ -44,15 +44,12 @@ export class ComposioRateLimitError extends Error {
 
 export interface ComposioConfig {
   apiKey: string;
-  /** Auth config ID for Gmail integration (from Composio dashboard) */
-  gmailAuthConfigId?: string;
-  /** Auth config ID for Google Calendar integration (from Composio dashboard) */
-  calendarAuthConfigId?: string;
+  /**
+   * Auth config ID for Google Super integration (combines Gmail + Calendar)
+   * This uses Composio's managed OAuth credentials
+   */
+  googleSuperAuthConfigId?: string;
 }
-
-// Default auth config IDs (fallback only - should be set via env vars)
-const DEFAULT_GMAIL_AUTH_CONFIG_ID = 'ac_dIm9DAf4ud0E';
-const DEFAULT_CALENDAR_AUTH_CONFIG_ID = 'ac_lYQshFAwUNtb';
 
 export interface ConnectedAccount {
   id: string;
@@ -92,13 +89,12 @@ export interface TriggerInstance {
 
 export class ComposioClient {
   private apiKey: string;
-  private gmailAuthConfigId: string;
-  private calendarAuthConfigId: string;
+  private googleSuperAuthConfigId: string;
 
   constructor(config: ComposioConfig) {
     this.apiKey = config.apiKey;
-    this.gmailAuthConfigId = config.gmailAuthConfigId || DEFAULT_GMAIL_AUTH_CONFIG_ID;
-    this.calendarAuthConfigId = config.calendarAuthConfigId || DEFAULT_CALENDAR_AUTH_CONFIG_ID;
+    // Use the googlesuper auth config (Composio's managed OAuth)
+    this.googleSuperAuthConfigId = config.googleSuperAuthConfigId || 'ac_lt9oHFMw6m0T';
   }
 
   private async request<T>(
@@ -161,35 +157,28 @@ export class ComposioClient {
 
   /**
    * Create OAuth link for user to connect their account
+   *
+   * Uses GOOGLESUPER toolkit with Composio's managed OAuth credentials
+   * to avoid Google verification requirements.
    */
   async createAuthLink(params: {
-    toolkitSlug: string; // 'gmail', 'googlecalendar'
+    toolkitSlug: string; // 'gmail', 'googlecalendar', 'google'
     userId: string; // Our internal user ID
-    callbackUrl: string; // Ignored - redirect URL is set in auth_config
+    callbackUrl: string; // Redirect URL after OAuth
   }): Promise<AuthLinkResponse> {
-    // v3 API: Create connected account with auth_config_id
-    // Redirect URL must be configured in the auth_config in Composio dashboard
-    // Auth config IDs should be set via environment variables
-    const authConfigId = params.toolkitSlug.toLowerCase().includes('calendar')
-      ? this.calendarAuthConfigId
-      : this.gmailAuthConfigId;
+    // Always use GOOGLESUPER which combines Gmail + Calendar + other Google services
+    const requestBody = {
+      appName: 'GOOGLESUPER',
+      authConfigId: this.googleSuperAuthConfigId,
+      entityId: params.userId,
+      redirectUrl: params.callbackUrl,
+    };
+
+    console.log('[Composio] Creating connection with GOOGLESUPER:', JSON.stringify(requestBody));
 
     const response = await this.request<any>('/connected_accounts', {
       method: 'POST',
-      body: JSON.stringify({
-        auth_config: {
-          id: authConfigId,
-        },
-        user_id: params.userId,
-        connection: {
-          state: {
-            authScheme: 'OAUTH2',
-            val: {
-              status: 'INITIALIZING',
-            },
-          },
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     console.log('[Composio] createAuthLink response:', JSON.stringify(response));
@@ -225,8 +214,19 @@ export class ComposioClient {
   }): Promise<{ items: ConnectedAccount[] }> {
     const query = new URLSearchParams();
     query.append('entityId', params.userId);
-    if (params.toolkitSlugs) {
-      params.toolkitSlugs.forEach((slug) => query.append('app', slug.toUpperCase()));
+    // Always use GOOGLESUPER for Google services
+    if (params.toolkitSlugs && params.toolkitSlugs.length > 0) {
+      // Map any google-related slugs to GOOGLESUPER
+      const hasGoogleSlug = params.toolkitSlugs.some(slug =>
+        slug.toLowerCase().includes('google') ||
+        slug.toLowerCase().includes('gmail') ||
+        slug.toLowerCase().includes('calendar')
+      );
+      if (hasGoogleSlug) {
+        query.append('app', 'GOOGLESUPER');
+      } else {
+        params.toolkitSlugs.forEach((slug) => query.append('app', slug.toUpperCase()));
+      }
     }
     if (params.statuses) {
       params.statuses.forEach((status) => query.append('status', status));

@@ -34,7 +34,7 @@ class AuthService {
     await storage.saveAccessToken(response.access_token);
     await storage.saveRefreshToken(response.refresh_token);
     if (response.user) {
-      await storage.saveUser(response.user);
+      await storage.saveUser(JSON.stringify(response.user));
     }
 
     return response;
@@ -57,7 +57,7 @@ class AuthService {
     await storage.saveAccessToken(response.access_token);
     await storage.saveRefreshToken(response.refresh_token);
     if (response.user) {
-      await storage.saveUser(response.user);
+      await storage.saveUser(JSON.stringify(response.user));
     }
 
     return response;
@@ -90,6 +90,15 @@ class AuthService {
   async isAuthenticated(): Promise<boolean> {
     const token = await storage.getAccessToken();
     return !!token;
+  }
+
+  /**
+   * Development sign-in (for testing only)
+   * @deprecated Should only be used in development mode
+   */
+  async devSignIn(_email: string, _name?: string): Promise<void> {
+    console.warn('AuthService: devSignIn is deprecated and should not be used in production');
+    throw new Error('Development sign-in is not available');
   }
 }
 

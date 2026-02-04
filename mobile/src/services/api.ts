@@ -1,7 +1,10 @@
 import { API_BASE_URL } from './constants';
 import { storage } from './storage';
 import { logger } from '../utils/logger';
-import { MemoryReference, PendingAction } from '../types';
+import { MemoryReference, PendingAction, ActionTaken } from '../types';
+
+// Re-export ActionTaken from types to maintain backwards compatibility
+export type { ActionTaken } from '../types';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -23,13 +26,6 @@ export interface StatusUpdate {
   message: string;
   tool?: string;
   count?: number;
-}
-
-// Action taken during chat (auto-executed tools)
-export interface ActionTaken {
-  tool: string;
-  arguments: Record<string, unknown>;
-  result: Record<string, unknown>;
 }
 
 // Streaming event types matching backend SSE format
@@ -516,26 +512,26 @@ class ApiService {
     logger.log('API: Stream event:', event.type);
     switch (event.type) {
       case 'memories':
-        callbacks.onMemories?.(event.data);
+        callbacks.onMemories?.(event.data as MemoryReference[]);
         break;
       case 'content':
-        callbacks.onContent?.(event.data);
+        callbacks.onContent?.(event.data as string);
         break;
       case 'pending_actions':
-        callbacks.onPendingActions?.(event.data);
+        callbacks.onPendingActions?.(event.data as PendingAction[]);
         break;
       case 'actions_taken':
-        callbacks.onActionsTaken?.(event.data);
+        callbacks.onActionsTaken?.(event.data as ActionTaken[]);
         break;
       case 'status':
         logger.log('API: Received status event:', event.data);
-        callbacks.onStatus?.(event.data);
+        callbacks.onStatus?.(event.data as StatusUpdate);
         break;
       case 'done':
-        callbacks.onDone?.(event.data);
+        callbacks.onDone?.(event.data as { conversation_id: string });
         break;
       case 'error':
-        callbacks.onError?.(event.data);
+        callbacks.onError?.(event.data as string);
         break;
     }
   }

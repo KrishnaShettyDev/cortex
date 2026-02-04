@@ -13,8 +13,8 @@ import { logger } from '../utils/logger';
 
 export function useNotifications() {
   const { isAuthenticated } = useAuth();
-  const notificationListener = useRef<Notifications.Subscription>();
-  const responseListener = useRef<Notifications.Subscription>();
+  const notificationListener = useRef<Notifications.Subscription | null>(null);
+  const responseListener = useRef<Notifications.Subscription | null>(null);
   const initializedRef = useRef(false);
 
   /**

@@ -260,13 +260,9 @@ export default function CalendarScreen() {
 
       const response = await integrationsService.getCalendarEvents(startOfMonth, endOfMonth);
 
-      if (response.success) {
-        setEvents(response.events, currentMonthKey);
-        setError(null);
-      } else {
-        setEvents([], currentMonthKey);
-        setError(response.message || 'Failed to load events');
-      }
+      // API returns { events: CalendarEventItem[] }
+      setEvents(response.events || [], currentMonthKey);
+      setError(null);
     } catch (err: any) {
       console.error('Failed to load calendar events:', err);
       setEvents([], currentMonthKey);

@@ -106,22 +106,27 @@ export interface MemoryReference {
   audio_url?: string | null;
 }
 
+export interface ActionResult {
+  success?: boolean;
+  message?: string;
+  event_id?: string;
+  event_url?: string;
+  message_id?: string;
+  thread_id?: string;
+  // Additional result properties for different tools
+  free_slots?: Array<{ start_time: string; end_time: string }>;
+  places?: Array<{ name: string; address: string }>;
+  emails?: Array<{ id: string; subject: string; from?: string; date?: string; snippet?: string; is_unread?: boolean; thread_id?: string }>;
+  messages?: Array<{ id: string; content?: string; subject?: string; from?: string; date?: string; snippet?: string }>;
+  events?: Array<{ id: string; title?: string; start_time?: string; end_time?: string; location?: string; attendees?: string[]; event_url?: string }>;
+  // Allow additional dynamic properties
+  [key: string]: unknown;
+}
+
 export interface ActionTaken {
   tool: string;
   arguments: Record<string, any>;
-  result: {
-    success: boolean;
-    message: string;
-    event_id?: string;
-    event_url?: string;
-    message_id?: string;
-    thread_id?: string;
-    // Additional result properties for different tools
-    free_slots?: Array<{ start_time: string; end_time: string }>;
-    places?: Array<{ name: string; address: string }>;
-    emails?: Array<{ id: string; subject: string }>;
-    messages?: Array<{ id: string; content: string }>;
-  };
+  result: ActionResult;
 }
 
 export interface PendingAction {
@@ -232,6 +237,8 @@ export interface RawCalendarEventResponse {
 export interface RawTimeSlotResponse {
   start: string;
   end: string;
+  start_time?: string;
+  end_time?: string;
   duration_minutes?: number;
 }
 

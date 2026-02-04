@@ -223,11 +223,12 @@ export default function ConnectedAccountsScreen() {
     setIsSyncing((prev) => ({ ...prev, google: true }));
     try {
       const result = await integrationsService.syncGoogle();
+      const totalMemoriesAdded = (result.gmail?.memories_added || 0) + (result.calendar?.memories_added || 0);
       posthog?.capture(ANALYTICS_EVENTS.GOOGLE_SYNC_COMPLETED, {
-        memories_added: result.memories_added,
+        memories_added: totalMemoriesAdded,
       });
       await loadStatus();
-      Alert.alert('Synced', `${result.memories_added} new memories added`);
+      Alert.alert('Synced', `${totalMemoriesAdded} new memories added`);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'Sync failed');
     } finally {

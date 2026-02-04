@@ -621,13 +621,12 @@ export default function ChatScreen() {
       await chatService.submitFeedback(outcomeId, signal, 'explicit_feedback');
 
       // Update the message to show feedback was given
-      setChatMessages(prevMessages =>
-        prevMessages.map(msg =>
-          msg.outcomeId === outcomeId
-            ? { ...msg, feedbackGiven: signal }
-            : msg
-        )
+      const updatedMessages = chatMessages.map(msg =>
+        msg.outcomeId === outcomeId
+          ? { ...msg, feedbackGiven: signal }
+          : msg
       );
+      setChatMessages(updatedMessages);
 
       // Track feedback
       posthog?.capture('response_feedback', {
@@ -637,7 +636,7 @@ export default function ChatScreen() {
     } catch (error) {
       logger.error('Failed to submit feedback:', error);
     }
-  }, [setChatMessages, posthog]);
+  }, [chatMessages, setChatMessages, posthog]);
 
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
     const isUser = item.role === 'user';
