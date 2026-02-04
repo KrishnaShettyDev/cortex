@@ -88,6 +88,7 @@ export async function chat(
   userId: string,
   message: string,
   openaiKey: string,
+  ai: any,
   options: {
     model?: string;
     contextLimit?: number;
@@ -96,13 +97,13 @@ export async function chat(
   const model = options.model || 'gpt-4o-mini';
   const contextLimit = Math.min(options.contextLimit || 5, 10);
 
-  // Search for relevant memories
+  // Search for relevant memories using Cloudflare AI for embeddings
   const memories = await searchMemories(
     db,
     vectorize,
     userId,
     message,
-    openaiKey,
+    ai,
     { limit: contextLimit }
   );
 
@@ -151,6 +152,7 @@ export async function chatWithHistory(
   message: string,
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
   openaiKey: string,
+  ai: any,
   options: {
     model?: string;
     contextLimit?: number;
@@ -159,13 +161,13 @@ export async function chatWithHistory(
   const model = options.model || 'gpt-4o-mini';
   const contextLimit = Math.min(options.contextLimit || 5, 10);
 
-  // Search for relevant memories based on current message
+  // Search for relevant memories using Cloudflare AI for embeddings
   const memories = await searchMemories(
     db,
     vectorize,
     userId,
     message,
-    openaiKey,
+    ai,
     { limit: contextLimit }
   );
 

@@ -36,33 +36,23 @@ interface Memory {
 }
 
 /**
- * Generate embeddings using OpenAI
+ * Generate embeddings using Cloudflare AI
+ * Model: @cf/baai/bge-base-en-v1.5 (768 dimensions)
+ * This matches the Vectorize index configuration.
  */
 export async function generateEmbedding(
   text: string,
-  apiKey: string
+  ai: any
 ): Promise<number[]> {
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'text-embedding-3-small',
-      input: text,
-    }),
+  const response = await ai.run('@cf/baai/bge-base-en-v1.5', {
+    text: [text],
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`OpenAI API error: ${error}`);
+  if (response.data && response.data.length > 0) {
+    return response.data[0]; // 768-dimensional vector
   }
 
-  const data = (await response.json()) as {
-    data: Array<{ embedding: number[] }>;
-  };
-  return data.data[0].embedding;
+  throw new Error('Failed to generate embedding');
 }
 
 /**
@@ -73,7 +63,7 @@ export async function createMemory(
   vectorize: Vectorize,
   userId: string,
   input: MemoryCreateInput,
-  openaiKey: string
+  ai: any
 ): Promise<Memory> {
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
@@ -87,8 +77,8 @@ export async function createMemory(
     throw new Error('Memory content too long (max 50,000 characters)');
   }
 
-  // Generate embedding
-  const embedding = await generateEmbedding(input.content, openaiKey);
+  // Generate embedding using Cloudflare AI (768 dimensions)
+  const embedding = await generateEmbedding(input.content, ai);
 
   // Insert into D1
   await db
@@ -298,7 +288,7 @@ export async function updateMemory(
   memoryId: string,
   userId: string,
   updates: Partial<MemoryCreateInput>,
-  openaiKey: string
+  ai: any
 ): Promise<Memory> {
   // Check if memory exists
   const existing = await getMemory(db, memoryId, userId);
@@ -318,8 +308,8 @@ export async function updateMemory(
       throw new Error('Memory content too long (max 50,000 characters)');
     }
 
-    // Generate new embedding
-    const embedding = await generateEmbedding(updates.content, openaiKey);
+    // Generate new embedding using Cloudflare AI
+    const embedding = await generateEmbedding(updates.content, ai);
 
     // Update in D1
     await db
@@ -416,7 +406,7 @@ export async function searchMemories(
   vectorize: Vectorize,
   userId: string,
   query: string,
-  openaiKey: string,
+  ai: any,
   options: {
     limit?: number;
     source?: string;
@@ -424,8 +414,8 @@ export async function searchMemories(
 ): Promise<Memory[]> {
   const limit = Math.min(options.limit || 10, 50); // Max 50
 
-  // Generate query embedding
-  const queryEmbedding = await generateEmbedding(query, openaiKey);
+  // Generate query embedding using Cloudflare AI
+  const queryEmbedding = await generateEmbedding(query, ai);
 
   // Search in Vectorize with user filter
   // SECURITY: Always filter by user_id at the vectorize level to prevent data leakage

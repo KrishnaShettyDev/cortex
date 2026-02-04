@@ -65,7 +65,7 @@ export async function createNewMemory(c: Context<{ Bindings: Bindings }>) {
         source: body.source,
         metadata: body.metadata,
       },
-      c.env.OPENAI_API_KEY
+      c.env.AI
     );
 
     return c.json(memory, 201);
@@ -88,7 +88,7 @@ export async function updateExistingMemory(c: Context<{ Bindings: Bindings }>) {
         source: body.source,
         metadata: body.metadata,
       },
-      c.env.OPENAI_API_KEY
+      c.env.AI
     );
 
     return c.json(memory);
@@ -120,7 +120,7 @@ export async function search(c: Context<{ Bindings: Bindings }>) {
       c.env.VECTORIZE,
       userId,
       query,
-      c.env.OPENAI_API_KEY,
+      c.env.AI,
       {
         limit: limit || 10,
         source: source || undefined,
@@ -148,6 +148,7 @@ export async function chatWithMemories(c: Context<{ Bindings: Bindings }>) {
           message,
           history,
           c.env.OPENAI_API_KEY,
+          c.env.AI,
           {
             model: model || 'gpt-4o-mini',
             contextLimit: contextLimit || 5,
@@ -159,6 +160,7 @@ export async function chatWithMemories(c: Context<{ Bindings: Bindings }>) {
           userId,
           message,
           c.env.OPENAI_API_KEY,
+          c.env.AI,
           {
             model: model || 'gpt-4o-mini',
             contextLimit: contextLimit || 5,
