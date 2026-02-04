@@ -458,6 +458,10 @@ app.route('/v3/actions', actionsRouter);
 app.post('/v3/upload/audio', uploadHandlers.uploadAudio);
 app.post('/v3/upload/text', uploadHandlers.uploadText);
 
+// Mobile app upload endpoints (different format expected)
+app.post('/upload/audio-with-transcription', uploadHandlers.uploadAudioWithTranscription);
+app.post('/upload/photo', uploadHandlers.uploadPhoto);
+
 // Sync infrastructure endpoints
 app.get('/v3/sync/connections', syncHandlers.listSyncConnectionsHandler);
 app.post('/v3/sync/connections', syncHandlers.createSyncConnectionHandler);

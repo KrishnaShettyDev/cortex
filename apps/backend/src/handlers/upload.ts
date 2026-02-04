@@ -196,6 +196,166 @@ export async function uploadAudio(c: Context<{ Bindings: Bindings }>) {
 }
 
 /**
+ * POST /upload/audio-with-transcription
+ *
+ * Mobile app endpoint: Upload audio and return transcription + URL.
+ * This is the endpoint the mobile app calls - different from /v3/upload/audio.
+ *
+ * Accepts: multipart/form-data with 'file' field (mobile uses 'file', not 'audio')
+ * Returns: { url, transcription, duration_seconds, language }
+ */
+export async function uploadAudioWithTranscription(c: Context<{ Bindings: Bindings }>) {
+  const userId = c.get('jwtPayload').sub;
+
+  try {
+    const formData = await c.req.formData();
+    // Mobile app sends 'file', not 'audio'
+    const audioFile = formData.get('file') as File | null;
+
+    if (!audioFile) {
+      return c.json({ error: 'No audio file provided. Use field name "file".' }, 400);
+    }
+
+    const mimeType = audioFile.type;
+    if (!SUPPORTED_AUDIO_FORMATS.includes(mimeType)) {
+      return c.json(
+        {
+          error: `Unsupported audio format: ${mimeType}`,
+          supported: SUPPORTED_AUDIO_FORMATS,
+        },
+        400
+      );
+    }
+
+    if (audioFile.size > MAX_AUDIO_SIZE) {
+      return c.json(
+        {
+          error: `File too large. Maximum size is ${MAX_AUDIO_SIZE / 1024 / 1024}MB`,
+        },
+        400
+      );
+    }
+
+    console.log(`[Upload] Mobile audio: ${audioFile.name}, ${audioFile.size} bytes, ${mimeType}`);
+
+    const audioData = await audioFile.arrayBuffer();
+    const transcription = await transcribeAudio(c.env.AI, audioData, mimeType);
+
+    if (!transcription.text || transcription.text.trim().length === 0) {
+      return c.json(
+        {
+          error: 'No speech detected in audio',
+          duration_seconds: transcription.duration || null,
+        },
+        400
+      );
+    }
+
+    // Upload to R2 for storage
+    const audioId = nanoid();
+    const audioKey = `audio/${userId}/${audioId}.${mimeType.split('/')[1] || 'webm'}`;
+
+    await c.env.MEDIA.put(audioKey, audioData, {
+      httpMetadata: { contentType: mimeType },
+    });
+
+    // Generate public URL (R2 custom domain or presigned)
+    const audioUrl = `https://media.askcortex.com/${audioKey}`;
+
+    console.log(`[Upload] Audio transcribed and stored: ${transcription.text.length} chars`);
+
+    // Return format expected by mobile app
+    return c.json({
+      url: audioUrl,
+      transcription: transcription.text,
+      duration_seconds: transcription.duration || null,
+      language: transcription.language || null,
+    });
+  } catch (error: any) {
+    console.error('[Upload] Audio with transcription failed:', error);
+    return c.json(
+      {
+        error: 'Failed to process audio',
+        message: error.message,
+      },
+      500
+    );
+  }
+}
+
+/**
+ * POST /upload/photo
+ *
+ * Mobile app endpoint: Upload photo to R2 storage.
+ *
+ * Accepts: multipart/form-data with 'file' field
+ * Returns: { url }
+ */
+export async function uploadPhoto(c: Context<{ Bindings: Bindings }>) {
+  const userId = c.get('jwtPayload').sub;
+
+  const SUPPORTED_IMAGE_FORMATS = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic'];
+  const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+
+  try {
+    const formData = await c.req.formData();
+    const imageFile = formData.get('file') as File | null;
+
+    if (!imageFile) {
+      return c.json({ error: 'No image file provided. Use field name "file".' }, 400);
+    }
+
+    const mimeType = imageFile.type;
+    if (!SUPPORTED_IMAGE_FORMATS.includes(mimeType)) {
+      return c.json(
+        {
+          error: `Unsupported image format: ${mimeType}`,
+          supported: SUPPORTED_IMAGE_FORMATS,
+        },
+        400
+      );
+    }
+
+    if (imageFile.size > MAX_IMAGE_SIZE) {
+      return c.json(
+        {
+          error: `File too large. Maximum size is ${MAX_IMAGE_SIZE / 1024 / 1024}MB`,
+        },
+        400
+      );
+    }
+
+    console.log(`[Upload] Photo: ${imageFile.name}, ${imageFile.size} bytes, ${mimeType}`);
+
+    const imageData = await imageFile.arrayBuffer();
+
+    // Upload to R2
+    const imageId = nanoid();
+    const extension = mimeType.split('/')[1] || 'jpg';
+    const imageKey = `photos/${userId}/${imageId}.${extension}`;
+
+    await c.env.MEDIA.put(imageKey, imageData, {
+      httpMetadata: { contentType: mimeType },
+    });
+
+    const imageUrl = `https://media.askcortex.com/${imageKey}`;
+
+    console.log(`[Upload] Photo stored: ${imageUrl}`);
+
+    return c.json({ url: imageUrl });
+  } catch (error: any) {
+    console.error('[Upload] Photo upload failed:', error);
+    return c.json(
+      {
+        error: 'Failed to upload photo',
+        message: error.message,
+      },
+      500
+    );
+  }
+}
+
+/**
  * POST /v3/upload/text
  *
  * Quick text upload for creating memories.
