@@ -22,16 +22,13 @@ import consolidationRouter from './handlers/consolidation';
 import commitmentsRouter from './handlers/commitments';
 import relationshipRouter from './handlers/relationship';
 import performanceRouter from './handlers/performance';
-import learningsRouter from './handlers/learnings';
-import beliefsRouter from './handlers/beliefs';
-import outcomesRouter from './handlers/outcomes';
-import sleepRouter from './handlers/sleep';
+// DELETED: learnings, beliefs, outcomes, sleep - cognitive layer purged for Supermemory++
 import briefingRouter from './handlers/briefing';
 import actionsRouter from './handlers/actions';
 import webhooksRouter from './handlers/webhooks';
 import mcpRouter from './handlers/mcp';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
-import { handleSleepComputeCron } from './lib/cognitive/sleep/cron';
+// DELETED: handleSleepComputeCron - cognitive layer purged
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
 import { notificationHandlers } from './handlers/notifications';
 import { processScheduledNotifications } from './lib/notifications/scheduler';
@@ -190,44 +187,7 @@ app.get('/', (c) =>
           stats: '/v3/performance/stats',
           metrics: '/v3/performance/metrics',
         },
-        learnings: {
-          list: '/v3/learnings',
-          get: '/v3/learnings/:id',
-          profile: '/v3/learnings/profile',
-          categories: '/v3/learnings/categories',
-          validate: '/v3/learnings/:id/validate',
-          invalidate: '/v3/learnings/:id/invalidate',
-          backfill: '/v3/learnings/backfill (POST to start, GET for progress)',
-          backfill_pause: '/v3/learnings/backfill/pause',
-        },
-        beliefs: {
-          list: '/v3/beliefs',
-          get: '/v3/beliefs/:id',
-          stats: '/v3/beliefs/stats',
-          conflicts: '/v3/beliefs/conflicts',
-          form: '/v3/beliefs/form (POST - form beliefs from learnings)',
-          add_evidence: '/v3/beliefs/:id/evidence (POST)',
-          update: '/v3/beliefs/:id/update (POST - Bayesian update)',
-          invalidate: '/v3/beliefs/:id/invalidate (POST)',
-          resolve_conflict: '/v3/beliefs/conflicts/:id/resolve (POST)',
-        },
-        outcomes: {
-          intelligent_recall: '/v3/recall/intelligent (POST - recall with tracking)',
-          list: '/v3/outcomes',
-          get: '/v3/outcomes/:id',
-          stats: '/v3/outcomes/stats',
-          reasoning: '/v3/outcomes/:id/reasoning',
-          feedback: '/v3/outcomes/:id/feedback (POST)',
-          propagate: '/v3/outcomes/:id/propagate (POST)',
-          propagate_pending: '/v3/outcomes/propagate-pending (POST)',
-        },
-        sleep: {
-          run: '/v3/sleep/run (POST - trigger sleep compute manually)',
-          jobs: '/v3/sleep/jobs',
-          job_detail: '/v3/sleep/jobs/:id',
-          context: '/v3/sleep/context (pre-computed session context)',
-          stats: '/v3/sleep/stats',
-        },
+        // DEPRECATED: learnings, beliefs, outcomes, sleep endpoints removed
         provenance: {
           chain: '/v3/provenance/:artifactType/:artifactId',
           entity_sources: '/v3/provenance/entity/:entityId/sources',
@@ -435,18 +395,8 @@ app.route('/v3/nudges', relationshipRouter);
 // Performance monitoring endpoints
 app.route('/v3/performance', performanceRouter);
 
-// Cognitive layer endpoints (learnings)
-app.route('/v3/learnings', learningsRouter);
-
-// Cognitive layer endpoints (beliefs - Bayesian system)
-app.route('/v3/beliefs', beliefsRouter);
-
-// Cognitive layer endpoints (outcomes - learning loop)
-app.route('/v3/outcomes', outcomesRouter);
-app.route('/v3/recall', outcomesRouter);
-
-// Sleep compute endpoints
-app.route('/v3/sleep', sleepRouter);
+// DELETED: Cognitive layer (learnings, beliefs, outcomes, sleep) - purged for Supermemory++
+// These over-engineered subsystems had 0 users and added complexity without value
 
 // Briefing endpoint (consolidated mobile home screen data)
 app.route('/v3/briefing', briefingRouter);
@@ -535,11 +485,7 @@ export default {
         console.log(`[Scheduled] Notifications: ${notifResults.sent} sent, ${notifResults.skipped} skipped, ${notifResults.failed} failed`);
       }
 
-      // Run sleep compute (3am, 9am, 3pm, 9pm UTC)
-      if (['0 3 * * *', '0 9 * * *', '0 15 * * *', '0 21 * * *'].includes(event.cron)) {
-        console.log('[Scheduled] Running sleep compute');
-        await handleSleepComputeCron(env);
-      }
+      // DELETED: Sleep compute cron - cognitive layer purged for Supermemory++
 
       // Run weekly consolidation (Sunday 2am)
       if (event.cron === '0 2 * * SUN') {
