@@ -26,6 +26,7 @@ import {
 } from '../lib/retrieval';
 import { getFormattedProfile } from '../lib/db/profiles';
 import { generateEmbedding, insertMemoryVector } from '../lib/vectorize';
+import { invalidateSearchCache } from '../lib/cache';
 import { createProcessingJob, ProcessingPipeline } from '../lib/processing/pipeline';
 import type { ProcessingContext } from '../lib/processing/types';
 import { processMemoryWithAUDN } from '../lib/audn';
@@ -126,6 +127,13 @@ export async function addMemory(c: Context<{ Bindings: Bindings }>) {
       memory.container_tag,
       embedding
     );
+
+    // Invalidate search cache for this user (non-blocking)
+    if (c.env.CACHE) {
+      invalidateSearchCache(c.env.CACHE, userId).catch((err) => {
+        console.warn('[Cache] Failed to invalidate search cache:', err);
+      });
+    }
 
     // Process async with unified pipeline
     // SKIP processing for benchmark data (too slow for benchmarking)

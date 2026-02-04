@@ -8,11 +8,15 @@
  * - Hybrid ranking (combine scores)
  */
 
-import { searchMemories, type Memory } from './db/memories';
-import { searchChunks, type DocumentChunk } from './db/documents';
+import { searchMemories, getMemoriesByIds, type Memory } from './db/memories';
+import { searchChunks, getChunksByIds, type DocumentChunk } from './db/documents';
 import { getFormattedProfile } from './db/profiles';
 import { generateEmbedding, vectorSearch } from './vectorize';
-import { getCachedSearchResults, cacheSearchResults } from './cache';
+import {
+  getCachedSearchResults,
+  cacheSearchResults,
+  type CachedSearchResult,
+} from './cache';
 import { rerankResults, type RerankCandidate } from './rerank';
 
 export interface HybridSearchOptions {
@@ -54,30 +58,89 @@ export interface HybridSearchResult {
 }
 
 /**
- * Hybrid search: combines vector + keyword + profile (with caching)
+ * Hybrid search: combines vector + keyword + profile (with ID-only caching)
  */
 export async function hybridSearch(
   env: { DB: D1Database; VECTORIZE: Vectorize; AI: any; CACHE: KVNamespace },
   options: HybridSearchOptions
 ): Promise<HybridSearchResult> {
   const startTime = Date.now();
+  const searchMode = options.searchMode || 'hybrid';
 
   // Check cache first (only for hybrid/vector mode)
-  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
-  // if (options.searchMode !== 'keyword') {
-  //   const cached = await getCachedSearchResults(
-  //     env.CACHE,
-  //     options.userId,
-  //     options.query,
-  //     options.containerTag || 'default'
-  //   );
+  // Uses ID-only caching to stay within KV size limits
+  if (searchMode !== 'keyword' && env.CACHE) {
+    try {
+      const cached = await getCachedSearchResults(
+        env.CACHE,
+        options.userId,
+        options.query,
+        options.containerTag || 'default',
+        searchMode
+      );
 
-  //   if (cached) {
-  //     console.log('[Cache] Search results cache hit');
-  //     return { ...cached, timing: Date.now() - startTime };
-  //   }
-  //   console.log('[Cache] Search results cache miss, executing search...');
-  // }
+      if (cached) {
+        console.log('[Cache] Search results cache HIT - hydrating from D1');
+
+        // Hydrate: fetch full memories/chunks from D1 using cached IDs
+        const [fullMemories, fullChunks, profile] = await Promise.all([
+          cached.memoryIds.length > 0
+            ? getMemoriesByIds(env.DB, cached.memoryIds, options.userId)
+            : Promise.resolve([]),
+          cached.chunkIds.length > 0
+            ? getChunksByIds(env.DB, cached.chunkIds, options.userId)
+            : Promise.resolve([]),
+          options.includeProfile !== false
+            ? getFormattedProfile(env.DB, options.userId, options.containerTag, env.CACHE)
+            : Promise.resolve(undefined),
+        ]);
+
+        // Map IDs to full objects with cached scores
+        const memoryMap = new Map(fullMemories.map(m => [m.id, m]));
+        const chunkMap = new Map(fullChunks.map(c => [c.id, c]));
+
+        const memories = cached.memoryIds
+          .map((id, idx) => {
+            const m = memoryMap.get(id);
+            if (!m) return null;
+            return {
+              id: m.id,
+              content: m.content,
+              score: cached.memoryScores[idx],
+              source: m.source,
+              created_at: m.created_at,
+            };
+          })
+          .filter(Boolean) as HybridSearchResult['memories'];
+
+        const chunks = cached.chunkIds
+          .map((id, idx) => {
+            const c = chunkMap.get(id);
+            if (!c) return null;
+            return {
+              id: c.id,
+              content: c.content,
+              score: cached.chunkScores[idx],
+              document_id: c.document_id,
+              created_at: c.created_at,
+            };
+          })
+          .filter(Boolean) as HybridSearchResult['chunks'];
+
+        return {
+          memories,
+          chunks,
+          profile,
+          timing: Date.now() - startTime,
+          total: memories.length + chunks.length,
+        };
+      }
+      console.log('[Cache] Search results cache MISS');
+    } catch (cacheError) {
+      // Non-blocking: cache read failure shouldn't stop search
+      console.warn('[Cache] Cache read failed (non-blocking):', cacheError);
+    }
+  }
 
   // 1. Get user profile (if requested)
   let profile: { static: string[]; dynamic: string[] } | undefined;
@@ -189,17 +252,22 @@ export async function hybridSearch(
     total: memories.length + chunks.length,
   };
 
-  // Cache the result (only for hybrid/vector mode)
-  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
-  // if (options.searchMode !== 'keyword') {
-  //   await cacheSearchResults(
-  //     env.CACHE,
-  //     options.userId,
-  //     options.query,
-  //     options.containerTag || 'default',
-  //     result
-  //   );
-  // }
+  // Cache IDs + scores (NOT full content) for hybrid/vector mode
+  // ID-only caching ensures we stay well under KV size limits
+  if (searchMode !== 'keyword' && env.CACHE && (memories.length > 0 || chunks.length > 0)) {
+    cacheSearchResults(
+      env.CACHE,
+      options.userId,
+      options.query,
+      options.containerTag || 'default',
+      searchMode,
+      memories.map(m => ({ id: m.id, score: m.score })),
+      chunks.map(c => ({ id: c.id, score: c.score }))
+    ).catch((cacheError) => {
+      // Non-blocking: cache write failure shouldn't affect response
+      console.warn('[Cache] Cache write failed (non-blocking):', cacheError);
+    });
+  }
 
   return result;
 }

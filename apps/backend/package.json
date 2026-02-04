@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cortex/core": "workspace:*",
+    "@cortex/memory": "workspace:*",
     "google-auth-library": "^9.15.0",
     "hono": "^4.7.11",
     "jose": "^5.9.6",

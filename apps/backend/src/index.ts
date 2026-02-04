@@ -62,9 +62,11 @@ app.use('*', cors({
     const allowedOrigins = [
       'https://app.askcortex.plutas.in',
       'https://askcortex.plutas.in',
+      'https://cortex-console.pages.dev',
+      'https://console.askcortex.in',
     ];
-    // Allow localhost only in development (check ENVIRONMENT variable)
-    if (origin && allowedOrigins.includes(origin)) {
+    // Allow localhost for development
+    if (origin && (allowedOrigins.includes(origin) || origin.startsWith('http://localhost:'))) {
       return origin;
     }
     // Return first allowed origin for requests without origin (like mobile apps)

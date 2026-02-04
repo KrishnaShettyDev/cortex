@@ -4,24 +4,50 @@
  * Implements Supermemory-style caching:
  * - Embedding cache (1 hour TTL)
  * - Profile cache (5 min TTL)
- * - Search results cache (10 min TTL)
+ * - Search results cache (5 min TTL) - IDs only, not full content
  */
-
-import { createHash } from 'crypto';
 
 // TTL constants (in seconds)
 const TTL = {
   EMBEDDING: 60 * 60, // 1 hour
   PROFILE: 60 * 5, // 5 minutes
-  SEARCH: 60 * 10, // 10 minutes
+  SEARCH: 60 * 5, // 5 minutes (reduced from 10 for fresher results)
   ENTITY: 60 * 30, // 30 minutes - entities change less frequently
 };
 
 /**
- * Hash a string to create a cache key
+ * Cached search result - IDs and scores only (not full content)
+ * This keeps cache size small and under KV limits
+ */
+export interface CachedSearchResult {
+  memoryIds: string[];
+  memoryScores: number[];
+  chunkIds: string[];
+  chunkScores: number[];
+  total: number;
+  cachedAt: number;
+}
+
+/**
+ * Hash a string to create a cache key using Web Crypto API (Workers compatible)
+ */
+async function hashStringAsync(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').substring(0, 16);
+}
+
+/**
+ * Sync hash using simple djb2 algorithm (for non-critical cache keys)
  */
 function hashString(text: string): string {
-  return createHash('sha256').update(text).digest('hex').substring(0, 16);
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash) ^ text.charCodeAt(i);
+  }
+  return Math.abs(hash).toString(16).padStart(8, '0');
 }
 
 /**
@@ -109,33 +135,51 @@ export async function invalidateProfileCache(
 }
 
 /**
- * Cache search results
+ * Cache search results (IDs + scores only, NOT full content)
+ * Max 50 results to stay well under KV size limits
  */
 export async function cacheSearchResults(
   kv: KVNamespace,
   userId: string,
   query: string,
   containerTag: string,
-  results: any
+  searchMode: string,
+  memories: Array<{ id: string; score: number }>,
+  chunks: Array<{ id: string; score: number }>
 ): Promise<void> {
-  const queryHash = hashString(`${query}:${containerTag}`);
+  // Use async SHA-256 hash for cache key
+  const queryHash = await hashStringAsync(`${query}:${containerTag}:${searchMode}`);
   const key = `search:${userId}:${queryHash}`;
 
-  await kv.put(key, JSON.stringify(results), {
+  // Limit to 50 results max (25 memories + 25 chunks)
+  const limitedMemories = memories.slice(0, 25);
+  const limitedChunks = chunks.slice(0, 25);
+
+  const cached: CachedSearchResult = {
+    memoryIds: limitedMemories.map(m => m.id),
+    memoryScores: limitedMemories.map(m => m.score),
+    chunkIds: limitedChunks.map(c => c.id),
+    chunkScores: limitedChunks.map(c => c.score),
+    total: limitedMemories.length + limitedChunks.length,
+    cachedAt: Date.now(),
+  };
+
+  await kv.put(key, JSON.stringify(cached), {
     expirationTtl: TTL.SEARCH,
   });
 }
 
 /**
- * Get cached search results
+ * Get cached search results (IDs + scores only)
  */
 export async function getCachedSearchResults(
   kv: KVNamespace,
   userId: string,
   query: string,
-  containerTag: string
-): Promise<any | null> {
-  const queryHash = hashString(`${query}:${containerTag}`);
+  containerTag: string,
+  searchMode: string
+): Promise<CachedSearchResult | null> {
+  const queryHash = await hashStringAsync(`${query}:${containerTag}:${searchMode}`);
   const key = `search:${userId}:${queryHash}`;
   const cached = await kv.get(key, 'text');
 
@@ -144,23 +188,49 @@ export async function getCachedSearchResults(
   }
 
   try {
-    return JSON.parse(cached);
+    return JSON.parse(cached) as CachedSearchResult;
   } catch {
     return null;
   }
 }
 
 /**
+ * Invalidate search cache for a user when new memory is added
+ * Uses a generation counter approach since KV doesn't support prefix deletion
+ */
+export async function invalidateSearchCache(
+  kv: KVNamespace,
+  userId: string
+): Promise<void> {
+  // Increment user's cache generation to invalidate all existing search caches
+  const genKey = `search_gen:${userId}`;
+  const currentGen = await kv.get(genKey, 'text');
+  const newGen = currentGen ? parseInt(currentGen) + 1 : 1;
+  await kv.put(genKey, String(newGen), { expirationTtl: 86400 }); // 24h expiry
+  console.log(`[Cache] Search cache invalidated for user ${userId} (gen ${newGen})`);
+}
+
+/**
+ * Get current search cache generation for a user
+ */
+export async function getSearchCacheGeneration(
+  kv: KVNamespace,
+  userId: string
+): Promise<number> {
+  const genKey = `search_gen:${userId}`;
+  const gen = await kv.get(genKey, 'text');
+  return gen ? parseInt(gen) : 0;
+}
+
+/**
  * Invalidate all search caches for a user (when profile changes significantly)
+ * @deprecated Use invalidateSearchCache instead
  */
 export async function invalidateUserSearchCache(
   kv: KVNamespace,
   userId: string
 ): Promise<void> {
-  // Note: KV doesn't support prefix deletion, so we'd need to track keys separately
-  // For now, we rely on TTL expiration
-  // In production, could maintain a list of active search keys per user
-  console.log(`Search cache invalidation requested for user ${userId} (TTL-based)`);
+  await invalidateSearchCache(kv, userId);
 }
 
 // ============================================

@@ -441,3 +441,34 @@ export async function createMemoryRelation(
 
   return relation;
 }
+
+/**
+ * Get memories by IDs (for cache hydration)
+ * SECURITY: Always filters by userId to prevent cross-tenant access
+ */
+export async function getMemoriesByIds(
+  db: D1Database,
+  memoryIds: string[],
+  userId: string
+): Promise<Memory[]> {
+  if (memoryIds.length === 0) return [];
+
+  // Limit to 50 IDs to prevent query abuse
+  const limitedIds = memoryIds.slice(0, 50);
+
+  // Build parameterized IN clause
+  const placeholders = limitedIds.map(() => '?').join(', ');
+  const query = `
+    SELECT * FROM memories
+    WHERE id IN (${placeholders})
+      AND user_id = ?
+      AND is_forgotten = 0
+  `;
+
+  const result = await db
+    .prepare(query)
+    .bind(...limitedIds, userId)
+    .all<Memory>();
+
+  return result.results || [];
+}

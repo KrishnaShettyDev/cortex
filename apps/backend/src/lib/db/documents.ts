@@ -351,3 +351,34 @@ export async function searchChunks(
   const result = await db.prepare(sql).bind(...params).all<DocumentChunk>();
   return result.results || [];
 }
+
+/**
+ * Get document chunks by IDs (for cache hydration)
+ * SECURITY: Always filters by userId via document join
+ */
+export async function getChunksByIds(
+  db: D1Database,
+  chunkIds: string[],
+  userId: string
+): Promise<DocumentChunk[]> {
+  if (chunkIds.length === 0) return [];
+
+  // Limit to 50 IDs to prevent query abuse
+  const limitedIds = chunkIds.slice(0, 50);
+
+  // Build parameterized IN clause
+  const placeholders = limitedIds.map(() => '?').join(', ');
+  const query = `
+    SELECT dc.* FROM document_chunks dc
+    JOIN documents d ON dc.document_id = d.id
+    WHERE dc.id IN (${placeholders})
+      AND d.user_id = ?
+  `;
+
+  const result = await db
+    .prepare(query)
+    .bind(...limitedIds, userId)
+    .all<DocumentChunk>();
+
+  return result.results || [];
+}

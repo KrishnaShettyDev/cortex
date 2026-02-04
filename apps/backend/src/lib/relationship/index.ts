@@ -12,6 +12,9 @@ export {
   scoreRelationshipHealth,
 } from './health-scorer';
 export {
+  EnhancedRelationshipHealthScorer,
+} from './enhanced-health-scorer';
+export {
   ProactiveNudgeGenerator,
   generateProactiveNudges,
 } from './nudge-generator';

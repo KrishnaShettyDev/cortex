@@ -246,16 +246,19 @@ export async function getFormattedProfile(
 ): Promise<{ static: string[]; dynamic: string[] }> {
   const tag = containerTag || 'default';
 
-  // Check cache if available
-  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
-  // if (cache) {
-  //   const cached = await getCachedProfile(cache, userId, tag);
-  //   if (cached) {
-  //     console.log('[Cache] Profile cache hit');
-  //     return cached;
-  //   }
-  //   console.log('[Cache] Profile cache miss, querying DB...');
-  // }
+  // Check cache if available (re-enabled with non-blocking error handling)
+  if (cache) {
+    try {
+      const cached = await getCachedProfile(cache, userId, tag);
+      if (cached) {
+        console.log('[Cache] Profile cache HIT');
+        return cached;
+      }
+      console.log('[Cache] Profile cache MISS');
+    } catch (cacheError) {
+      console.warn('[Cache] Profile cache read failed (non-blocking):', cacheError);
+    }
+  }
 
   // Cache miss or no cache - query database
   const profiles = await getUserProfile(db, userId, {
@@ -273,11 +276,12 @@ export async function getFormattedProfile(
 
   const result = { static: staticFacts, dynamic: dynamicFacts };
 
-  // Cache the result
-  // TEMPORARILY DISABLED FOR BENCHMARKING (KV limit exceeded)
-  // if (cache) {
-  //   await cacheProfile(cache, userId, tag, result);
-  // }
+  // Cache the result (non-blocking, fire-and-forget)
+  if (cache) {
+    cacheProfile(cache, userId, tag, result).catch((cacheError) => {
+      console.warn('[Cache] Profile cache write failed (non-blocking):', cacheError);
+    });
+  }
 
   return result;
 }
