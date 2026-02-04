@@ -9,11 +9,16 @@ import { Context } from 'hono';
 import { nanoid } from 'nanoid';
 import type { Bindings } from '../types';
 import { isValidExpoPushToken, sendPushNotification } from '../lib/notifications/push-service';
+import { isValidAPNsToken, createAPNsConfig, sendAPNsNotification } from '../lib/notifications/apns-service';
 import { isValidTimezone, getCurrentTimeInTimezone } from '../lib/notifications/timezone';
+import { createLogger } from '../lib/logger';
+import { badRequest, internalError } from '../utils/errors';
+
+const logger = createLogger('notifications');
 
 /**
  * POST /notifications/register
- * Register a device push token
+ * Register a device push token (supports both APNs and Expo tokens)
  */
 export async function registerPushToken(c: Context<{ Bindings: Bindings }>) {
   const userId = c.get('jwtPayload').sub;
@@ -21,32 +26,52 @@ export async function registerPushToken(c: Context<{ Bindings: Bindings }>) {
     push_token: string;
     platform: 'ios' | 'android' | 'web';
     device_name?: string;
+    token_type?: 'apns' | 'expo';
   }>();
 
   if (!body.push_token) {
-    return c.json({ error: 'push_token is required' }, 400);
-  }
-
-  if (!isValidExpoPushToken(body.push_token)) {
-    return c.json({ error: 'Invalid Expo push token format' }, 400);
+    return badRequest(c, 'push_token is required');
   }
 
   if (!['ios', 'android', 'web'].includes(body.platform)) {
-    return c.json({ error: 'platform must be ios, android, or web' }, 400);
+    return badRequest(c, 'platform must be ios, android, or web');
+  }
+
+  // Detect token type based on format or explicit parameter
+  let tokenType: 'apns' | 'expo' = body.token_type || 'expo';
+
+  // Auto-detect if not specified
+  if (!body.token_type) {
+    if (isValidAPNsToken(body.push_token)) {
+      tokenType = 'apns';
+    } else if (isValidExpoPushToken(body.push_token)) {
+      tokenType = 'expo';
+    } else {
+      return badRequest(c, 'Invalid push token format. Expected APNs (64 hex chars) or Expo token.');
+    }
+  }
+
+  // Validate token format matches type
+  if (tokenType === 'apns' && !isValidAPNsToken(body.push_token)) {
+    return badRequest(c, 'Invalid APNs token format. Expected 64 hex characters.');
+  }
+  if (tokenType === 'expo' && !isValidExpoPushToken(body.push_token)) {
+    return badRequest(c, 'Invalid Expo push token format.');
   }
 
   try {
     const now = new Date().toISOString();
     const id = nanoid();
 
-    // Upsert token (update if exists, insert if new)
+    // Upsert token with token_type
     await c.env.DB.prepare(`
-      INSERT INTO push_tokens (id, user_id, push_token, platform, device_name, is_active, created_at, updated_at, last_used_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)
+      INSERT INTO push_tokens (id, user_id, push_token, platform, device_name, token_type, is_active, created_at, updated_at, last_used_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
       ON CONFLICT(push_token) DO UPDATE SET
         user_id = excluded.user_id,
         platform = excluded.platform,
         device_name = excluded.device_name,
+        token_type = excluded.token_type,
         is_active = 1,
         updated_at = excluded.updated_at,
         last_used_at = excluded.last_used_at
@@ -56,6 +81,7 @@ export async function registerPushToken(c: Context<{ Bindings: Bindings }>) {
       body.push_token,
       body.platform,
       body.device_name || null,
+      tokenType,
       now,
       now,
       now
@@ -64,15 +90,16 @@ export async function registerPushToken(c: Context<{ Bindings: Bindings }>) {
     // Ensure notification preferences exist
     await ensureNotificationPreferences(c.env.DB, userId);
 
-    console.log(`[Notifications] Registered token for user ${userId}`);
+    logger.info('Push token registered', { userId, tokenType, platform: body.platform });
 
     return c.json({
       success: true,
       message: 'Push token registered',
+      token_type: tokenType,
     });
-  } catch (error: any) {
-    console.error('[Notifications] Failed to register token:', error);
-    return c.json({ error: 'Failed to register push token', message: error.message }, 500);
+  } catch (error) {
+    logger.error('Failed to register token', error as Error, { userId });
+    return internalError(c, 'Failed to register push token');
   }
 }
 
@@ -254,17 +281,14 @@ export async function sendTestNotification(c: Context<{ Bindings: Bindings }>) {
   try {
     // Get user's active tokens
     const tokensResult = await c.env.DB.prepare(`
-      SELECT * FROM push_tokens
+      SELECT push_token, platform, token_type FROM push_tokens
       WHERE user_id = ? AND is_active = 1
-    `).bind(userId).all<{ push_token: string; platform: string }>();
+    `).bind(userId).all<{ push_token: string; platform: string; token_type: string }>();
 
     const tokens = tokensResult.results || [];
 
     if (tokens.length === 0) {
-      return c.json({
-        success: false,
-        error: 'No active push tokens found. Make sure notifications are enabled.',
-      }, 400);
+      return badRequest(c, 'No active push tokens found. Make sure notifications are enabled.');
     }
 
     // Get user's timezone
@@ -276,22 +300,54 @@ export async function sendTestNotification(c: Context<{ Bindings: Bindings }>) {
     const localTime = getCurrentTimeInTimezone(timezone);
 
     // Send test notification to all devices
-    const results: { token: string; success: boolean; error?: string }[] = [];
+    const results: { token: string; tokenType: string; success: boolean; error?: string }[] = [];
 
     for (const token of tokens) {
-      const result = await sendPushNotification(
-        token.push_token,
-        'Cortex Test Notification',
-        `Your local time: ${localTime} (${timezone}). Push notifications are working!`,
-        { type: 'test', timestamp: Date.now() },
-        { channelId: 'default', priority: 'high' }
-      );
+      const tokenType = token.token_type || 'expo';
 
-      results.push({
-        token: token.push_token.slice(0, 30) + '...',
-        success: result.success,
-        error: result.error,
-      });
+      if (tokenType === 'apns') {
+        // Send via APNs
+        const apnsConfig = createAPNsConfig(c.env);
+        if (!apnsConfig) {
+          results.push({
+            token: token.push_token.slice(0, 16) + '...',
+            tokenType: 'apns',
+            success: false,
+            error: 'APNs not configured',
+          });
+          continue;
+        }
+
+        const result = await sendAPNsNotification(apnsConfig, {
+          deviceToken: token.push_token,
+          title: 'Cortex Test Notification',
+          body: `Your local time: ${localTime} (${timezone}). Push notifications are working!`,
+          data: { type: 'test', timestamp: Date.now() },
+        });
+
+        results.push({
+          token: token.push_token.slice(0, 16) + '...',
+          tokenType: 'apns',
+          success: result.success,
+          error: result.error,
+        });
+      } else {
+        // Send via Expo
+        const result = await sendPushNotification(
+          token.push_token,
+          'Cortex Test Notification',
+          `Your local time: ${localTime} (${timezone}). Push notifications are working!`,
+          { type: 'test', timestamp: Date.now() },
+          { channelId: 'default', priority: 'high' }
+        );
+
+        results.push({
+          token: token.push_token.slice(0, 30) + '...',
+          tokenType: 'expo',
+          success: result.success,
+          error: result.error,
+        });
+      }
     }
 
     const allSuccess = results.every(r => r.success);
@@ -305,9 +361,9 @@ export async function sendTestNotification(c: Context<{ Bindings: Bindings }>) {
       local_time: localTime,
       results,
     });
-  } catch (error: any) {
-    console.error('[Notifications] Test notification failed:', error);
-    return c.json({ error: 'Failed to send test notification', message: error.message }, 500);
+  } catch (error) {
+    logger.error('Test notification failed', error as Error, { userId });
+    return internalError(c, 'Failed to send test notification');
   }
 }
 

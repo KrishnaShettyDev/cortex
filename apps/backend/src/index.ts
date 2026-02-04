@@ -40,6 +40,8 @@ import { PerformanceTimer, logPerformance, trackPerformanceMetrics } from './lib
 import { handleUncaughtError } from './lib/monitoring/errors';
 import { handleQueueBatch, type QueueEnv } from './lib/queue/consumer';
 import type { QueueMessage } from './lib/queue/producer';
+import { ComposioClient } from './lib/composio';
+import { reconcileTriggers } from './lib/triggers';
 import { validateBody } from './lib/validation/middleware';
 import {
   appleAuthSchema,
@@ -500,12 +502,21 @@ export default {
     console.log(`[Scheduled] Cron triggered: ${event.cron}`);
 
     try {
-      // Run scheduled syncs (every 5 minutes for realtime, hourly for others)
-      if (event.cron === '*/5 * * * *') {
-        // Run scheduled syncs
-        const orchestrator = new SyncOrchestrator(env);
-        const syncResults = await orchestrator.runScheduledSyncs();
-        console.log(`[Scheduled] Syncs completed: ${syncResults.synced} synced, ${syncResults.failed} failed`);
+      // Run trigger reconciliation every 6 hours
+      // This ensures triggers are set up correctly and catches any missed events
+      if (event.cron === '0 */6 * * *') {
+        console.log('[Scheduled] Running trigger reconciliation (6-hourly)');
+
+        // Reconcile Composio triggers
+        if (env.COMPOSIO_API_KEY) {
+          const client = new ComposioClient({ apiKey: env.COMPOSIO_API_KEY });
+          const triggerResults = await reconcileTriggers(client, env.DB);
+          console.log(
+            `[Scheduled] Trigger reconciliation: ${triggerResults.checked} checked, ` +
+            `${triggerResults.created} created, ${triggerResults.removed} removed, ` +
+            `${triggerResults.errors.length} errors`
+          );
+        }
 
         // Run scheduled notifications (briefings, nudges based on user timezones)
         const notifResults = await processScheduledNotifications(env.DB, env.AI);

@@ -2,58 +2,135 @@
  * Webhook Signature Verification
  *
  * Verifies HMAC-SHA256 signatures on incoming webhooks to prevent spoofing.
- * Each webhook provider may have different signature formats.
+ * Updated to match Composio's actual webhook format.
+ *
+ * Composio webhook headers:
+ * - webhook-signature: v1,<base64_signature>
+ * - webhook-id: unique message ID
+ * - webhook-timestamp: Unix timestamp
+ *
+ * Signing string: {webhook-id}.{webhook-timestamp}.{raw_body}
  */
+
+import { createLogger } from './logger';
+
+const logger = createLogger('webhook-signature');
 
 /**
- * Compute HMAC-SHA256 signature
+ * Verify Composio webhook signature (async - Web Crypto API)
+ *
+ * @param body - Raw request body as string
+ * @param signature - webhook-signature header value (format: v1,<base64>)
+ * @param msgId - webhook-id header value
+ * @param timestamp - webhook-timestamp header value
+ * @param secret - COMPOSIO_WEBHOOK_SECRET
+ * @returns true if signature is valid
  */
-async function computeHmac(secret: string, payload: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const keyData = encoder.encode(secret);
-  const payloadData = encoder.encode(payload);
+export async function verifyComposioWebhookAsync(
+  body: string,
+  signature: string | null | undefined,
+  msgId: string | null | undefined,
+  timestamp: string | null | undefined,
+  secret: string | undefined
+): Promise<boolean> {
+  // If no secret configured, log warning but allow (for development)
+  if (!secret) {
+    logger.warn('COMPOSIO_WEBHOOK_SECRET not configured - skipping signature verification');
+    return true;
+  }
 
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    keyData,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-
-  const signature = await crypto.subtle.sign('HMAC', cryptoKey, payloadData);
-  const hashArray = Array.from(new Uint8Array(signature));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Compare signatures in constant time to prevent timing attacks
- */
-function secureCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) {
+  // Validate required headers
+  if (!signature || !msgId || !timestamp) {
+    logger.warn('Missing webhook headers', {
+      hasSignature: !!signature,
+      hasMsgId: !!msgId,
+      hasTimestamp: !!timestamp,
+    });
     return false;
   }
 
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  // Validate signature format (v1,<base64>)
+  if (!signature.startsWith('v1,')) {
+    logger.warn('Invalid signature format - expected v1,<base64>', {
+      signaturePrefix: signature.substring(0, 10),
+    });
+    return false;
   }
-  return result === 0;
+
+  // Optional: Check timestamp to prevent replay attacks (5 min window)
+  const timestampNum = parseInt(timestamp, 10);
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestampNum) > 300) {
+    logger.warn('Webhook timestamp too old/new', {
+      webhookTimestamp: timestampNum,
+      currentTimestamp: now,
+      difference: Math.abs(now - timestampNum),
+    });
+    // Allow but log - Composio may have clock skew
+  }
+
+  // Extract the base64 signature (remove 'v1,' prefix)
+  const receivedSignature = signature.slice(3);
+
+  // Build signing string: {webhook-id}.{webhook-timestamp}.{raw_body}
+  const signingString = `${msgId}.${timestamp}.${body}`;
+
+  try {
+    // Import the secret key
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    // Compute HMAC-SHA256
+    const signatureBuffer = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      new TextEncoder().encode(signingString)
+    );
+
+    // Convert to base64
+    const expectedSignature = btoa(
+      String.fromCharCode(...new Uint8Array(signatureBuffer))
+    );
+
+    // Constant-time comparison to prevent timing attacks
+    if (receivedSignature.length !== expectedSignature.length) {
+      logger.warn('Signature length mismatch');
+      return false;
+    }
+
+    let mismatch = 0;
+    for (let i = 0; i < receivedSignature.length; i++) {
+      mismatch |= receivedSignature.charCodeAt(i) ^ expectedSignature.charCodeAt(i);
+    }
+
+    const isValid = mismatch === 0;
+    if (!isValid) {
+      logger.warn('Signature mismatch', { msgId });
+    }
+
+    return isValid;
+  } catch (error) {
+    logger.error('Signature verification error', error);
+    return false;
+  }
 }
 
 /**
- * Verify Composio webhook signature
- *
- * Composio uses format: sha256=<hex_signature>
+ * Legacy signature verification (sha256=hex format)
+ * Kept for backwards compatibility with other webhook providers
  */
-export async function verifyComposioSignature(
+export async function verifyLegacySignature(
   payload: string,
   signature: string | undefined,
   secret: string | undefined
 ): Promise<{ valid: boolean; error?: string }> {
-  // If no secret configured, log warning but allow (for development)
   if (!secret) {
-    console.warn('[Webhook] COMPOSIO_WEBHOOK_SECRET not configured - skipping signature verification');
+    logger.warn('Webhook secret not configured - skipping signature verification');
     return { valid: true };
   }
 
@@ -66,33 +143,59 @@ export async function verifyComposioSignature(
     ? signature.slice(7)
     : signature;
 
-  // Compute expected signature
-  const expectedSignature = await computeHmac(secret, payload);
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
 
-  // Secure comparison
-  if (!secureCompare(providedSignature.toLowerCase(), expectedSignature.toLowerCase())) {
-    return { valid: false, error: 'Invalid webhook signature' };
+    const signatureBuffer = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      new TextEncoder().encode(payload)
+    );
+
+    // Convert to hex
+    const expectedSignature = Array.from(new Uint8Array(signatureBuffer))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+
+    // Constant-time comparison
+    if (providedSignature.length !== expectedSignature.length) {
+      return { valid: false, error: 'Invalid webhook signature' };
+    }
+
+    let mismatch = 0;
+    for (let i = 0; i < providedSignature.length; i++) {
+      mismatch |=
+        providedSignature.toLowerCase().charCodeAt(i) ^
+        expectedSignature.toLowerCase().charCodeAt(i);
+    }
+
+    if (mismatch !== 0) {
+      return { valid: false, error: 'Invalid webhook signature' };
+    }
+
+    return { valid: true };
+  } catch (error) {
+    logger.error('Legacy signature verification error', error);
+    return { valid: false, error: 'Signature verification failed' };
   }
-
-  return { valid: true };
 }
 
 /**
  * Verify Google Pub/Sub webhook (Gmail, Calendar)
- *
  * Google Pub/Sub uses JWT tokens for authentication.
- * The token is in the Authorization header as "Bearer <token>"
  */
 export async function verifyGooglePubSubWebhook(
   authHeader: string | undefined,
   expectedAudience: string | undefined
 ): Promise<{ valid: boolean; error?: string }> {
-  // For Google Pub/Sub, we verify using the channel ID/resource ID mechanism
-  // The channel is created with a specific ID that we store when setting up the webhook
-  // Here we just verify the header format is correct
-
   if (!expectedAudience) {
-    console.warn('[Webhook] Google Pub/Sub audience not configured - skipping verification');
+    logger.warn('Google Pub/Sub audience not configured - skipping verification');
     return { valid: true };
   }
 
@@ -100,63 +203,11 @@ export async function verifyGooglePubSubWebhook(
     return { valid: false, error: 'Missing authorization header' };
   }
 
-  // Google sends "Bearer <token>" in Authorization header
-  // Full JWT verification would require fetching Google's public keys
-  // For now, we just verify the format and trust the Google Cloud infrastructure
   if (!authHeader.startsWith('Bearer ')) {
     return { valid: false, error: 'Invalid authorization header format' };
   }
 
-  // In production, you would:
-  // 1. Extract the JWT token
-  // 2. Verify the signature using Google's public keys
-  // 3. Check the audience claim matches your expected value
-
+  // Full JWT verification would require fetching Google's public keys
+  // For now, we trust the Google Cloud infrastructure
   return { valid: true };
-}
-
-/**
- * Middleware factory for webhook signature verification
- */
-export function createWebhookVerifier(
-  provider: 'composio' | 'google',
-  getSecret: (c: any) => string | undefined
-) {
-  return async function webhookVerifier(c: any, next: () => Promise<void>) {
-    // Clone the request and read the body as text
-    const rawBody = await c.req.text();
-
-    // Store raw body for later use
-    c.set('rawBody', rawBody);
-
-    // Parse JSON for handler
-    try {
-      c.set('jsonBody', JSON.parse(rawBody));
-    } catch {
-      return c.json({ error: 'Invalid JSON body' }, 400);
-    }
-
-    // Verify based on provider
-    if (provider === 'composio') {
-      const signature = c.req.header('x-composio-signature');
-      const secret = getSecret(c);
-
-      const result = await verifyComposioSignature(rawBody, signature, secret);
-      if (!result.valid) {
-        console.error(`[Webhook] Signature verification failed: ${result.error}`);
-        return c.json({ error: result.error }, 401);
-      }
-    } else if (provider === 'google') {
-      const authHeader = c.req.header('authorization');
-      const audience = getSecret(c);
-
-      const result = await verifyGooglePubSubWebhook(authHeader, audience);
-      if (!result.valid) {
-        console.error(`[Webhook] Google verification failed: ${result.error}`);
-        return c.json({ error: result.error }, 401);
-      }
-    }
-
-    await next();
-  };
 }

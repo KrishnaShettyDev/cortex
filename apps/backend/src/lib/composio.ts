@@ -72,11 +72,22 @@ export interface AuthLinkResponse {
   connectedAccountId?: string;
 }
 
-export interface ToolExecutionResult {
-  data: any;
+export interface ToolExecutionResult<T = any> {
+  data: T;
   error: string | null;
   logId: string;
   successful: boolean;
+}
+
+export interface TriggerInstance {
+  id: string;
+  triggerName: string;
+  connectionId: string;
+  status: 'active' | 'paused' | 'failed';
+  webhookUrl: string;
+  triggerConfig: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export class ComposioClient {
@@ -255,6 +266,94 @@ export class ComposioClient {
    */
   async deleteConnectedAccount(id: string): Promise<void> {
     await this.request(`/connections/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ===========================================================================
+  // Trigger Management (Event-driven webhooks)
+  // ===========================================================================
+
+  /**
+   * Create a trigger for a connected account
+   *
+   * @param params.triggerName - Trigger type (e.g., GMAIL_NEW_GMAIL_MESSAGE)
+   * @param params.connectedAccountId - Connection to watch
+   * @param params.config - Trigger-specific configuration
+   * @param params.webhookUrl - URL to receive webhook events
+   */
+  async createTrigger(params: {
+    triggerName: string;
+    connectedAccountId: string;
+    config?: Record<string, any>;
+    webhookUrl: string;
+  }): Promise<TriggerInstance> {
+    return this.request<TriggerInstance>('/triggers', {
+      method: 'POST',
+      body: JSON.stringify({
+        trigger_name: params.triggerName,
+        connection_id: params.connectedAccountId,
+        trigger_config: params.config || {},
+        webhook_url: params.webhookUrl,
+      }),
+    });
+  }
+
+  /**
+   * Get trigger by ID
+   */
+  async getTrigger(triggerId: string): Promise<TriggerInstance> {
+    return this.request<TriggerInstance>(`/triggers/${triggerId}`);
+  }
+
+  /**
+   * List triggers for a connected account
+   */
+  async listTriggers(params?: {
+    connectedAccountId?: string;
+    triggerNames?: string[];
+    status?: 'active' | 'paused' | 'failed';
+  }): Promise<{ items: TriggerInstance[] }> {
+    const query = new URLSearchParams();
+    if (params?.connectedAccountId) {
+      query.append('connectionId', params.connectedAccountId);
+    }
+    if (params?.triggerNames) {
+      params.triggerNames.forEach(name => query.append('triggerName', name));
+    }
+    if (params?.status) {
+      query.append('status', params.status);
+    }
+
+    const queryStr = query.toString();
+    return this.request<{ items: TriggerInstance[] }>(
+      `/triggers${queryStr ? `?${queryStr}` : ''}`
+    );
+  }
+
+  /**
+   * Enable a trigger
+   */
+  async enableTrigger(triggerId: string): Promise<TriggerInstance> {
+    return this.request<TriggerInstance>(`/triggers/${triggerId}/enable`, {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Disable/pause a trigger
+   */
+  async disableTrigger(triggerId: string): Promise<TriggerInstance> {
+    return this.request<TriggerInstance>(`/triggers/${triggerId}/disable`, {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Delete a trigger
+   */
+  async deleteTrigger(triggerId: string): Promise<void> {
+    await this.request(`/triggers/${triggerId}`, {
       method: 'DELETE',
     });
   }

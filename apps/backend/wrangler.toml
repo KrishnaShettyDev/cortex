@@ -50,7 +50,7 @@ dead_letter_queue = "cortex-dlq"
 # Scheduled tasks
 [triggers]
 crons = [
-  "*/5 * * * *",    # Every 5min for syncs
+  "0 */6 * * *",    # Every 6h for trigger reconciliation (was: */5min polling)
   "0 2 * * SUN",    # Sunday 2am for consolidation
   "0 3 * * *",      # 3am UTC - Sleep compute
   "0 9 * * *",      # 9am UTC - Sleep compute

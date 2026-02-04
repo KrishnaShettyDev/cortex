@@ -5,5 +5,6 @@
  */
 
 export * from './push-service';
+export * from './apns-service';
 export * from './timezone';
 export * from './scheduler';

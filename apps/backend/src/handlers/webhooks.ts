@@ -1,28 +1,47 @@
 /**
  * Webhooks Handler
  *
- * Handles incoming webhooks from external services:
- * - Composio (Gmail, Calendar) push notifications
- * - Real-time event triggers
+ * Handles incoming webhooks from Composio triggers:
+ * - GMAIL_NEW_GMAIL_MESSAGE: New email received
+ * - GOOGLECALENDAR_EVENT_CREATED: Calendar event created
+ * - GOOGLECALENDAR_EVENT_UPDATED: Calendar event updated
  *
- * SECURITY: All webhooks verify signatures before processing
+ * SECURITY: All webhooks verify HMAC-SHA256 signatures before processing
+ * Uses Composio's actual webhook format: v1,<base64_signature>
  */
 
-import { Hono } from 'hono';
+import { Hono, Context } from 'hono';
 import type { Bindings } from '../types';
 import { createEmailImportanceScorer } from '../lib/email';
 import { sendPushNotification } from '../lib/notifications/push-service';
-import { verifyComposioSignature, verifyGooglePubSubWebhook } from '../lib/webhook-signature';
+import { verifyComposioWebhookAsync } from '../lib/webhook-signature';
+import { createLogger } from '../lib/logger';
+import { badRequest, unauthorized, internalError } from '../utils/errors';
 
+const logger = createLogger('webhooks');
 const app = new Hono<{ Bindings: Bindings }>();
 
+// =============================================================================
+// Composio Trigger Event Types
+// =============================================================================
+
+type ComposioTriggerType =
+  | 'GMAIL_NEW_GMAIL_MESSAGE'
+  | 'GOOGLECALENDAR_EVENT_CREATED'
+  | 'GOOGLECALENDAR_EVENT_UPDATED'
+  | 'GOOGLECALENDAR_EVENT_DELETED';
+
 interface ComposioWebhookPayload {
-  event_type: string;
+  /** Trigger type (e.g., GMAIL_NEW_GMAIL_MESSAGE) */
+  trigger_name: ComposioTriggerType;
+  /** Trigger instance ID */
   trigger_id: string;
+  /** Connected account ID */
   connection_id: string;
-  entity_id: string; // Our user ID
+  /** Our user ID (entity_id in Composio) */
+  client_id: string;
+  /** Trigger-specific payload data */
   payload: Record<string, any>;
-  timestamp: string;
 }
 
 interface GmailMessagePayload {
@@ -34,7 +53,7 @@ interface GmailMessagePayload {
   subject: string;
   snippet: string;
   date: string;
-  labels: string[];
+  labelIds: string[];
   hasAttachments: boolean;
 }
 
@@ -42,215 +61,233 @@ interface CalendarEventPayload {
   eventId: string;
   summary: string;
   description?: string;
-  start: string;
-  end: string;
+  start: { dateTime?: string; date?: string };
+  end: { dateTime?: string; date?: string };
   location?: string;
-  attendees?: { email: string; name?: string; responseStatus?: string }[];
-  organizer?: string;
+  attendees?: { email: string; displayName?: string; responseStatus?: string }[];
+  organizer?: { email: string; displayName?: string };
   htmlLink?: string;
   hangoutLink?: string;
   status: string;
   updated: string;
 }
 
+// =============================================================================
+// Main Composio Webhook Endpoint
+// =============================================================================
+
 /**
  * POST /webhooks/composio
- * Main Composio webhook endpoint
+ * Main Composio webhook endpoint for trigger events
  *
- * SECURITY: Verifies HMAC-SHA256 signature before processing
+ * Headers required:
+ * - webhook-signature: v1,<base64_signature>
+ * - webhook-id: unique message ID
+ * - webhook-timestamp: Unix timestamp
  */
 app.post('/composio', async (c) => {
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const log = logger.child({ requestId });
+
   try {
     // Get raw body for signature verification
     const rawBody = await c.req.text();
 
+    // Extract Composio webhook headers
+    const signature = c.req.header('webhook-signature');
+    const msgId = c.req.header('webhook-id');
+    const timestamp = c.req.header('webhook-timestamp');
+
+    log.debug('Webhook received', {
+      hasSignature: !!signature,
+      hasMsgId: !!msgId,
+      hasTimestamp: !!timestamp,
+    });
+
     // Verify webhook signature
-    const signature = c.req.header('x-composio-signature');
-    const verificationResult = await verifyComposioSignature(
+    const isValid = await verifyComposioWebhookAsync(
       rawBody,
       signature,
+      msgId,
+      timestamp,
       c.env.COMPOSIO_WEBHOOK_SECRET
     );
 
-    if (!verificationResult.valid) {
-      console.error(`[Webhook] Composio signature verification failed: ${verificationResult.error}`);
-      return c.json({ error: 'Unauthorized: Invalid webhook signature' }, 401);
+    if (!isValid) {
+      log.warn('Webhook signature verification failed');
+      return unauthorized(c, 'Invalid webhook signature');
     }
 
     // Parse the verified payload
-    const payload: ComposioWebhookPayload = JSON.parse(rawBody);
+    const webhook: ComposioWebhookPayload = JSON.parse(rawBody);
+    const userId = webhook.client_id;
 
-    console.log(`[Webhook] Received ${payload.event_type} from Composio for user ${payload.entity_id}`);
+    log.info('Processing webhook', {
+      triggerType: webhook.trigger_name,
+      userId,
+      triggerId: webhook.trigger_id,
+    });
 
-    // Route to appropriate handler based on event type
-    switch (payload.event_type) {
-      case 'gmail.message.received':
-        await handleGmailMessageReceived(c, payload);
+    // Route to appropriate handler and process in background
+    switch (webhook.trigger_name) {
+      case 'GMAIL_NEW_GMAIL_MESSAGE':
+        c.executionCtx.waitUntil(
+          handleGmailMessage(c, webhook, userId, log)
+        );
         break;
 
-      case 'googlecalendar.event.created':
-      case 'googlecalendar.event.updated':
-        await handleCalendarEvent(c, payload, 'created_or_updated');
+      case 'GOOGLECALENDAR_EVENT_CREATED':
+      case 'GOOGLECALENDAR_EVENT_UPDATED':
+        c.executionCtx.waitUntil(
+          handleCalendarEvent(c, webhook, userId, 'upsert', log)
+        );
         break;
 
-      case 'googlecalendar.event.deleted':
-        await handleCalendarEvent(c, payload, 'deleted');
-        break;
-
-      case 'googlecalendar.event.starting':
-        await handleCalendarEventStarting(c, payload);
+      case 'GOOGLECALENDAR_EVENT_DELETED':
+        c.executionCtx.waitUntil(
+          handleCalendarEvent(c, webhook, userId, 'delete', log)
+        );
         break;
 
       default:
-        console.log(`[Webhook] Unhandled event type: ${payload.event_type}`);
+        log.warn('Unhandled trigger type', { triggerName: webhook.trigger_name });
     }
 
-    return c.json({ received: true });
-  } catch (error: any) {
-    console.error('[Webhook] Error processing webhook:', error);
-    return c.json({ error: error.message }, 500);
+    // Return immediately - processing continues in background
+    return c.json({ received: true, requestId });
+  } catch (error) {
+    log.error('Webhook processing error', error as Error);
+    return internalError(c, 'Failed to process webhook');
   }
 });
 
-/**
- * POST /webhooks/gmail
- * Direct Gmail push notification endpoint (if not using Composio triggers)
- */
-app.post('/gmail', async (c) => {
-  try {
-    const payload = await c.req.json();
-    console.log('[Webhook] Gmail notification received:', JSON.stringify(payload).slice(0, 200));
+// =============================================================================
+// Gmail Message Handler
+// =============================================================================
 
-    // Gmail push notifications come from Google Pub/Sub
-    // They contain a message with base64-encoded data
-    if (payload.message?.data) {
-      const data = JSON.parse(atob(payload.message.data));
-      console.log('[Webhook] Gmail data:', data);
-
-      // Get user by email
-      const userResult = await c.env.DB.prepare(
-        'SELECT id FROM users WHERE email = ?'
-      ).bind(data.emailAddress).first() as { id: string } | null;
-
-      if (userResult) {
-        // Trigger sync for this user
-        // This is a lightweight notification - we need to fetch the actual email
-        console.log(`[Webhook] Triggering Gmail sync for user ${userResult.id}`);
-        // TODO: Enqueue sync job
-      }
-    }
-
-    return c.json({ received: true });
-  } catch (error: any) {
-    console.error('[Webhook] Gmail webhook error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-/**
- * POST /webhooks/calendar
- * Direct Calendar push notification endpoint
- */
-app.post('/calendar', async (c) => {
-  try {
-    const payload = await c.req.json();
-    console.log('[Webhook] Calendar notification received');
-
-    // Calendar push notifications indicate something changed
-    // We need to sync to get the actual changes
-    const channelId = c.req.header('x-goog-channel-id');
-    const resourceId = c.req.header('x-goog-resource-id');
-
-    if (channelId && resourceId) {
-      console.log(`[Webhook] Calendar change: channel=${channelId}, resource=${resourceId}`);
-      // TODO: Look up user by channel ID and trigger sync
-    }
-
-    return c.json({ received: true });
-  } catch (error: any) {
-    console.error('[Webhook] Calendar webhook error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-/**
- * Handle new Gmail message received
- */
-async function handleGmailMessageReceived(
-  c: any,
-  webhook: ComposioWebhookPayload
+async function handleGmailMessage(
+  c: Context<{ Bindings: Bindings }>,
+  webhook: ComposioWebhookPayload,
+  userId: string,
+  log: ReturnType<typeof logger.child>
 ): Promise<void> {
-  const userId = webhook.entity_id;
-  const message = webhook.payload as GmailMessagePayload;
+  try {
+    const payload = webhook.payload as GmailMessagePayload;
 
-  // Score the email for importance
-  const scorer = createEmailImportanceScorer(c.env.DB, userId);
-  await scorer.initialize();
+    log.debug('Processing Gmail message', {
+      messageId: payload.messageId,
+      from: payload.from,
+      subject: payload.subject?.slice(0, 50),
+    });
 
-  const scored = await scorer.scoreEmail({
-    id: message.messageId,
-    from: message.from,
-    fromName: message.fromName,
-    to: message.to,
-    subject: message.subject,
-    snippet: message.snippet,
-    threadId: message.threadId,
-    date: message.date,
-    labels: message.labels,
-    hasAttachments: message.hasAttachments,
-    isUnread: true,
-  });
+    // Score the email for importance
+    const scorer = createEmailImportanceScorer(c.env.DB, userId);
+    await scorer.initialize();
 
-  // Only notify for important/urgent emails
-  if (scored.overallScore >= 0.6 || scored.category === 'urgent_action') {
-    // Get user's push token
-    const tokenResult = await c.env.DB.prepare(
-      'SELECT push_token FROM push_tokens WHERE user_id = ? AND is_active = 1 LIMIT 1'
-    ).bind(userId).first() as { push_token: string } | null;
+    const scored = await scorer.scoreEmail({
+      id: payload.messageId,
+      from: payload.from,
+      fromName: payload.fromName,
+      to: payload.to,
+      subject: payload.subject,
+      snippet: payload.snippet,
+      threadId: payload.threadId,
+      date: payload.date,
+      labels: payload.labelIds || [],
+      hasAttachments: payload.hasAttachments,
+      isUnread: true,
+    });
 
-    if (tokenResult?.push_token) {
-      const notificationTitle =
-        scored.category === 'urgent_action'
-          ? 'Urgent Email'
-          : 'Important Email';
+    log.info('Email scored', {
+      messageId: payload.messageId,
+      score: scored.overallScore,
+      category: scored.category,
+    });
 
-      const notificationBody = `From ${message.fromName || message.from}: ${message.subject}`;
-
-      await sendPushNotification(
-        tokenResult.push_token,
-        notificationTitle,
-        notificationBody,
-        {
-          type: 'urgent_email',
-          thread_id: message.threadId,
-          message_id: message.messageId,
-          subject: message.subject,
-          from: message.from,
-          urgency_score: scored.urgencyScore,
-        },
-        {
-          channelId: 'urgent_email',
-          priority: 'high',
-        }
-      );
-
-      // Log notification
-      await c.env.DB.prepare(`
-        INSERT INTO notification_log (id, user_id, notification_type, title, body, data, sent_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        crypto.randomUUID(),
-        userId,
-        'urgent_email',
-        notificationTitle,
-        notificationBody,
-        JSON.stringify({ messageId: message.messageId, score: scored.overallScore }),
-        new Date().toISOString()
-      ).run();
+    // Only notify for important/urgent emails (score >= 0.6 or urgent category)
+    if (scored.overallScore >= 0.6 || scored.category === 'urgent_action') {
+      await sendEmailNotification(c, userId, payload, scored, log);
     }
+
+    // Store email as memory for context
+    await storeEmailAsMemory(c, userId, payload, scored, log);
+
+    log.info('Gmail message processed', { messageId: payload.messageId });
+  } catch (error) {
+    log.error('Gmail message handler failed', error as Error, {
+      triggerId: webhook.trigger_id,
+    });
+  }
+}
+
+async function sendEmailNotification(
+  c: Context<{ Bindings: Bindings }>,
+  userId: string,
+  message: GmailMessagePayload,
+  scored: { overallScore: number; category: string; urgencyScore: number },
+  log: ReturnType<typeof logger.child>
+): Promise<void> {
+  // Get user's push token
+  const tokenResult = await c.env.DB.prepare(
+    'SELECT push_token FROM push_tokens WHERE user_id = ? AND is_active = 1 LIMIT 1'
+  ).bind(userId).first<{ push_token: string }>();
+
+  if (!tokenResult?.push_token) {
+    log.debug('No push token for user', { userId });
+    return;
   }
 
-  // Store email as memory for context
+  const title = scored.category === 'urgent_action' ? 'Urgent Email' : 'Important Email';
+  const body = `From ${message.fromName || message.from}: ${message.subject}`;
+
+  const result = await sendPushNotification(
+    tokenResult.push_token,
+    title,
+    body,
+    {
+      type: 'urgent_email',
+      thread_id: message.threadId,
+      message_id: message.messageId,
+      subject: message.subject,
+      from: message.from,
+      urgency_score: scored.urgencyScore,
+    },
+    {
+      channelId: 'urgent_email',
+      priority: 'high',
+    }
+  );
+
+  if (result.success) {
+    // Log notification sent
+    await c.env.DB.prepare(`
+      INSERT INTO notification_log (id, user_id, notification_type, title, body, data, sent_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      userId,
+      'urgent_email',
+      title,
+      body,
+      JSON.stringify({ messageId: message.messageId, score: scored.overallScore }),
+      new Date().toISOString()
+    ).run();
+
+    log.info('Push notification sent', { messageId: message.messageId, ticketId: result.ticketId });
+  } else {
+    log.warn('Push notification failed', { error: result.error });
+  }
+}
+
+async function storeEmailAsMemory(
+  c: Context<{ Bindings: Bindings }>,
+  userId: string,
+  message: GmailMessagePayload,
+  scored: { overallScore: number; category: string },
+  log: ReturnType<typeof logger.child>
+): Promise<void> {
+  const content = `Email from ${message.fromName || message.from}: "${message.subject}"\n\n${message.snippet}`;
+
   await c.env.DB.prepare(`
     INSERT INTO memories (id, user_id, container_tag, content, source, metadata, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -262,7 +299,7 @@ async function handleGmailMessageReceived(
     `email-${message.messageId}`,
     userId,
     'default',
-    `Email from ${message.fromName || message.from}: "${message.subject}"\n\n${message.snippet}`,
+    content,
     'email',
     JSON.stringify({
       email_id: message.messageId,
@@ -271,7 +308,7 @@ async function handleGmailMessageReceived(
       from_name: message.fromName,
       subject: message.subject,
       date: message.date,
-      labels: message.labels,
+      labels: message.labelIds,
       importance_score: scored.overallScore,
       category: scored.category,
     }),
@@ -279,136 +316,87 @@ async function handleGmailMessageReceived(
     new Date().toISOString()
   ).run();
 
-  console.log(`[Webhook] Processed Gmail message ${message.messageId}, score=${scored.overallScore}`);
+  log.debug('Email stored as memory', { memoryId: `email-${message.messageId}` });
 }
 
-/**
- * Handle calendar event created/updated
- */
+// =============================================================================
+// Calendar Event Handler
+// =============================================================================
+
 async function handleCalendarEvent(
-  c: any,
+  c: Context<{ Bindings: Bindings }>,
   webhook: ComposioWebhookPayload,
-  eventType: 'created_or_updated' | 'deleted'
+  userId: string,
+  action: 'upsert' | 'delete',
+  log: ReturnType<typeof logger.child>
 ): Promise<void> {
-  const userId = webhook.entity_id;
-  const event = webhook.payload as CalendarEventPayload;
+  try {
+    const event = webhook.payload as CalendarEventPayload;
 
-  if (eventType === 'deleted') {
-    // Remove from memories if exists
-    await c.env.DB.prepare(
-      'DELETE FROM memories WHERE id = ? AND user_id = ?'
-    ).bind(`calendar-${event.eventId}`, userId).run();
+    log.debug('Processing calendar event', {
+      eventId: event.eventId,
+      action,
+      summary: event.summary?.slice(0, 50),
+    });
 
-    console.log(`[Webhook] Deleted calendar event ${event.eventId}`);
-    return;
+    if (action === 'delete') {
+      await c.env.DB.prepare(
+        'DELETE FROM memories WHERE id = ? AND user_id = ?'
+      ).bind(`calendar-${event.eventId}`, userId).run();
+
+      log.info('Calendar event deleted', { eventId: event.eventId });
+      return;
+    }
+
+    // Store/update event as memory
+    const startTime = event.start?.dateTime || event.start?.date || '';
+    const endTime = event.end?.dateTime || event.end?.date || '';
+    const attendeeNames = event.attendees?.map(a => a.displayName || a.email).join(', ') || '';
+
+    let content = `Calendar Event: "${event.summary}" on ${new Date(startTime).toLocaleString()}`;
+    if (attendeeNames) content += ` with ${attendeeNames}`;
+    if (event.location) content += ` at ${event.location}`;
+
+    await c.env.DB.prepare(`
+      INSERT INTO memories (id, user_id, container_tag, content, source, metadata, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        content = excluded.content,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at
+    `).bind(
+      `calendar-${event.eventId}`,
+      userId,
+      'default',
+      content,
+      'calendar',
+      JSON.stringify({
+        event_id: event.eventId,
+        title: event.summary,
+        description: event.description,
+        start_time: startTime,
+        end_time: endTime,
+        location: event.location,
+        attendees: event.attendees,
+        organizer: event.organizer,
+        meeting_url: event.hangoutLink || event.htmlLink,
+        status: event.status,
+      }),
+      new Date().toISOString(),
+      new Date().toISOString()
+    ).run();
+
+    log.info('Calendar event processed', { eventId: event.eventId, action });
+  } catch (error) {
+    log.error('Calendar event handler failed', error as Error, {
+      triggerId: webhook.trigger_id,
+    });
   }
-
-  // Store/update event as memory
-  const attendeeNames = event.attendees?.map((a) => a.name || a.email).join(', ') || '';
-
-  await c.env.DB.prepare(`
-    INSERT INTO memories (id, user_id, container_tag, content, source, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET
-      content = excluded.content,
-      metadata = excluded.metadata,
-      updated_at = excluded.updated_at
-  `).bind(
-    `calendar-${event.eventId}`,
-    userId,
-    'default',
-    `Calendar Event: "${event.summary}" on ${new Date(event.start).toLocaleString()}${attendeeNames ? ` with ${attendeeNames}` : ''}${event.location ? ` at ${event.location}` : ''}`,
-    'calendar',
-    JSON.stringify({
-      event_id: event.eventId,
-      title: event.summary,
-      description: event.description,
-      start_time: event.start,
-      end_time: event.end,
-      location: event.location,
-      attendees: event.attendees,
-      organizer: event.organizer,
-      meeting_url: event.hangoutLink || event.htmlLink,
-      status: event.status,
-    }),
-    new Date().toISOString(),
-    new Date().toISOString()
-  ).run();
-
-  console.log(`[Webhook] Processed calendar event ${event.eventId}`);
 }
 
-/**
- * Handle calendar event starting soon
- */
-async function handleCalendarEventStarting(
-  c: any,
-  webhook: ComposioWebhookPayload
-): Promise<void> {
-  const userId = webhook.entity_id;
-  const event = webhook.payload as CalendarEventPayload;
-
-  // Get user's push token
-  const tokenResult = await c.env.DB.prepare(
-    'SELECT push_token FROM push_tokens WHERE user_id = ? AND is_active = 1 LIMIT 1'
-  ).bind(userId).first() as { push_token: string } | null;
-
-  if (!tokenResult?.push_token) return;
-
-  // Get meeting prep info
-  const attendees = event.attendees || [];
-  const attendeeInfo: string[] = [];
-
-  for (const attendee of attendees.slice(0, 3)) {
-    // Check if we have memories about this attendee
-    const memories = await c.env.DB.prepare(`
-      SELECT content FROM memories
-      WHERE user_id = ? AND content LIKE ?
-      AND is_forgotten = 0
-      ORDER BY created_at DESC LIMIT 1
-    `).bind(userId, `%${attendee.name || attendee.email}%`).first() as { content: string } | null;
-
-    if (memories) {
-      attendeeInfo.push(`${attendee.name || attendee.email}: ${memories.content.slice(0, 100)}...`);
-    }
-  }
-
-  const body = attendeeInfo.length > 0
-    ? `Meeting with ${attendees.map((a) => a.name || a.email).join(', ')}\n\nContext: ${attendeeInfo[0]}`
-    : `Meeting with ${attendees.map((a) => a.name || a.email).join(', ')}`;
-
-  await sendPushNotification(
-    tokenResult.push_token,
-    `Starting Soon: ${event.summary}`,
-    body,
-    {
-      type: 'meeting_prep',
-      event_id: event.eventId,
-      topic: event.summary,
-      attendees: attendees.map((a) => a.email),
-    },
-    {
-      channelId: 'meeting_prep',
-      priority: 'high',
-    }
-  );
-
-  // Log notification
-  await c.env.DB.prepare(`
-    INSERT INTO notification_log (id, user_id, notification_type, title, body, data, sent_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    crypto.randomUUID(),
-    userId,
-    'meeting_prep',
-    `Starting Soon: ${event.summary}`,
-    body,
-    JSON.stringify({ eventId: event.eventId }),
-    new Date().toISOString()
-  ).run();
-
-  console.log(`[Webhook] Sent meeting prep notification for ${event.eventId}`);
-}
+// =============================================================================
+// Health Check
+// =============================================================================
 
 /**
  * GET /webhooks/health
@@ -418,12 +406,11 @@ app.get('/health', (c) => {
   return c.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    supportedEvents: [
-      'gmail.message.received',
-      'googlecalendar.event.created',
-      'googlecalendar.event.updated',
-      'googlecalendar.event.deleted',
-      'googlecalendar.event.starting',
+    supportedTriggers: [
+      'GMAIL_NEW_GMAIL_MESSAGE',
+      'GOOGLECALENDAR_EVENT_CREATED',
+      'GOOGLECALENDAR_EVENT_UPDATED',
+      'GOOGLECALENDAR_EVENT_DELETED',
     ],
   });
 });
