@@ -19,6 +19,7 @@ import {
 import { ArrowBackIcon, SearchIcon, AddIcon } from '@/components/icons';
 import { Spinner, GlassCard } from '@/components/ui';
 import { useCalendar } from '@/hooks/useCalendar';
+import { apiClient } from '@/lib/api/client';
 import { getConflictingEvents } from '@/lib/calendar/helpers';
 import type { ViewMode, CalendarEvent } from '@/types/calendar';
 
@@ -50,9 +51,24 @@ export default function CalendarPage() {
   };
 
   const handleQuickAdd = async (text: string) => {
-    // TODO: Call API to parse and create event
-    console.log('Quick add:', text);
-    await handleRefresh();
+    try {
+      // Parse natural language input (simple implementation)
+      const now = new Date();
+      const startTime = new Date(selectedDate);
+      startTime.setHours(now.getHours() + 1, 0, 0, 0);
+      const endTime = new Date(startTime);
+      endTime.setHours(endTime.getHours() + 1);
+
+      await apiClient.createCalendarEvent({
+        title: text,
+        start_time: startTime.toISOString(),
+        end_time: endTime.toISOString(),
+      });
+      await handleRefresh();
+    } catch (error: any) {
+      console.error('Failed to create event:', error);
+      alert(error.message || 'Failed to create event');
+    }
   };
 
   const handleJoinMeeting = () => {
@@ -86,9 +102,25 @@ export default function CalendarPage() {
             <SearchIcon className="w-5 h-5 text-text-primary" />
           </button>
           <button
-            onClick={() => {
-              // TODO: Open create event modal
-              console.log('Add event');
+            onClick={async () => {
+              const title = prompt('Event title:');
+              if (!title) return;
+
+              const startTime = new Date(selectedDate);
+              startTime.setHours(new Date().getHours() + 1, 0, 0, 0);
+              const endTime = new Date(startTime);
+              endTime.setHours(endTime.getHours() + 1);
+
+              try {
+                await apiClient.createCalendarEvent({
+                  title,
+                  start_time: startTime.toISOString(),
+                  end_time: endTime.toISOString(),
+                });
+                await handleRefresh();
+              } catch (error: any) {
+                alert(error.message || 'Failed to create event');
+              }
             }}
             className="w-8 h-8 flex items-center justify-center rounded-full bg-accent hover:bg-accent-pressed active-opacity"
           >
@@ -223,13 +255,27 @@ export default function CalendarPage() {
           conflictingEvents={conflictingEvents}
           onClose={() => setSelectedEvent(null)}
           onJoinMeeting={selectedEvent.meet_link ? handleJoinMeeting : undefined}
-          onEdit={() => {
-            // TODO: Open edit modal
-            console.log('Edit event:', selectedEvent.id);
+          onEdit={async () => {
+            const newTitle = prompt('Edit event title:', selectedEvent.title);
+            if (newTitle && newTitle !== selectedEvent.title) {
+              try {
+                await apiClient.updateCalendarEvent(selectedEvent.id, { title: newTitle });
+                setSelectedEvent(null);
+                await handleRefresh();
+              } catch (error: any) {
+                alert(error.message || 'Failed to update event');
+              }
+            }
           }}
-          onDelete={() => {
-            // TODO: Delete event
-            console.log('Delete event:', selectedEvent.id);
+          onDelete={async () => {
+            if (!confirm('Delete this event?')) return;
+            try {
+              await apiClient.deleteCalendarEvent(selectedEvent.id);
+              setSelectedEvent(null);
+              await handleRefresh();
+            } catch (error: any) {
+              alert(error.message || 'Failed to delete event');
+            }
           }}
         />
       )}

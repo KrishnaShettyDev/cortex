@@ -2,27 +2,20 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiClient } from '@/lib/api/client';
+import { apiClient, IntegrationStatus } from '@/lib/api/client';
 import { ArrowBackIcon, SyncIcon, CloseIcon } from '@/components/icons';
 import { Button, Spinner } from '@/components/ui';
 import Image from 'next/image';
 
-interface IntegrationStatus {
+interface ProviderStatus {
   connected: boolean;
-  email?: string;
-  gmail_connected?: boolean;
-  calendar_connected?: boolean;
-  status?: string;
-}
-
-interface IntegrationsStatus {
-  google: IntegrationStatus;
-  microsoft: IntegrationStatus;
+  email?: string | null;
+  last_sync?: string | null;
 }
 
 export default function ConnectedAccountsPage() {
   const router = useRouter();
-  const [status, setStatus] = useState<IntegrationsStatus | null>(null);
+  const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSyncing, setIsSyncing] = useState({ google: false, microsoft: false });
@@ -30,7 +23,7 @@ export default function ConnectedAccountsPage() {
 
   const loadStatus = useCallback(async () => {
     try {
-      const data = await apiClient.getIntegrationStatus() as IntegrationsStatus;
+      const data = await apiClient.getIntegrationStatus();
       setStatus(data);
     } catch (error) {
       console.error('Failed to load integrations status:', error);
@@ -58,12 +51,11 @@ export default function ConnectedAccountsPage() {
 
         const checkInterval = setInterval(async () => {
           try {
-            const newStatus = await apiClient.getIntegrationStatus() as any;
-            if (newStatus.google?.connected) {
+            const newStatus = await apiClient.getIntegrationStatus();
+            if (newStatus.gmail?.connected || newStatus.calendar?.connected) {
               clearInterval(checkInterval);
               popup?.close();
               await loadStatus();
-              alert('Google connected successfully!');
             }
           } catch (err) {
             console.error('Failed to check status:', err);
@@ -79,19 +71,30 @@ export default function ConnectedAccountsPage() {
     }
   };
 
-  const handleDisconnectGoogle = () => {
-    if (confirm('Remove Google account?')) {
-      // TODO: Implement disconnect API
-      alert('Disconnect coming soon');
+  const handleDisconnectGoogle = async () => {
+    if (!confirm('Remove Google account?')) return;
+
+    try {
+      await apiClient.disconnectIntegration('gmail');
+      await apiClient.disconnectIntegration('calendar');
+      await loadStatus();
+    } catch (error: any) {
+      alert(error.message || 'Failed to disconnect Google');
     }
   };
 
   const handleSyncGoogle = async () => {
     setIsSyncing((prev) => ({ ...prev, google: true }));
     try {
-      // TODO: Implement sync API
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      alert('Sync completed!');
+      const [gmailResult, calendarResult] = await Promise.allSettled([
+        apiClient.syncGmail(),
+        apiClient.syncCalendar(),
+      ]);
+
+      const gmailSynced = gmailResult.status === 'fulfilled' ? gmailResult.value.synced : 0;
+      const calendarSynced = calendarResult.status === 'fulfilled' ? calendarResult.value.synced : 0;
+
+      alert(`Synced ${gmailSynced} emails and ${calendarSynced} calendar events`);
       await loadStatus();
     } catch (error: any) {
       alert(error.message || 'Sync failed');
@@ -129,7 +132,12 @@ export default function ConnectedAccountsPage() {
           {/* Google Account */}
           <AccountRow
             provider="google"
-            status={status?.google || { connected: false }}
+            status={{
+              connected: status?.gmail.connected || status?.calendar.connected || false,
+              email: status?.gmail.email || status?.calendar.email,
+              gmail_connected: status?.gmail.connected,
+              calendar_connected: status?.calendar.connected,
+            }}
             onConnect={handleConnectGoogle}
             onDisconnect={handleDisconnectGoogle}
             onSync={handleSyncGoogle}
@@ -142,7 +150,7 @@ export default function ConnectedAccountsPage() {
           {/* Microsoft Account */}
           <AccountRow
             provider="microsoft"
-            status={status?.microsoft || { connected: false }}
+            status={{ connected: false }}
             onConnect={() => alert('Microsoft integration coming soon')}
             onDisconnect={() => {}}
             onSync={() => {}}
@@ -185,7 +193,7 @@ function Header({ onBack, onRefresh, isRefreshing }: { onBack: () => void; onRef
 
 interface AccountRowProps {
   provider: 'google' | 'microsoft';
-  status: IntegrationStatus;
+  status: ProviderStatus & { gmail_connected?: boolean; calendar_connected?: boolean; status?: string };
   onConnect: () => void;
   onDisconnect: () => void;
   onSync: () => void;

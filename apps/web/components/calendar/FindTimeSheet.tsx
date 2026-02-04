@@ -1,6 +1,6 @@
 /**
  * FindTimeSheet Component
- * AI-powered free slot finder
+ * Calendar-based free slot finder
  */
 
 'use client';
@@ -8,7 +8,8 @@
 import { useState } from 'react';
 import { CloseIcon, TimeIcon, CalendarIcon } from '@/components/icons';
 import { Button, Spinner, GlassCard } from '@/components/ui';
-import type { TimeSlot } from '@/types/calendar';
+import { apiClient } from '@/lib/api/client';
+import type { TimeSlot, CalendarEvent } from '@/types/calendar';
 
 interface FindTimeSheetProps {
   onClose: () => void;
@@ -28,30 +29,117 @@ export function FindTimeSheet({
   const handleFindSlots = async () => {
     setIsLoading(true);
     try {
-      // TODO: Call API to find free slots
-      // const response = await apiClient.findFreeTime(customDuration);
-      // setFreeSlots(response.slots);
+      // Fetch events for the next 7 days
+      const now = new Date();
+      const weekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-      // Mock data for now
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const response = await apiClient.getCalendarEvents({
+        start: now.toISOString(),
+        end: weekLater.toISOString(),
+      });
+
+      const events = response.events || [];
+      const slots = findFreeSlots(events, customDuration, now, weekLater);
+      setFreeSlots(slots.slice(0, 10)); // Limit to 10 slots
+    } catch (error) {
+      console.error('Failed to find free slots:', error);
+      // Fallback to showing next available slots assuming no events
+      const now = new Date();
+      const nextHour = new Date(now);
+      nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+
       setFreeSlots([
         {
-          start: new Date(Date.now() + 3600000).toISOString(),
-          end: new Date(Date.now() + 3600000 + customDuration * 60000).toISOString(),
-          duration: customDuration,
-        },
-        {
-          start: new Date(Date.now() + 7200000).toISOString(),
-          end: new Date(Date.now() + 7200000 + customDuration * 60000).toISOString(),
+          start: nextHour.toISOString(),
+          end: new Date(nextHour.getTime() + customDuration * 60000).toISOString(),
           duration: customDuration,
         },
       ]);
-    } catch (error) {
-      console.error('Failed to find free slots:', error);
     } finally {
       setIsLoading(false);
     }
   };
+
+  function findFreeSlots(
+    events: CalendarEvent[],
+    durationMins: number,
+    rangeStart: Date,
+    rangeEnd: Date
+  ): TimeSlot[] {
+    const slots: TimeSlot[] = [];
+    const workdayStart = 9; // 9 AM
+    const workdayEnd = 18; // 6 PM
+
+    // Sort events by start time
+    const sortedEvents = [...events].sort(
+      (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+    );
+
+    // Iterate through each day in the range
+    const currentDay = new Date(rangeStart);
+    currentDay.setHours(workdayStart, 0, 0, 0);
+
+    while (currentDay < rangeEnd && slots.length < 10) {
+      // Skip weekends
+      if (currentDay.getDay() === 0 || currentDay.getDay() === 6) {
+        currentDay.setDate(currentDay.getDate() + 1);
+        currentDay.setHours(workdayStart, 0, 0, 0);
+        continue;
+      }
+
+      const dayEnd = new Date(currentDay);
+      dayEnd.setHours(workdayEnd, 0, 0, 0);
+
+      // Get events for this day
+      const dayEvents = sortedEvents.filter((e) => {
+        const eventStart = new Date(e.start_time);
+        return eventStart.toDateString() === currentDay.toDateString();
+      });
+
+      // Find gaps in the day
+      let slotStart = new Date(currentDay);
+      if (slotStart < rangeStart) {
+        slotStart = new Date(rangeStart);
+        slotStart.setMinutes(Math.ceil(slotStart.getMinutes() / 15) * 15, 0, 0);
+      }
+
+      for (const event of dayEvents) {
+        const eventStart = new Date(event.start_time);
+        const eventEnd = new Date(event.end_time);
+
+        // Check if there's a gap before this event
+        const gapMinutes = (eventStart.getTime() - slotStart.getTime()) / 60000;
+        if (gapMinutes >= durationMins && slotStart >= currentDay) {
+          slots.push({
+            start: slotStart.toISOString(),
+            end: new Date(slotStart.getTime() + durationMins * 60000).toISOString(),
+            duration: durationMins,
+          });
+        }
+
+        // Move slot start to after this event
+        if (eventEnd > slotStart) {
+          slotStart = new Date(eventEnd);
+        }
+      }
+
+      // Check for gap at end of day
+      const remainingMinutes = (dayEnd.getTime() - slotStart.getTime()) / 60000;
+      if (remainingMinutes >= durationMins && slotStart < dayEnd) {
+        slots.push({
+          start: slotStart.toISOString(),
+          end: new Date(slotStart.getTime() + durationMins * 60000).toISOString(),
+          duration: durationMins,
+        });
+      }
+
+      // Move to next day
+      currentDay.setDate(currentDay.getDate() + 1);
+      currentDay.setHours(workdayStart, 0, 0, 0);
+    }
+
+    return slots;
+  }
 
   const formatSlotTime = (slot: TimeSlot) => {
     const start = new Date(slot.start);

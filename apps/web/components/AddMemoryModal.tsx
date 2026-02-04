@@ -12,6 +12,7 @@ interface AddMemoryModalProps {
 export function AddMemoryModal({ isOpen, onClose, onSave }: AddMemoryModalProps) {
   const [activeTab, setActiveTab] = useState<ModalTab>('note');
   const [content, setContent] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   if (!isOpen) return null;
@@ -35,8 +36,24 @@ export function AddMemoryModal({ isOpen, onClose, onSave }: AddMemoryModalProps)
   const handleClose = () => {
     if (!isSaving) {
       setContent('');
+      setLinkUrl('');
       setActiveTab('note');
       onClose();
+    }
+  };
+
+  const handleSaveLink = async () => {
+    if (!linkUrl.trim()) return;
+
+    setIsSaving(true);
+    try {
+      await onSave(`Saved link: ${linkUrl}`);
+      setLinkUrl('');
+      onClose();
+    } catch (error) {
+      console.error('Failed to save link:', error);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -122,9 +139,14 @@ export function AddMemoryModal({ isOpen, onClose, onSave }: AddMemoryModalProps)
               <div className="space-y-4">
                 <input
                   type="url"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
                   placeholder="https://..."
                   className="w-full bg-transparent border-b border-zinc-700 outline-none text-lg pb-2 placeholder:text-zinc-600"
                 />
+                <p className="text-sm text-zinc-500">
+                  Paste a URL to save it to your memories
+                </p>
               </div>
             )}
             {activeTab === 'file' && (
@@ -144,7 +166,7 @@ export function AddMemoryModal({ isOpen, onClose, onSave }: AddMemoryModalProps)
           </div>
 
           {/* Bottom Actions */}
-          {activeTab === 'note' && (
+          {(activeTab === 'note' || activeTab === 'link') && (
             <footer className="p-6 border-t border-zinc-800 flex items-center justify-between">
               <button
                 onClick={handleClose}
@@ -154,11 +176,11 @@ export function AddMemoryModal({ isOpen, onClose, onSave }: AddMemoryModalProps)
                 Cancel
               </button>
               <button
-                onClick={handleSave}
-                disabled={isSaving || !content.trim()}
+                onClick={activeTab === 'note' ? handleSave : handleSaveLink}
+                disabled={isSaving || (activeTab === 'note' ? !content.trim() : !linkUrl.trim())}
                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isSaving ? 'Saving...' : 'Save Memory'}
+                {isSaving ? 'Saving...' : activeTab === 'note' ? 'Save Memory' : 'Save Link'}
               </button>
             </footer>
           )}

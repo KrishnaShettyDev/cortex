@@ -1,22 +1,21 @@
 /**
- * Memories Page - COMPLETE Memory Management
- * BEATS Supermemory: Full CRUD, tagging, bulk ops, export
+ * Memories Page
+ * Full CRUD operations with search, filtering, and bulk actions
  */
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/auth';
+import { apiClient } from '@/lib/api/client';
 import {
   SearchIcon,
-  TagIcon,
   EditIcon,
   TrashIcon,
   DownloadIcon,
   CheckmarkIcon,
   CloseIcon,
-  AddIcon,
   FilterIcon,
   GridIcon,
   ListIcon,
@@ -27,14 +26,13 @@ import { Button, Spinner, GlassCard } from '@/components/ui';
 interface Memory {
   id: string;
   content: string;
-  metadata: {
+  source?: string;
+  metadata?: {
     source?: string;
     type?: string;
     url?: string;
     title?: string;
     tags?: string[];
-    author?: string;
-    timestamp?: string;
   };
   created_at: string;
   updated_at?: string;
@@ -45,7 +43,6 @@ export default function MemoriesPage() {
   const { user, checkAuth } = useAuthStore();
 
   const [memories, setMemories] = useState<Memory[]>([]);
-  const [filteredMemories, setFilteredMemories] = useState<Memory[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSource, setSelectedSource] = useState<string>('all');
@@ -58,138 +55,127 @@ export default function MemoriesPage() {
 
   useEffect(() => {
     checkAuth();
+  }, [checkAuth]);
+
+  useEffect(() => {
     if (user) {
       loadMemories();
     }
-  }, [user, checkAuth]);
+  }, [user]);
 
-  useEffect(() => {
-    filterMemories();
-  }, [memories, searchQuery, selectedSource, selectedTags]);
-
-  const loadMemories = async () => {
+  async function loadMemories(): Promise<void> {
     setIsLoading(true);
     try {
-      const response = await fetch('https://askcortex.plutas.in/v3/memories', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-      const data = await response.json();
-      setMemories(data.memories || []);
+      const response = await apiClient.getMemories({ limit: 100 });
+      setMemories(response.memories || []);
     } catch (error) {
       console.error('Failed to load memories:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }
 
-  const filterMemories = () => {
+  const filteredMemories = useMemo(() => {
     let filtered = [...memories];
 
-    // Source filter
     if (selectedSource !== 'all') {
-      filtered = filtered.filter(m => m.metadata?.source === selectedSource);
+      filtered = filtered.filter((m) => {
+        const source = m.source || m.metadata?.source;
+        return source === selectedSource;
+      });
     }
 
-    // Tag filter
     if (selectedTags.length > 0) {
-      filtered = filtered.filter(m =>
-        selectedTags.every(tag => m.metadata?.tags?.includes(tag))
+      filtered = filtered.filter((m) =>
+        selectedTags.every((tag) => m.metadata?.tags?.includes(tag))
       );
     }
 
-    // Search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(m =>
-        m.content.toLowerCase().includes(query) ||
-        m.metadata?.title?.toLowerCase().includes(query) ||
-        m.metadata?.url?.toLowerCase().includes(query)
+      filtered = filtered.filter(
+        (m) =>
+          m.content.toLowerCase().includes(query) ||
+          m.metadata?.title?.toLowerCase().includes(query)
       );
     }
 
-    setFilteredMemories(filtered);
-  };
+    return filtered;
+  }, [memories, searchQuery, selectedSource, selectedTags]);
 
-  const handleSearch = async () => {
-    // Use client-side filtering for now (fast and works well)
-    // TODO: Implement semantic search with proper result mapping
-    filterMemories();
-  };
+  async function handleSearch(): Promise<void> {
+    if (!searchQuery.trim()) {
+      loadMemories();
+      return;
+    }
 
-  const handleEdit = async (id: string) => {
-    const memory = memories.find(m => m.id === id);
+    setIsSearching(true);
+    try {
+      const response = await apiClient.searchMemories(searchQuery);
+      const searchResults = response.results.map((r) => ({
+        ...r,
+        id: r.id,
+        content: r.content,
+        source: r.source_type,
+        created_at: r.created_at,
+      }));
+      setMemories(searchResults as Memory[]);
+    } catch (error) {
+      console.error('Search failed:', error);
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  function handleEdit(id: string): void {
+    const memory = memories.find((m) => m.id === id);
     if (!memory) return;
 
     setEditingId(id);
     setEditContent(memory.content);
-  };
+  }
 
-  const handleSaveEdit = async (id: string) => {
+  async function handleSaveEdit(id: string): Promise<void> {
     try {
-      await fetch(`https://askcortex.plutas.in/v3/memories/${id}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ content: editContent }),
-      });
+      await apiClient.updateMemory(id, editContent);
 
-      setMemories(prev => prev.map(m =>
-        m.id === id ? { ...m, content: editContent } : m
-      ));
+      setMemories((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, content: editContent } : m))
+      );
       setEditingId(null);
     } catch (error) {
       console.error('Failed to update memory:', error);
     }
-  };
+  }
 
-  const handleDelete = async (id: string) => {
+  async function handleDelete(id: string): Promise<void> {
     if (!confirm('Delete this memory?')) return;
 
     try {
-      await fetch(`https://askcortex.plutas.in/v3/memories/${id}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-
-      setMemories(prev => prev.filter(m => m.id !== id));
+      await apiClient.deleteMemory(id);
+      setMemories((prev) => prev.filter((m) => m.id !== id));
     } catch (error) {
       console.error('Failed to delete memory:', error);
     }
-  };
+  }
 
-  const handleBulkDelete = async () => {
+  async function handleBulkDelete(): Promise<void> {
     if (!confirm(`Delete ${selectedMemories.size} memories?`)) return;
 
     try {
-      await Promise.all(
-        Array.from(selectedMemories).map(id =>
-          fetch(`https://askcortex.plutas.in/v3/memories/${id}`, {
-            method: 'DELETE',
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            },
-          })
-        )
-      );
+      await Promise.all(Array.from(selectedMemories).map((id) => apiClient.deleteMemory(id)));
 
-      setMemories(prev => prev.filter(m => !selectedMemories.has(m.id)));
+      setMemories((prev) => prev.filter((m) => !selectedMemories.has(m.id)));
       setSelectedMemories(new Set());
     } catch (error) {
       console.error('Bulk delete failed:', error);
     }
-  };
+  }
 
-  const handleExport = () => {
-    const exportData = filteredMemories.map(m => ({
+  function handleExport(): void {
+    const exportData = filteredMemories.map((m) => ({
       content: m.content,
-      source: m.metadata?.source,
-      url: m.metadata?.url,
+      source: m.source || m.metadata?.source,
       tags: m.metadata?.tags,
       created: m.created_at,
     }));
@@ -200,12 +186,13 @@ export default function MemoriesPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cortex-memories-${new Date().toISOString()}.json`;
+    a.download = `cortex-memories-${new Date().toISOString().split('T')[0]}.json`;
     a.click();
-  };
+    URL.revokeObjectURL(url);
+  }
 
-  const toggleSelect = (id: string) => {
-    setSelectedMemories(prev => {
+  function toggleSelect(id: string): void {
+    setSelectedMemories((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
@@ -214,10 +201,19 @@ export default function MemoriesPage() {
       }
       return next;
     });
-  };
+  }
 
-  const allSources = Array.from(new Set(memories.map(m => m.metadata?.source).filter(Boolean)));
-  const allTags = Array.from(new Set(memories.flatMap(m => m.metadata?.tags || [])));
+  const allSources = useMemo(() => {
+    const sources = memories
+      .map((m) => m.source || m.metadata?.source)
+      .filter((s): s is string => Boolean(s));
+    return Array.from(new Set(sources));
+  }, [memories]);
+
+  const allTags = useMemo(() => {
+    const tags = memories.flatMap((m) => m.metadata?.tags || []);
+    return Array.from(new Set(tags));
+  }, [memories]);
 
   if (!user) {
     return (
@@ -275,22 +271,22 @@ export default function MemoriesPage() {
                 className="px-md py-sm bg-bg-secondary border border-glass-border rounded-lg text-text-primary text-sm"
               >
                 <option value="all">All Sources</option>
-                {allSources.map(source => (
-                  <option key={source} value={source}>{source}</option>
+                {allSources.map((source) => (
+                  <option key={source} value={source}>
+                    {source}
+                  </option>
                 ))}
               </select>
 
               {allTags.length > 0 && (
                 <div className="flex items-center gap-xs">
                   <FilterIcon className="w-4 h-4 text-text-tertiary" />
-                  {allTags.slice(0, 5).map(tag => (
+                  {allTags.slice(0, 5).map((tag) => (
                     <button
                       key={tag}
                       onClick={() => {
-                        setSelectedTags(prev =>
-                          prev.includes(tag)
-                            ? prev.filter(t => t !== tag)
-                            : [...prev, tag]
+                        setSelectedTags((prev) =>
+                          prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
                         );
                       }}
                       className={`px-2 py-1 text-xs rounded-full ${
@@ -358,7 +354,10 @@ export default function MemoriesPage() {
             <p className="text-text-secondary">No memories found</p>
             {searchQuery && (
               <button
-                onClick={() => setSearchQuery('')}
+                onClick={() => {
+                  setSearchQuery('');
+                  loadMemories();
+                }}
                 className="mt-md text-accent hover:underline"
               >
                 Clear search
@@ -367,7 +366,7 @@ export default function MemoriesPage() {
           </div>
         ) : viewMode === 'list' ? (
           <div className="space-y-md">
-            {filteredMemories.map(memory => (
+            {filteredMemories.map((memory) => (
               <GlassCard key={memory.id} className="p-lg">
                 <div className="flex items-start gap-md">
                   <input
@@ -391,11 +390,7 @@ export default function MemoriesPage() {
                             <CheckmarkIcon className="w-4 h-4" />
                             Save
                           </Button>
-                          <Button
-                            onClick={() => setEditingId(null)}
-                            variant="secondary"
-                            size="sm"
-                          >
+                          <Button onClick={() => setEditingId(null)} variant="secondary" size="sm">
                             <CloseIcon className="w-4 h-4" />
                             Cancel
                           </Button>
@@ -403,20 +398,18 @@ export default function MemoriesPage() {
                       </div>
                     ) : (
                       <>
-                        <p className="text-text-primary text-sm leading-relaxed">
-                          {memory.content}
-                        </p>
+                        <p className="text-text-primary text-sm leading-relaxed">{memory.content}</p>
 
                         <div className="flex items-center gap-md mt-md">
                           <span className="text-xs text-text-tertiary">
                             {new Date(memory.created_at).toLocaleDateString()}
                           </span>
-                          {memory.metadata?.source && (
+                          {(memory.source || memory.metadata?.source) && (
                             <span className="px-2 py-0.5 bg-bg-tertiary text-text-secondary text-xs rounded">
-                              {memory.metadata.source}
+                              {memory.source || memory.metadata?.source}
                             </span>
                           )}
-                          {memory.metadata?.tags?.map(tag => (
+                          {memory.metadata?.tags?.map((tag) => (
                             <span
                               key={tag}
                               className="px-2 py-0.5 bg-accent/20 text-accent text-xs rounded"
@@ -451,7 +444,7 @@ export default function MemoriesPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-md">
-            {filteredMemories.map(memory => (
+            {filteredMemories.map((memory) => (
               <GlassCard key={memory.id} className="p-lg">
                 <input
                   type="checkbox"
@@ -459,9 +452,7 @@ export default function MemoriesPage() {
                   onChange={() => toggleSelect(memory.id)}
                   className="mb-md"
                 />
-                <p className="text-text-primary text-sm line-clamp-4 mb-md">
-                  {memory.content}
-                </p>
+                <p className="text-text-primary text-sm line-clamp-4 mb-md">{memory.content}</p>
                 <div className="flex items-center justify-between text-xs text-text-tertiary">
                   <span>{new Date(memory.created_at).toLocaleDateString()}</span>
                   <div className="flex gap-sm">

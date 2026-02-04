@@ -1,9 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/auth';
+import { apiClient } from '@/lib/api/client';
 import { ProfileHeader, MenuRow, ThemeSelector, ConnectedAccountRow } from '@/components/settings';
+import { Spinner } from '@/components/ui';
 import {
   CalendarOutlineIcon,
   LogoWhatsappIcon,
@@ -14,25 +16,46 @@ import {
 export default function SettingsPage() {
   const router = useRouter();
   const { user, signOut } = useAuthStore();
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      router.push('/auth/signin');
+    }
+  }, [user, router]);
 
   if (!user) {
-    router.push('/auth/signin');
-    return null;
+    return (
+      <div className="min-h-screen bg-bg-primary flex items-center justify-center">
+        <Spinner size="lg" />
+      </div>
+    );
   }
 
-  const handleSignOut = () => {
+  function handleSignOut(): void {
     if (confirm('Are you sure you want to sign out?')) {
       signOut();
       router.push('/auth/signin');
     }
-  };
+  }
 
-  const handleDeleteAccount = () => {
-    if (confirm('Are you sure you want to delete your account? This will permanently delete all your data including memories, conversations, and connected accounts. This action cannot be undone.')) {
-      // TODO: Implement delete account API call
-      alert('Account deletion coming soon');
+  async function handleDeleteAccount(): Promise<void> {
+    const confirmed = confirm(
+      'Are you sure you want to delete your account? This will permanently delete all your data including memories, conversations, and connected accounts. This action cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      await apiClient.deleteAccount();
+      signOut();
+      router.push('/auth/signin');
+    } catch (error: any) {
+      alert(error.message || 'Failed to delete account. Please try again.');
+    } finally {
+      setIsDeleting(false);
     }
-  };
+  }
 
   const handleContactUs = () => {
     window.open('https://wa.me/917780185418', '_blank');
@@ -98,10 +121,13 @@ export default function SettingsPage() {
         {/* Delete Account */}
         <button
           onClick={handleDeleteAccount}
-          className="w-full flex items-center gap-4 py-3 active-opacity"
+          disabled={isDeleting}
+          className="w-full flex items-center gap-4 py-3 active-opacity disabled:opacity-50"
         >
           <TrashIcon className="w-5 h-5 text-text-tertiary" />
-          <span className="text-base text-text-tertiary">Delete Account</span>
+          <span className="text-base text-text-tertiary">
+            {isDeleting ? 'Deleting...' : 'Delete Account'}
+          </span>
         </button>
       </div>
     </div>

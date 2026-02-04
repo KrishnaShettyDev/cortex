@@ -1,13 +1,14 @@
 /**
  * Chat Page
- * Enhanced chat interface with briefings, insights, and AI responses
+ * AI-powered chat interface with recall, briefings, and autonomous actions
  */
 
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/auth';
+import { apiClient } from '@/lib/api/client';
 import {
   ChatBubble,
   TypingIndicator,
@@ -31,6 +32,7 @@ interface Message {
   content: string;
   timestamp: Date;
   status?: MessageStatus;
+  sources?: Array<{ id: string; content: string; score: number }>;
 }
 
 export default function ChatPage() {
@@ -39,83 +41,12 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Mock data - replace with API calls
-  const [briefingItems] = useState<BriefingItem[]>([
-    {
-      id: '1',
-      type: 'emails',
-      title: 'Urgent Emails',
-      description: '3 emails need your attention from Sarah, John, and the team',
-      count: 3,
-      urgent: true,
-    },
-    {
-      id: '2',
-      type: 'calendar',
-      title: 'Upcoming Meetings',
-      description: 'Team standup in 30 minutes, 1:1 with manager at 2pm',
-      count: 5,
-    },
-    {
-      id: '3',
-      type: 'tasks',
-      title: 'Follow-ups',
-      description: '2 people are waiting for your response',
-      count: 2,
-    },
-  ]);
-
-  const [insights] = useState<InsightData[]>([
-    { type: 'urgent', count: 3, label: 'Urgent' },
-    { type: 'follow_up', count: 2, label: 'Follow-ups' },
-    { type: 'unread', count: 12, label: 'Unread' },
-    { type: 'upcoming', count: 5, label: 'Today' },
-  ]);
-
-  // Autonomous actions - mock data
-  const [autonomousActions, setAutonomousActions] = useState<AutonomousAction[]>([
-    {
-      id: '1',
-      action_type: 'email_reply',
-      title: 'Reply to Sarah',
-      description: 'Draft email reply about Q4 budget discussion',
-      action_payload: {
-        thread_id: 'thread_123',
-        to: 'sarah@company.com',
-        subject: 'Re: Q4 Budget Discussion',
-        body: "Hi Sarah,\n\nThanks for bringing this up. I've reviewed the budget proposal and I think we can allocate an additional 15% to the marketing initiatives you mentioned.\n\nLet's schedule a call this week to discuss the details.\n\nBest,",
-      },
-      reason: 'Sarah usually expects a reply within 2 hours',
-      confidence_score: 0.85,
-      priority_score: 85,
-      source_type: 'email',
-      created_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    },
-    {
-      id: '2',
-      action_type: 'calendar_create',
-      title: 'Schedule Focus Time',
-      description: 'Block 2 hours for deep work tomorrow morning',
-      action_payload: {
-        title: 'Focus Time - Project Review',
-        start_time: new Date(Date.now() + 24 * 60 * 60 * 1000 + 9 * 60 * 60 * 1000).toISOString(),
-        end_time: new Date(Date.now() + 24 * 60 * 60 * 1000 + 11 * 60 * 60 * 1000).toISOString(),
-        description: 'Dedicated time for project review and planning',
-      },
-      reason: 'You have no meetings tomorrow morning and mentioned needing focus time',
-      confidence_score: 0.75,
-      priority_score: 70,
-      source_type: 'pattern',
-      created_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    },
-  ]);
-
+  const [briefingItems, setBriefingItems] = useState<BriefingItem[]>([]);
+  const [insights, setInsights] = useState<InsightData[]>([]);
+  const [autonomousActions, setAutonomousActions] = useState<AutonomousAction[]>([]);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [loadingActionId, setLoadingActionId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     checkAuth();
@@ -128,17 +59,58 @@ export default function ChatPage() {
   }, [user, router]);
 
   useEffect(() => {
+    if (user) {
+      loadBriefingData();
+    }
+  }, [user]);
+
+  useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, []);
 
-  const handleSendMessage = async (content: string) => {
+  async function loadBriefingData(): Promise<void> {
+    try {
+      const [briefingRes, actionsRes] = await Promise.allSettled([
+        apiClient.getBriefing(),
+        apiClient.getAutonomousActions(),
+      ]);
+
+      if (briefingRes.status === 'fulfilled') {
+        const data = briefingRes.value;
+        setBriefingItems(
+          data.urgent_items?.map((item, i) => ({
+            id: String(i),
+            type: item.type as 'emails' | 'calendar' | 'tasks',
+            title: item.title,
+            description: item.description,
+            count: item.count,
+            urgent: item.type === 'emails',
+          })) || []
+        );
+        setInsights(
+          data.insights?.map((i) => ({
+            type: i.type as InsightData['type'],
+            count: i.count,
+            label: i.label,
+          })) || []
+        );
+      }
+
+      if (actionsRes.status === 'fulfilled') {
+        setAutonomousActions(actionsRes.value || []);
+      }
+    } catch (error) {
+      console.error('Failed to load briefing:', error);
+    }
+  }
+
+  async function handleSendMessage(content: string): Promise<void> {
     if (!content.trim()) return;
 
-    // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -151,58 +123,47 @@ export default function ChatPage() {
     setIsSending(true);
 
     try {
-      // TODO: Call API to send message
-      // const response = await apiClient.sendMessage(content);
-
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // Update message status
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === userMessage.id ? { ...msg, status: 'sent' as MessageStatus } : msg
         )
       );
 
-      // Show typing indicator
       setIsTyping(true);
 
-      // Simulate assistant response
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const response = await apiClient.recall(content);
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "I'm here to help! I can assist you with your emails, calendar, tasks, and more. What would you like to know?",
+        content: response.answer,
         timestamp: new Date(),
+        sources: response.sources,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
-      setIsTyping(false);
     } catch (error) {
       console.error('Failed to send message:', error);
-      // Update message status to error
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === userMessage.id ? { ...msg, status: 'error' as MessageStatus } : msg
         )
       );
     } finally {
+      setIsTyping(false);
       setIsSending(false);
     }
-  };
+  }
 
-  const handleBriefingClick = (item: BriefingItem) => {
-    // Send as message
+  function handleBriefingClick(item: BriefingItem): void {
     handleSendMessage(`Show me ${item.title.toLowerCase()}`);
-  };
+  }
 
-  const handleInsightClick = (insight: InsightData) => {
-    // Send as message
+  function handleInsightClick(insight: InsightData): void {
     handleSendMessage(`Show me ${insight.label.toLowerCase()} items`);
-  };
+  }
 
-  const handlePromptClick = (action: string) => {
+  function handlePromptClick(action: string): void {
     const prompts: Record<string, string> = {
       show_urgent_emails: 'Show me urgent emails',
       show_calendar_today: "What's on my calendar today?",
@@ -214,26 +175,20 @@ export default function ChatPage() {
     if (prompt) {
       handleSendMessage(prompt);
     }
-  };
+  }
 
-  const handleApproveAction = async (
+  async function handleApproveAction(
     actionId: string,
     modifications?: Record<string, unknown>
-  ) => {
+  ): Promise<void> {
     setIsActionLoading(true);
     setLoadingActionId(actionId);
 
     try {
-      // TODO: Call API to execute action
-      // const result = await apiClient.approveAction(actionId, modifications);
+      await apiClient.approveAction(actionId, modifications);
 
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      // Remove action from list
       setAutonomousActions((prev) => prev.filter((a) => a.id !== actionId));
 
-      // Add success message to chat
       const action = autonomousActions.find((a) => a.id === actionId);
       if (action) {
         const successMessage: Message = {
@@ -246,7 +201,6 @@ export default function ChatPage() {
       }
     } catch (error) {
       console.error('Failed to approve action:', error);
-      // Show error message
       const errorMessage: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -258,20 +212,14 @@ export default function ChatPage() {
       setIsActionLoading(false);
       setLoadingActionId(null);
     }
-  };
+  }
 
-  const handleDismissAction = async (actionId: string, reason?: string) => {
+  async function handleDismissAction(actionId: string, reason?: string): Promise<void> {
     setIsActionLoading(true);
     setLoadingActionId(actionId);
 
     try {
-      // TODO: Call API to dismiss action
-      // await apiClient.dismissAction(actionId, reason);
-
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      // Remove action from list
+      await apiClient.dismissAction(actionId, reason);
       setAutonomousActions((prev) => prev.filter((a) => a.id !== actionId));
     } catch (error) {
       console.error('Failed to dismiss action:', error);
@@ -279,7 +227,7 @@ export default function ChatPage() {
       setIsActionLoading(false);
       setLoadingActionId(null);
     }
-  };
+  }
 
   if (!user) {
     return (
@@ -316,7 +264,6 @@ export default function ChatPage() {
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <div className="h-full flex flex-col">
-            {/* Autonomous Actions - Show at top when no messages */}
             <div className="pt-lg">
               <AutonomousActionsList
                 actions={autonomousActions}
@@ -330,7 +277,6 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="py-lg">
-            {/* Autonomous Actions + Briefing - Show at top before messages */}
             {messages.length <= 1 && (
               <>
                 <AutonomousActionsList
@@ -340,18 +286,11 @@ export default function ChatPage() {
                   isLoading={isActionLoading}
                   loadingActionId={loadingActionId || undefined}
                 />
-                <DayBriefingScroll
-                  items={briefingItems}
-                  onItemClick={handleBriefingClick}
-                />
-                <InsightsPillRow
-                  insights={insights}
-                  onInsightClick={handleInsightClick}
-                />
+                <DayBriefingScroll items={briefingItems} onItemClick={handleBriefingClick} />
+                <InsightsPillRow insights={insights} onInsightClick={handleInsightClick} />
               </>
             )}
 
-            {/* Messages */}
             <div className="px-lg">
               {messages.map((message) => (
                 <ChatBubble
@@ -371,7 +310,7 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Chat Input - Fixed at bottom */}
+      {/* Chat Input */}
       <div className="flex-shrink-0">
         <EnhancedChatInput
           onSendMessage={handleSendMessage}

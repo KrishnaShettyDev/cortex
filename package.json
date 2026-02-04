@@ -12,8 +12,9 @@
     "deploy": "cd apps/backend && wrangler deploy"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250110.0",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",
-    "@cloudflare/workers-types": "^4.20250110.0"
+    "wrangler": "^3.101.0"
   }
 }

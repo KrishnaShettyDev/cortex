@@ -44,12 +44,11 @@ export function ConnectedAccountRow({ email }: ConnectedAccountRowProps) {
 
         const checkInterval = setInterval(async () => {
           try {
-            const status = await apiClient.getIntegrationStatus() as any;
-            if (status.google?.connected) {
+            const status = await apiClient.getIntegrationStatus();
+            if (status.gmail?.connected || status.calendar?.connected) {
               clearInterval(checkInterval);
               popup?.close();
               await loadStatus();
-              alert('Google connected successfully!');
             }
           } catch (err) {
             console.error('Failed to check status:', err);
@@ -60,14 +59,13 @@ export function ConnectedAccountRow({ email }: ConnectedAccountRowProps) {
       }
     } catch (error) {
       console.error('Failed to connect Google:', error);
-      alert('Failed to connect Google. Please try again.');
     } finally {
       setIsConnecting(false);
     }
   };
 
-  const isGoogleConnected = integrationStatus?.google?.connected || false;
-  const connectedEmail = integrationStatus?.google?.email || email;
+  const isGoogleConnected = integrationStatus?.gmail?.connected || integrationStatus?.calendar?.connected || false;
+  const connectedEmail = integrationStatus?.gmail?.email || integrationStatus?.calendar?.email || email;
 
   return (
     <div className="mt-2">

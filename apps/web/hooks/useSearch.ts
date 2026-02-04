@@ -13,7 +13,7 @@ export function useSearch() {
     try {
       setIsSearching(true);
       setError(null);
-      const response = await apiClient.search(query);
+      const response = await apiClient.searchMemories(query);
       setResults(response.results || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed');

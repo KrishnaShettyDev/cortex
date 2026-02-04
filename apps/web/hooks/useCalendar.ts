@@ -49,10 +49,10 @@ export function useCalendar(selectedDate: Date) {
 
     try {
       // Check connection status first
-      const status = await apiClient.getIntegrationStatus() as any;
-      setConnected(status.google?.calendar_connected || false);
+      const status = await apiClient.getIntegrationStatus();
+      setConnected(status.calendar?.connected || false);
 
-      if (!status.google?.calendar_connected) {
+      if (!status.calendar?.connected) {
         setEvents([], currentMonthKey);
         setLoading(false);
         return;
@@ -70,17 +70,13 @@ export function useCalendar(selectedDate: Date) {
       endOfMonth.setDate(endOfMonth.getDate() + 7);
       endOfMonth.setHours(23, 59, 59, 999);
 
-      // TODO: Implement calendar events API endpoint
-      // For now, return empty array
-      const response: any = { success: true, events: [] };
+      const response = await apiClient.getCalendarEvents({
+        start: startOfMonth.toISOString(),
+        end: endOfMonth.toISOString(),
+      });
 
-      if (response.success) {
-        setEvents(response.events, currentMonthKey);
-        setError(null);
-      } else {
-        setEvents([], currentMonthKey);
-        setError(response.message || 'Failed to load events');
-      }
+      setEvents(response.events || [], currentMonthKey);
+      setError(null);
     } catch (err: any) {
       console.error('Failed to load calendar events:', err);
       setEvents([], currentMonthKey);

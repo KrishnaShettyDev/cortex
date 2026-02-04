@@ -24,7 +24,7 @@ export function useMemories(userId?: string) {
   };
 
   const addMemory = async (content: string) => {
-    await apiClient.addMemory(content);
+    await apiClient.createMemory(content);
     await loadMemories();
   };
 
