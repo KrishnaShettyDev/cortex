@@ -18,6 +18,7 @@ import * as temporalHandlers from './handlers/temporal';
 import * as provenanceHandlers from './handlers/provenance';
 import * as syncHandlers from './handlers/sync';
 import * as uploadHandlers from './handlers/upload';
+import * as searchHandlers from './handlers/search';
 import consolidationRouter from './handlers/consolidation';
 import commitmentsRouter from './handlers/commitments';
 import relationshipRouter from './handlers/relationship';
@@ -347,9 +348,21 @@ app.post('/v3/memories/batch-contextual', contextHandlers.addContextualMemories)
 app.get('/v3/memories', contextHandlers.listMemories);
 app.put('/v3/memories/:id', contextHandlers.updateMemoryHandler);
 app.delete('/v3/memories/:id', contextHandlers.deleteMemory);
-app.post('/v3/search', validateBody(searchSchema), contextHandlers.search);
+// Supermemory++ Phase 2: Hybrid search with explainable ranking
+app.post('/v3/search', searchHandlers.searchHandler);
 app.post('/v3/recall', validateBody(recallSchema), contextHandlers.recall);
-app.get('/v3/profile', contextHandlers.getProfile);
+
+// Profile engine (Supermemory++ Phase 2)
+app.get('/v3/profile', contextHandlers.getProfile);  // Legacy
+app.get('/v3/profiles', searchHandlers.getProfilesHandler);
+app.patch('/v3/profiles', searchHandlers.updateProfilesHandler);
+app.delete('/v3/profiles/:key', searchHandlers.deleteProfileHandler);
+
+// Timeline API (Supermemory++ Phase 2)
+app.get('/v3/timeline', searchHandlers.timelineHandler);
+
+// Feedback loop (Supermemory++ Phase 2)
+app.post('/v3/feedback', searchHandlers.feedbackHandler);
 
 // Processing pipeline endpoints
 app.post('/v3/processing/jobs', processingHandlers.createProcessingJob);

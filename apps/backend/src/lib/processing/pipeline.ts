@@ -393,34 +393,56 @@ export class ProcessingPipeline {
 
   /**
    * Step 5: Extract temporal information (event dates)
+   * Supermemory++ Phase 2: Enhanced with multi-date extraction and memory_events storage
    */
   private async runTemporalExtraction() {
     const memory = await this.getMemory();
-    const { TemporalResolver } = await import('../temporal/resolver');
+    const { extractTemporalData, saveMemoryEvents, updateMemoryTemporalFields } = await import('../temporal/extractor');
 
     try {
-      const result = await TemporalResolver.extractEventDate(
-        memory.content,
-        new Date().toISOString() // Current time as reference
+      // Use enhanced extractor (Supermemory++ Phase 2)
+      const result = await extractTemporalData(memory.content, {
+        documentDate: memory.document_date || memory.created_at,
+        referenceDate: new Date(),
+        useLLM: false, // Use heuristics first, can enable LLM for complex cases
+        ai: this.ctx.env.AI,
+      });
+
+      // Store all extracted dates in memory_events
+      if (result.dates.length > 0) {
+        await saveMemoryEvents(this.ctx.env.DB, memory.id, result);
+        console.log(`[Pipeline] Extracted ${result.dates.length} event dates`);
+      }
+
+      // Update memory temporal fields
+      await updateMemoryTemporalFields(
+        this.ctx.env.DB,
+        memory.id,
+        result.documentDate,
+        result.hasTemporalContent
       );
 
-      // Store result
+      // Get primary event date (highest confidence)
+      const primaryDate = result.dates[0];
+
+      // Store result for pipeline context
       this.ctx.temporalResult = {
-        eventDate: result.eventDate,
-        confidence: result.confidence,
+        eventDate: primaryDate?.date || null,
+        confidence: primaryDate?.confidence || 0,
         validFrom: memory.valid_from || new Date().toISOString(),
         validTo: null,
+        allDates: result.dates,
       };
 
-      // Update memory with event date if confidence is high enough
-      if (result.eventDate && result.confidence >= 0.7) {
+      // Update memory with primary event date if confidence is high enough
+      if (primaryDate && primaryDate.confidence >= 0.7) {
         await this.ctx.env.DB.prepare(
           'UPDATE memories SET event_date = ?, updated_at = ? WHERE id = ?'
         )
-          .bind(result.eventDate, new Date().toISOString(), memory.id)
+          .bind(primaryDate.date, new Date().toISOString(), memory.id)
           .run();
 
-        console.log(`[Pipeline] Set event_date: ${result.eventDate} (confidence: ${result.confidence})`);
+        console.log(`[Pipeline] Set event_date: ${primaryDate.date} (confidence: ${primaryDate.confidence})`);
       }
     } catch (error) {
       // Non-blocking - temporal extraction failure shouldn't stop pipeline
@@ -430,6 +452,7 @@ export class ProcessingPipeline {
         confidence: 0,
         validFrom: memory.valid_from || new Date().toISOString(),
         validTo: null,
+        allDates: [],
       };
     }
   }

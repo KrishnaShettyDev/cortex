@@ -22,3 +22,14 @@ export {
   getCurrentlyValidMemories,
   getSupersededMemories,
 } from './time-travel';
+
+// Supermemory++ Phase 2: Enhanced temporal extraction
+export {
+  extractTemporalData,
+  extractExplicitDates,
+  extractRelativeDates,
+  saveMemoryEvents,
+  updateMemoryTemporalFields,
+  type ExtractedDate,
+  type TemporalExtractionResult,
+} from './extractor';
