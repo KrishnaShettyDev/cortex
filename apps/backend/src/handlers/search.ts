@@ -11,6 +11,11 @@
 import type { Context } from 'hono';
 import type { Bindings } from '../types';
 import { hybridSearch, timelineSearch } from '../lib/search/hybrid-search';
+import {
+  gateRetrieval,
+  callGroundedLLM,
+  GATING_CONFIG,
+} from '../lib/search/grounded-response';
 import { nanoid } from 'nanoid';
 
 /**
@@ -276,6 +281,147 @@ export async function deleteProfileHandler(c: Context<{ Bindings: Bindings }>) {
   } catch (error: any) {
     console.error('[Profiles] Delete error:', error);
     return c.json({ error: 'Failed to delete profile', message: error.message }, 500);
+  }
+}
+
+/**
+ * POST /v3/ask
+ *
+ * Guarded search with LLM grounding.
+ * Gates LLM calls based on retrieval confidence.
+ * Returns INSUFFICIENT_EVIDENCE when retrieval is weak.
+ */
+export async function guardedSearchHandler(c: Context<{ Bindings: Bindings }>) {
+  const userId = c.get('jwtPayload').sub;
+  const tenantScope = c.get('tenantScope') || { containerTag: 'default' };
+
+  try {
+    const body = await c.req.json();
+    const {
+      query,
+      k = 10,
+      layers,
+      startDate,
+      endDate,
+      includeRelationships = true,
+      useProfiles = true,
+      generateAnswer = true,
+    } = body;
+
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      return c.json({ error: 'Query is required' }, 400);
+    }
+
+    // Step 1: Hybrid retrieval
+    const result = await hybridSearch(
+      {
+        db: c.env.DB,
+        vectorize: c.env.VECTORIZE,
+        ai: c.env.AI,
+      },
+      {
+        query: query.trim(),
+        userId,
+        containerTag: tenantScope.containerTag,
+        topK: Math.min(k, 50),
+        layers,
+        timeRange: (startDate || endDate) ? { start: startDate, end: endDate } : undefined,
+        includeRelationships,
+        useProfiles,
+      }
+    );
+
+    // Step 2: Gate retrieval (pass query for actionable suggestions)
+    const { safe, result: gatedResult } = gateRetrieval(result.results, query.trim());
+
+    console.log(`[GuardedSearch] query="${query.slice(0, 50)}" user=${userId} safe=${safe} status=${gatedResult.status}`);
+
+    // Step 3: If not safe, return ACTIONABLE_UNCERTAINTY with guidance
+    if (!safe || !generateAnswer) {
+      // Telemetry: track uncertainty states for learning loop
+      const telemetry = {
+        event: 'ACTIONABLE_UNCERTAINTY',
+        userId,
+        containerTag: tenantScope.containerTag,
+        query: query.slice(0, 100),
+        reason: gatedResult.reason,
+        compositeScore: gatedResult.compositeScore,
+        supportCount: gatedResult.supportCount,
+        missingSignals: gatedResult.missingSignals?.map(s => s.signal) || [],
+        suggestedActions: gatedResult.suggestedActions?.map(a => a.action) || [],
+        timestamp: new Date().toISOString(),
+      };
+      console.log(`[Telemetry] ${JSON.stringify(telemetry)}`);
+
+      // Store telemetry async (don't block response)
+      c.executionCtx.waitUntil(
+        c.env.DB.prepare(`
+          INSERT INTO feedback (id, user_id, query, memory_ids, helpful, correction, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          `unc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+          userId,
+          query.slice(0, 500),
+          JSON.stringify({ type: 'ACTIONABLE_UNCERTAINTY', ...telemetry }),
+          0, // Not helpful yet - user needs to act
+          null
+        ).run().catch(err => console.warn('[Telemetry] Store failed:', err))
+      );
+
+      return c.json({
+        query: result.query,
+        status: gatedResult.status,
+        reason: gatedResult.reason,
+        message: gatedResult.message,
+        compositeScore: gatedResult.compositeScore,
+        supportCount: gatedResult.supportCount,
+        evidence: gatedResult.evidence,
+        // Actionable uncertainty fields - the key differentiator
+        missingSignals: gatedResult.missingSignals,
+        suggestedActions: gatedResult.suggestedActions,
+        meta: {
+          gatingConfig: GATING_CONFIG,
+          totalCandidates: result.totalCandidates,
+          timings: result.timings,
+        },
+      });
+    }
+
+    // Step 4: Safe - call LLM with grounded evidence
+    const llmResult = await callGroundedLLM(
+      c.env.AI,
+      query.trim(),
+      gatedResult.evidence
+    );
+
+    // Telemetry: track grounded responses for success metrics
+    console.log(`[Telemetry] ${JSON.stringify({
+      event: 'GROUNDED',
+      userId,
+      query: query.slice(0, 100),
+      compositeScore: gatedResult.compositeScore,
+      supportCount: gatedResult.supportCount,
+      citationCount: llmResult.citations?.length || 0,
+      timestamp: new Date().toISOString(),
+    })}`);
+
+    return c.json({
+      query: result.query,
+      status: llmResult.status,
+      answer: llmResult.answer,
+      citations: llmResult.citations,
+      compositeScore: gatedResult.compositeScore,
+      supportCount: gatedResult.supportCount,
+      evidence: llmResult.evidence,
+      meta: {
+        gatingConfig: GATING_CONFIG,
+        totalCandidates: result.totalCandidates,
+        timings: result.timings,
+      },
+    });
+  } catch (error: any) {
+    console.error('[GuardedSearch] Error:', error);
+    return c.json({ error: 'Search failed', message: error.message }, 500);
   }
 }
 

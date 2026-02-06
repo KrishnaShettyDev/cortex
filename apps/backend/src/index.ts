@@ -364,6 +364,9 @@ app.get('/v3/timeline', searchHandlers.timelineHandler);
 // Feedback loop (Supermemory++ Phase 2)
 app.post('/v3/feedback', searchHandlers.feedbackHandler);
 
+// Guarded search with grounding (Supermemory++ Phase 3 - Zero Hallucination)
+app.post('/v3/ask', searchHandlers.guardedSearchHandler);
+
 // Processing pipeline endpoints
 app.post('/v3/processing/jobs', processingHandlers.createProcessingJob);
 app.get('/v3/processing/jobs/:jobId', processingHandlers.getJobStatus);

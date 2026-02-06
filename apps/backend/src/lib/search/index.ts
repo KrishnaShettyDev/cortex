@@ -23,3 +23,18 @@ export {
   type RankedResult,
   type RankingConfig,
 } from './ranking';
+
+// Zero-hallucination grounding (Phase 3)
+export {
+  gateRetrieval,
+  callGroundedLLM,
+  buildGroundedPrompt,
+  parseGroundedResponse,
+  GATING_CONFIG,
+  GROUNDED_SYSTEM_INSTRUCTION,
+  type EvidenceStatus,
+  type EvidenceSnippet,
+  type GatedSearchResult,
+  type MissingSignal,
+  type SuggestedAction,
+} from './grounded-response';
