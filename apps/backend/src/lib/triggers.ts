@@ -1,130 +1,132 @@
 /**
  * Composio Trigger Management
  *
- * Sets up and manages event-driven triggers for Gmail and Calendar.
- * Triggers send webhooks to our endpoint when events occur (new email, calendar changes).
- *
- * Supported triggers:
- * - GMAIL_NEW_GMAIL_MESSAGE: Fires when new email arrives
- * - GOOGLECALENDAR_EVENT_CREATED: Fires when calendar event is created
- * - GOOGLECALENDAR_EVENT_UPDATED: Fires when calendar event is updated
+ * Unified trigger setup for all integrations:
+ * - Google Super (Gmail, Calendar, Drive, Docs, Sheets)
+ * - Slack (Messages, DMs)
+ * - Notion (Pages, Comments)
  */
 
 import { ComposioClient, TriggerInstance } from './composio';
 import { createLogger } from './logger';
 
-// D1Database type from Cloudflare Workers
 type D1Database = import('@cloudflare/workers-types').D1Database;
 
 const logger = createLogger('triggers');
 
-// Webhook endpoint for receiving Composio trigger events
 const WEBHOOK_BASE_URL = 'https://askcortex.plutas.in';
-const WEBHOOK_PATH = '/webhooks/composio';
+const WEBHOOK_PATH = '/proactive/webhook';
 
-// Supported trigger types
-export const TRIGGER_TYPES = {
-  GMAIL_NEW_MESSAGE: 'GMAIL_NEW_GMAIL_MESSAGE',
-  CALENDAR_EVENT_CREATED: 'GOOGLECALENDAR_EVENT_CREATED',
-  CALENDAR_EVENT_UPDATED: 'GOOGLECALENDAR_EVENT_UPDATED',
+// Provider configurations with their triggers
+export const PROVIDER_CONFIG = {
+  googlesuper: {
+    name: 'Google',
+    toolkit: 'googlesuper',
+    triggers: [
+      // Gmail - high priority
+      'GOOGLESUPER_NEW_MESSAGE',
+      // Calendar - high priority
+      'GOOGLESUPER_GOOGLE_CALENDAR_EVENT_CREATED_TRIGGER',
+      'GOOGLESUPER_GOOGLE_CALENDAR_EVENT_UPDATED_TRIGGER',
+      'GOOGLESUPER_EVENT_STARTING_SOON_TRIGGER',
+      // Drive - medium priority
+      'GOOGLESUPER_FILE_SHARED_PERMISSIONS_ADDED',
+      'GOOGLESUPER_FILE_CREATED_TRIGGER',
+      // Docs - low priority (avoid noise)
+      'GOOGLESUPER_COMMENT_ADDED_TRIGGER',
+    ],
+  },
+  slack: {
+    name: 'Slack',
+    toolkit: 'slack',
+    triggers: [
+      'SLACK_RECEIVE_DIRECT_MESSAGE',
+      'SLACK_RECEIVE_MESSAGE',
+      'SLACK_RECEIVE_THREAD_REPLY',
+    ],
+  },
+  notion: {
+    name: 'Notion',
+    toolkit: 'notion',
+    triggers: [
+      'NOTION_PAGE_UPDATED_TRIGGER',
+      'NOTION_COMMENTS_ADDED_TRIGGER',
+      'NOTION_PAGE_ADDED_TO_DATABASE',
+    ],
+  },
 } as const;
 
-export type TriggerType = typeof TRIGGER_TYPES[keyof typeof TRIGGER_TYPES];
+export type Provider = keyof typeof PROVIDER_CONFIG;
+
+interface SetupResult {
+  success: boolean;
+  triggers: TriggerInstance[];
+  errors: string[];
+}
 
 /**
- * Set up all triggers for a connected account
- *
- * Call this after a user successfully connects their Gmail or Calendar.
+ * Setup triggers for a connected account
  */
-export async function setupTriggersForConnection(
+export async function setupTriggersForProvider(
   client: ComposioClient,
-  params: {
-    connectedAccountId: string;
-    toolkitSlug: string; // 'gmail' or 'googlecalendar'
-    userId: string;
-  }
-): Promise<{ success: boolean; triggers: TriggerInstance[]; errors: string[] }> {
-  const { connectedAccountId, toolkitSlug, userId } = params;
+  provider: Provider,
+  connectedAccountId: string,
+  userId: string
+): Promise<SetupResult> {
+  const config = PROVIDER_CONFIG[provider];
   const triggers: TriggerInstance[] = [];
   const errors: string[] = [];
+  const webhookUrl = `${WEBHOOK_BASE_URL}${WEBHOOK_PATH}/${provider}`;
 
-  const webhookUrl = `${WEBHOOK_BASE_URL}${WEBHOOK_PATH}`;
+  logger.info('Setting up triggers', { provider, connectedAccountId, userId });
 
-  logger.info('Setting up triggers', { connectedAccountId, toolkitSlug, userId });
-
-  // Determine which triggers to set up based on toolkit
-  const triggerNames: TriggerType[] = [];
-
-  if (toolkitSlug.toLowerCase().includes('gmail')) {
-    triggerNames.push(TRIGGER_TYPES.GMAIL_NEW_MESSAGE);
-  }
-
-  if (toolkitSlug.toLowerCase().includes('calendar')) {
-    triggerNames.push(TRIGGER_TYPES.CALENDAR_EVENT_CREATED);
-    triggerNames.push(TRIGGER_TYPES.CALENDAR_EVENT_UPDATED);
-  }
-
-  // Create each trigger
-  for (const triggerName of triggerNames) {
+  for (const triggerName of config.triggers) {
     try {
-      // Check if trigger already exists
       const existing = await client.listTriggers({
         connectedAccountId,
         triggerNames: [triggerName],
       });
 
-      if (existing.items && existing.items.length > 0) {
-        const existingTrigger = existing.items[0];
-
-        // Enable if paused
-        if (existingTrigger.status === 'paused') {
-          const enabled = await client.enableTrigger(existingTrigger.id);
+      if (existing.items?.length > 0) {
+        const trigger = existing.items[0];
+        if (trigger.status === 'paused') {
+          const enabled = await client.enableTrigger(trigger.id);
           triggers.push(enabled);
-          logger.info('Enabled existing trigger', { triggerId: enabled.id, triggerName });
+          logger.info('Enabled trigger', { triggerName });
         } else {
-          triggers.push(existingTrigger);
-          logger.debug('Trigger already exists and is active', { triggerId: existingTrigger.id, triggerName });
+          triggers.push(trigger);
         }
         continue;
       }
 
-      // Create new trigger
       const trigger = await client.createTrigger({
         triggerName,
         connectedAccountId,
         webhookUrl,
-        config: {}, // Default config
+        config: {},
       });
 
       triggers.push(trigger);
-      logger.info('Created trigger', { triggerId: trigger.id, triggerName });
+      logger.info('Created trigger', { triggerName });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      errors.push(`Failed to create ${triggerName}: ${message}`);
-      logger.error('Failed to create trigger', error as Error, { triggerName, connectedAccountId });
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      errors.push(`${triggerName}: ${msg}`);
+      logger.error('Trigger setup failed', error as Error, { triggerName });
     }
   }
 
-  return {
-    success: errors.length === 0,
-    triggers,
-    errors,
-  };
+  return { success: errors.length === 0, triggers, errors };
 }
 
 /**
- * Remove all triggers for a connected account
- *
- * Call this when a user disconnects their account.
+ * Remove triggers for a disconnected account
  */
-export async function removeTriggersForConnection(
+export async function removeTriggersForAccount(
   client: ComposioClient,
   connectedAccountId: string
-): Promise<{ success: boolean; removed: number; errors: string[] }> {
+): Promise<{ removed: number; errors: string[] }> {
   const errors: string[] = [];
   let removed = 0;
-
-  logger.info('Removing triggers for connection', { connectedAccountId });
 
   try {
     const triggers = await client.listTriggers({ connectedAccountId });
@@ -133,163 +135,85 @@ export async function removeTriggersForConnection(
       try {
         await client.deleteTrigger(trigger.id);
         removed++;
-        logger.debug('Deleted trigger', { triggerId: trigger.id });
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        errors.push(`Failed to delete trigger ${trigger.id}: ${message}`);
-        logger.warn('Failed to delete trigger', { triggerId: trigger.id, error: message });
+        errors.push(`Failed to delete ${trigger.id}`);
       }
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    errors.push(`Failed to list triggers: ${message}`);
-    logger.error('Failed to list triggers for removal', error as Error, { connectedAccountId });
+    errors.push('Failed to list triggers');
   }
 
-  return {
-    success: errors.length === 0,
-    removed,
-    errors,
-  };
+  return { removed, errors };
 }
 
 /**
- * Reconcile triggers for all active connections
- *
- * Use this in the 6-hour reconciliation cron to ensure triggers are set up
- * for all active connections and cleaned up for inactive ones.
+ * Auto-enable proactive settings for user
+ */
+export async function enableProactiveForUser(
+  db: D1Database,
+  userId: string,
+  provider: Provider
+): Promise<void> {
+  const now = new Date().toISOString();
+
+  await db.prepare(`
+    INSERT INTO proactive_settings (id, user_id, enabled, min_urgency, created_at, updated_at)
+    VALUES (?, ?, 1, 'medium', ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      enabled = 1,
+      updated_at = excluded.updated_at
+  `).bind(
+    `ps_${userId.slice(0, 8)}`,
+    userId,
+    now,
+    now
+  ).run();
+
+  logger.info('Proactive enabled', { userId, provider });
+}
+
+interface ReconcileResult {
+  checked: number;
+  created: number;
+  removed: number;
+  errors: string[];
+}
+
+/**
+ * Reconcile triggers for all active connections (cron job)
  */
 export async function reconcileTriggers(
   client: ComposioClient,
   db: D1Database
-): Promise<{
-  checked: number;
-  created: number;
-  enabled: number;
-  removed: number;
-  errors: string[];
-}> {
-  const stats = {
-    checked: 0,
-    created: 0,
-    enabled: 0,
-    removed: 0,
-    errors: [] as string[],
-  };
+): Promise<ReconcileResult> {
+  const stats: ReconcileResult = { checked: 0, created: 0, removed: 0, errors: [] };
 
-  logger.info('Starting trigger reconciliation');
+  const connections = await db.prepare(`
+    SELECT user_id, provider, access_token as connected_account_id
+    FROM integrations
+    WHERE connected = 1 AND access_token IS NOT NULL
+  `).all();
 
-  try {
-    // Get all active user integrations
-    const integrations = await db.prepare(`
-      SELECT ui.id, ui.user_id, ui.provider, ui.composio_connection_id, ui.status
-      FROM user_integrations ui
-      WHERE ui.composio_connection_id IS NOT NULL
-    `).all<{
-      id: string;
-      user_id: string;
-      provider: string;
-      composio_connection_id: string;
-      status: string;
-    }>();
+  for (const conn of (connections.results || []) as any[]) {
+    stats.checked++;
 
-    for (const integration of integrations.results || []) {
-      stats.checked++;
+    const provider = conn.provider as Provider;
+    if (!PROVIDER_CONFIG[provider]) continue;
 
-      // Map provider to toolkit slug
-      const toolkitSlug = integration.provider === 'google_gmail' ? 'gmail' : 'googlecalendar';
+    try {
+      const result = await setupTriggersForProvider(
+        client,
+        provider,
+        conn.connected_account_id,
+        conn.user_id
+      );
 
-      if (integration.status === 'connected') {
-        // Ensure triggers are set up for active connections
-        const result = await setupTriggersForConnection(client, {
-          connectedAccountId: integration.composio_connection_id,
-          toolkitSlug,
-          userId: integration.user_id,
-        });
-
-        if (!result.success) {
-          stats.errors.push(...result.errors);
-        }
-
-        // Count newly created vs enabled
-        for (const trigger of result.triggers) {
-          // This is a simplification - we can't easily tell if it was just created
-          stats.created++;
-        }
-      } else {
-        // Remove triggers for disconnected/expired integrations
-        const result = await removeTriggersForConnection(
-          client,
-          integration.composio_connection_id
-        );
-
-        stats.removed += result.removed;
-        if (!result.success) {
-          stats.errors.push(...result.errors);
-        }
-      }
+      stats.created += result.triggers.length;
+      stats.errors.push(...result.errors);
+    } catch (error) {
+      stats.errors.push(`User ${conn.user_id}: ${(error as Error).message}`);
     }
-
-    logger.info('Trigger reconciliation complete', {
-      checked: stats.checked,
-      created: stats.created,
-      removed: stats.removed,
-      errors: stats.errors.length,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    stats.errors.push(`Reconciliation failed: ${message}`);
-    logger.error('Trigger reconciliation failed', error as Error);
   }
 
   return stats;
-}
-
-/**
- * Check health of triggers for a connection
- */
-export async function checkTriggerHealth(
-  client: ComposioClient,
-  connectedAccountId: string
-): Promise<{
-  healthy: boolean;
-  triggers: { name: string; status: string; id: string }[];
-  issues: string[];
-}> {
-  const issues: string[] = [];
-
-  try {
-    const triggers = await client.listTriggers({ connectedAccountId });
-
-    const triggerList = (triggers.items || []).map(t => ({
-      name: t.triggerName,
-      status: t.status,
-      id: t.id,
-    }));
-
-    // Check for failed triggers
-    for (const trigger of triggerList) {
-      if (trigger.status === 'failed') {
-        issues.push(`Trigger ${trigger.name} is in failed state`);
-      } else if (trigger.status === 'paused') {
-        issues.push(`Trigger ${trigger.name} is paused`);
-      }
-    }
-
-    // Check for missing expected triggers (based on connection type)
-    // This would require knowing what type of connection it is
-
-    return {
-      healthy: issues.length === 0,
-      triggers: triggerList,
-      issues,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return {
-      healthy: false,
-      triggers: [],
-      issues: [`Failed to check triggers: ${message}`],
-    };
-  }
 }

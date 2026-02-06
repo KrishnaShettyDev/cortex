@@ -2,6 +2,8 @@
  * Proactive Monitoring - Lean Implementation
  *
  * Webhook → Classify → Notify. That's it.
+ *
+ * Supports: Google Super (Gmail, Calendar, Drive, Docs), Slack, Notion
  */
 
 import type { D1Database } from '@cloudflare/workers-types';
@@ -12,11 +14,12 @@ import { nanoid } from 'nanoid';
 // =============================================================================
 
 export type UrgencyLevel = 'critical' | 'high' | 'medium' | 'low';
+export type EventSource = 'email' | 'calendar' | 'drive' | 'docs' | 'slack' | 'notion';
 
 export interface ProactiveEvent {
   id: string;
   userId: string;
-  source: 'email' | 'calendar';
+  source: EventSource;
   title?: string;
   body?: string;
   sender?: string;
@@ -52,7 +55,92 @@ const URGENCY_RULES: Array<{
   { pattern: /% off/i, fields: ['title', 'body'], urgency: 'low' },
   { pattern: /noreply@/i, fields: ['sender'], urgency: 'low' },
   { pattern: /no-reply@/i, fields: ['sender'], urgency: 'low' },
+
+  // Slack - high priority for DMs
+  { pattern: /^DM:/i, fields: ['title'], urgency: 'high' },
+
+  // Notion - comments are usually high priority
+  { pattern: /commented/i, fields: ['title'], urgency: 'high' },
 ];
+
+// =============================================================================
+// EVENT PARSER
+// =============================================================================
+
+interface ParsedEvent {
+  source: EventSource;
+  title?: string;
+  body?: string;
+  sender?: string;
+}
+
+function parseEvent(eventType: string, data: any): ParsedEvent | null {
+  // Google Super - Gmail
+  if (eventType === 'GOOGLESUPER_NEW_MESSAGE' || eventType === 'GMAIL_NEW_GMAIL_MESSAGE') {
+    return {
+      source: 'email',
+      title: data.subject,
+      body: data.snippet || data.body,
+      sender: data.from || data.sender,
+    };
+  }
+
+  // Google Super - Calendar
+  if (eventType.includes('CALENDAR') || eventType.includes('EVENT')) {
+    return {
+      source: 'calendar',
+      title: data.summary || data.title,
+      body: data.description,
+      sender: data.organizer?.email,
+    };
+  }
+
+  // Google Super - Drive
+  if (eventType.includes('FILE_') || eventType.includes('DRIVE')) {
+    return {
+      source: 'drive',
+      title: `File: ${data.name || data.title || 'Untitled'}`,
+      body: data.description || `Shared by ${data.sharingUser?.displayName || 'someone'}`,
+      sender: data.sharingUser?.emailAddress || data.owners?.[0]?.emailAddress,
+    };
+  }
+
+  // Google Super - Docs (comments)
+  if (eventType.includes('COMMENT')) {
+    return {
+      source: 'docs',
+      title: `Comment on ${data.documentTitle || 'document'}`,
+      body: data.content || data.quotedText,
+      sender: data.author?.displayName || data.author?.emailAddress,
+    };
+  }
+
+  // Slack
+  if (eventType.startsWith('SLACK_')) {
+    const isDM = eventType.includes('DIRECT_MESSAGE');
+    return {
+      source: 'slack',
+      title: isDM ? `DM: ${data.user || 'Someone'}` : `#${data.channel || 'channel'}`,
+      body: data.text || data.message?.text,
+      sender: data.user || data.user_name,
+    };
+  }
+
+  // Notion
+  if (eventType.startsWith('NOTION_')) {
+    const isComment = eventType.includes('COMMENT');
+    return {
+      source: 'notion',
+      title: isComment
+        ? `Comment on ${data.page?.title || 'page'}`
+        : data.page?.title || data.title || 'Notion update',
+      body: data.content || data.rich_text?.[0]?.plain_text,
+      sender: data.created_by?.name || data.last_edited_by?.name,
+    };
+  }
+
+  return null;
+}
 
 // =============================================================================
 // CLASSIFY
@@ -136,24 +224,14 @@ export async function handleWebhook(
   }
 
   // Parse event based on type
-  const eventType = payload.type;
-  let source: 'email' | 'calendar';
-  let title: string | undefined;
-  let body: string | undefined;
-  let sender: string | undefined;
+  const eventType = payload.type || payload.triggerName || '';
+  const parsed = parseEvent(eventType, payload.data || payload.payload || {});
 
-  if (eventType === 'GMAIL_NEW_GMAIL_MESSAGE') {
-    source = 'email';
-    title = payload.data?.subject;
-    body = payload.data?.snippet;
-    sender = payload.data?.from;
-  } else if (eventType?.startsWith('GOOGLECALENDAR_')) {
-    source = 'calendar';
-    title = payload.data?.summary;
-    body = payload.data?.description;
-  } else {
+  if (!parsed) {
     return { success: true }; // unknown event type, ignore
   }
+
+  const { source, title, body, sender } = parsed;
 
   // Classify
   const urgency = classify(title, body, sender);
@@ -216,15 +294,29 @@ export async function handleWebhook(
 // NOTIFICATIONS
 // =============================================================================
 
-function formatTitle(source: string, title?: string, sender?: string, urgency?: UrgencyLevel): string {
+function formatTitle(source: EventSource, title?: string, sender?: string, urgency?: UrgencyLevel): string {
   let prefix = '';
   if (urgency === 'critical') prefix = '\u{1F6A8} ';
   else if (urgency === 'high') prefix = '\u26A1 ';
 
-  if (source === 'email') {
-    return prefix + (sender ? `Email from ${sender.split('<')[0].trim()}` : 'New email');
+  const senderName = sender?.split('<')[0].trim() || sender;
+
+  switch (source) {
+    case 'email':
+      return prefix + (senderName ? `Email from ${senderName}` : 'New email');
+    case 'calendar':
+      return prefix + (title || 'Calendar event');
+    case 'drive':
+      return prefix + (title || 'File shared');
+    case 'docs':
+      return prefix + (title || 'Document comment');
+    case 'slack':
+      return prefix + (title || 'Slack message');
+    case 'notion':
+      return prefix + (title || 'Notion update');
+    default:
+      return prefix + (title || 'New notification');
   }
-  return prefix + (title || 'New notification');
 }
 
 async function sendNotification(

@@ -312,6 +312,11 @@ app.get('/chat/briefing', (c) =>
 // Note: /autonomous-actions requires auth - moved to protected section below
 
 // PUBLIC: OAuth callback routes (no auth required - Composio redirects here)
+// New unified callbacks
+app.get('/integrations/googlesuper/callback', integrationHandlers.googleCallback);
+app.get('/integrations/slack/callback', integrationHandlers.slackCallback);
+app.get('/integrations/notion/callback', integrationHandlers.notionCallback);
+// Legacy callbacks (redirect to new handlers)
 app.get('/integrations/gmail/callback', integrationHandlers.gmailCallback);
 app.get('/integrations/calendar/callback', integrationHandlers.calendarCallback);
 
@@ -332,16 +337,21 @@ app.post('/api/chat', memoryHandlers.chatWithMemories);
 
 // Protected routes - Integrations (callbacks are public, defined above)
 app.get('/integrations/status', integrationHandlers.getIntegrationStatus);
+
+// New unified integration endpoints
+app.post('/integrations/google/connect', integrationHandlers.connectGoogle);
+app.post('/integrations/slack/connect', integrationHandlers.connectSlack);
+app.post('/integrations/notion/connect', integrationHandlers.connectNotion);
+app.delete('/integrations/google/disconnect', integrationHandlers.disconnectGoogle);
+app.delete('/integrations/slack/disconnect', integrationHandlers.disconnectSlack);
+app.delete('/integrations/notion/disconnect', integrationHandlers.disconnectNotion);
+
+// Sync triggers
+app.post('/integrations/:provider/sync', integrationHandlers.triggerSync);
+
+// Legacy endpoints (mobile app compatibility)
 app.post('/integrations/gmail/connect', integrationHandlers.connectGmail);
 app.post('/integrations/calendar/connect', integrationHandlers.connectCalendar);
-app.post('/integrations/gmail/sync', integrationHandlers.triggerGmailSync);
-app.post('/integrations/calendar/sync', integrationHandlers.triggerCalendarSync);
-// Calendar events CRUD (required by web app)
-app.get('/integrations/calendar/events', integrationHandlers.getCalendarEvents);
-app.post('/integrations/calendar/events', integrationHandlers.createCalendarEvent);
-app.put('/integrations/calendar/events/:id', integrationHandlers.updateCalendarEvent);
-app.delete('/integrations/calendar/events/:id', integrationHandlers.deleteCalendarEvent);
-app.delete('/integrations/:provider', integrationHandlers.disconnectIntegration);
 
 // Legacy autonomous actions endpoints (required by web app)
 // GET /autonomous-actions - List pending actions in frontend format
@@ -610,8 +620,8 @@ app.get('/notifications/status', notificationHandlers.getNotificationStatus);
 app.route('/webhooks', webhooksRouter);
 
 // Proactive monitoring
-// Public webhook endpoint - verified by signature, not JWT
-app.post('/proactive/webhook', async (c) => {
+// Public webhook endpoints - verified by signature, not JWT
+const handleProactiveWebhook = async (c: any) => {
   const { handleWebhook } = await import('./lib/proactive');
   const rawBody = await c.req.text();
   const signature = c.req.header('x-composio-signature') || '';
@@ -622,10 +632,18 @@ app.post('/proactive/webhook', async (c) => {
     return c.json({ error: result.error }, 400);
   }
   return c.json({ success: true, eventId: result.eventId });
-});
+};
+
+// Generic and provider-specific webhook routes
+app.post('/proactive/webhook', handleProactiveWebhook);
+app.post('/proactive/webhook/:provider', handleProactiveWebhook);
 
 // Protected proactive endpoints
-app.use('/proactive/*', authenticateWithJwt);
+app.use('/proactive/settings', authenticateWithJwt);
+app.use('/proactive/vip', authenticateWithJwt);
+app.use('/proactive/vip/*', authenticateWithJwt);
+app.use('/proactive/events', authenticateWithJwt);
+app.use('/proactive/cleanup', authenticateWithJwt);
 app.route('/proactive', proactiveRouter);
 
 // MCP Server (Model Context Protocol for AI clients)

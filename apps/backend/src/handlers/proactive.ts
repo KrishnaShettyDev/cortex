@@ -86,7 +86,23 @@ proactiveRouter.get('/events', async (c) => {
 // WEBHOOK (public - verified by signature)
 // =============================================================================
 
+// Generic webhook endpoint
 proactiveRouter.post('/webhook', async (c) => {
+  const rawBody = await c.req.text();
+  const signature = c.req.header('x-composio-signature') || '';
+  const secret = c.env.COMPOSIO_WEBHOOK_SECRET || '';
+
+  const result = await handleWebhook(c.env.DB, rawBody, signature, secret);
+
+  if (!result.success) {
+    return c.json({ error: result.error }, 400);
+  }
+
+  return c.json({ success: true, eventId: result.eventId });
+});
+
+// Provider-specific webhook endpoints (same handler, different routes for clarity)
+proactiveRouter.post('/webhook/:provider', async (c) => {
   const rawBody = await c.req.text();
   const signature = c.req.header('x-composio-signature') || '';
   const secret = c.env.COMPOSIO_WEBHOOK_SECRET || '';
