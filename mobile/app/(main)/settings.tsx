@@ -1,3 +1,13 @@
+/**
+ * Settings Screen - Unified & Minimal
+ *
+ * Contains:
+ * - Profile display
+ * - Theme selection
+ * - All integrations (Google, Slack, Notion)
+ * - Sign out / Delete account
+ */
+
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
@@ -17,22 +27,43 @@ import * as WebBrowser from 'expo-web-browser';
 import * as ExpoLinking from 'expo-linking';
 
 import { useAuth } from '../../src/context/AuthContext';
-import { integrationsService, IntegrationsStatus, authService } from '../../src/services';
-import { colors, spacing, borderRadius, sheetHandle, useTheme, ThemeMode } from '../../src/theme';
+import { integrationsService, authService } from '../../src/services';
+import { spacing, borderRadius, useTheme } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
 import { useAppStore } from '../../src/stores/appStore';
 
-// Required for OAuth callback handling
 WebBrowser.maybeCompleteAuthSession();
 
-const goBack = () => {
-  if (router.canGoBack()) {
-    router.back();
-  } else {
-    router.replace('/(main)/chat');
-  }
+type Provider = 'google' | 'slack' | 'notion';
+
+interface IntegrationConfig {
+  name: string;
+  icon: string;
+  color: string;
+  description: string;
+}
+
+const INTEGRATIONS: Record<Provider, IntegrationConfig> = {
+  google: {
+    name: 'Google',
+    icon: 'https://www.google.com/favicon.ico',
+    color: '#4285F4',
+    description: 'Gmail, Calendar, Drive, Docs',
+  },
+  slack: {
+    name: 'Slack',
+    icon: 'https://slack.com/favicon.ico',
+    color: '#4A154B',
+    description: 'Messages & DMs',
+  },
+  notion: {
+    name: 'Notion',
+    icon: 'https://www.notion.so/favicon.ico',
+    color: '#000000',
+    description: 'Pages & Comments',
+  },
 };
 
 export default function SettingsScreen() {
@@ -40,17 +71,12 @@ export default function SettingsScreen() {
   const posthog = usePostHog();
   const { colors, mode: themeMode, setMode: setThemeMode } = useTheme();
 
-  // Use cached integration status from store
   const cachedIntegrationStatus = useAppStore((state) => state.integrationStatus);
   const setIntegrationStatus = useAppStore((state) => state.setIntegrationStatus);
 
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [isAccountsExpanded, setIsAccountsExpanded] = useState(true);
-
-  // Only show loading if we have no cached data
+  const [connectingProvider, setConnectingProvider] = useState<Provider | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(!cachedIntegrationStatus);
 
-  // Define loadIntegrationStatus first (before useEffects that depend on it)
   const loadIntegrationStatus = useCallback(async () => {
     try {
       const status = await integrationsService.getStatus();
@@ -62,59 +88,77 @@ export default function SettingsScreen() {
     }
   }, [setIntegrationStatus]);
 
-  // Listen for OAuth callback via deep linking
   useEffect(() => {
     const handleDeepLink = (event: { url: string }) => {
       const { url } = event;
-      logger.log('OAuth deep link received:', url);
       if (url.includes('oauth/success') || url.includes('oauth/callback')) {
-        // OAuth completed, refresh status
         loadIntegrationStatus();
-        setIsConnecting(false);
-        posthog?.capture('google_connected', { source: 'settings' });
+        setConnectingProvider(null);
       }
     };
 
     const subscription = ExpoLinking.addEventListener('url', handleDeepLink);
     return () => subscription.remove();
-  }, [loadIntegrationStatus, posthog]);
-
-  // Track settings screen viewed
-  useEffect(() => {
-    posthog?.capture(ANALYTICS_EVENTS.SETTINGS_OPENED);
-  }, []);
-
-  // Load in background (won't show loading if we have cached data)
-  useEffect(() => {
-    loadIntegrationStatus();
   }, [loadIntegrationStatus]);
 
-  const handleConnectGoogle = async () => {
-    setIsConnecting(true);
+  useEffect(() => {
+    posthog?.capture(ANALYTICS_EVENTS.SETTINGS_OPENED);
+    loadIntegrationStatus();
+  }, []);
+
+  const handleConnect = async (provider: Provider) => {
+    setConnectingProvider(provider);
     try {
-      // Get OAuth URL from backend (uses Composio's managed OAuth)
       const returnUrl = ExpoLinking.createURL('oauth/success');
-      logger.log('Getting Google connect URL, return URL:', returnUrl);
+      let oauthUrl: string;
 
-      const oauthUrl = await integrationsService.getGoogleConnectUrl(returnUrl);
-      logger.log('Opening OAuth URL:', oauthUrl);
+      switch (provider) {
+        case 'google':
+          oauthUrl = await integrationsService.getGoogleConnectUrl(returnUrl);
+          break;
+        case 'slack':
+          oauthUrl = await integrationsService.getSlackConnectUrl(returnUrl);
+          break;
+        case 'notion':
+          oauthUrl = await integrationsService.getNotionConnectUrl(returnUrl);
+          break;
+      }
 
-      // Open OAuth flow in browser
       const result = await WebBrowser.openAuthSessionAsync(oauthUrl, returnUrl);
 
       if (result.type === 'success') {
-        // OAuth completed successfully
         await loadIntegrationStatus();
-        posthog?.capture('google_connected', { source: 'settings' });
-      } else if (result.type === 'cancel' || result.type === 'dismiss') {
-        logger.log('OAuth cancelled by user');
+        posthog?.capture(`${provider}_connected`, { source: 'settings' });
       }
     } catch (error: any) {
-      logger.error('Google connect error:', error);
-      Alert.alert('Error', error.message || 'Failed to connect Google');
+      logger.error(`${provider} connect error:`, error);
+      Alert.alert('Error', error.message || `Failed to connect ${INTEGRATIONS[provider].name}`);
     } finally {
-      setIsConnecting(false);
+      setConnectingProvider(null);
     }
+  };
+
+  const handleDisconnect = async (provider: Provider) => {
+    Alert.alert(
+      `Disconnect ${INTEGRATIONS[provider].name}`,
+      `Are you sure you want to disconnect ${INTEGRATIONS[provider].name}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await integrationsService.disconnect(provider);
+              await loadIntegrationStatus();
+              posthog?.capture(`${provider}_disconnected`);
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to disconnect');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSignOut = () => {
@@ -135,7 +179,7 @@ export default function SettingsScreen() {
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account',
-      'Are you sure you want to delete your account? This will permanently delete all your data including memories, conversations, and connected accounts. This action cannot be undone.',
+      'This will permanently delete all your data. This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -154,201 +198,146 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleContactUs = () => {
-    posthog?.capture(ANALYTICS_EVENTS.CONTACT_US_TAPPED);
-    Linking.openURL('https://wa.me/917780185418');
+  const isConnected = (provider: Provider): boolean => {
+    if (!cachedIntegrationStatus) return false;
+    switch (provider) {
+      case 'google':
+        return cachedIntegrationStatus.google?.connected || cachedIntegrationStatus.googlesuper?.connected || false;
+      case 'slack':
+        return cachedIntegrationStatus.slack?.connected || false;
+      case 'notion':
+        return cachedIntegrationStatus.notion?.connected || false;
+    }
   };
 
-  // Use name if available, otherwise use email prefix as fallback
-  const emailPrefix = user?.email?.split('@')[0] || '';
-  const displayName = user?.name?.toUpperCase() || emailPrefix.toUpperCase() || 'USER';
+  const displayName = user?.name?.toUpperCase() || user?.email?.split('@')[0].toUpperCase() || 'USER';
   const displayEmail = user?.email || '';
-  const isGoogleConnected = cachedIntegrationStatus?.google?.connected || false;
-  const connectedEmail = cachedIntegrationStatus?.google?.email || displayEmail;
+  const avatarName = user?.name || user?.email?.split('@')[0] || 'User';
 
-  // For avatar, use name or email prefix
-  const avatarName = user?.name || emailPrefix || 'User';
+  const renderIntegrationRow = (provider: Provider) => {
+    const config = INTEGRATIONS[provider];
+    const connected = isConnected(provider);
+    const isConnecting = connectingProvider === provider;
+
+    return (
+      <TouchableOpacity
+        key={provider}
+        style={styles.integrationRow}
+        onPress={() => connected ? handleDisconnect(provider) : handleConnect(provider)}
+        disabled={isConnecting}
+        activeOpacity={0.7}
+      >
+        <Image source={{ uri: config.icon }} style={styles.integrationIcon} />
+        <View style={styles.integrationInfo}>
+          <Text style={[styles.integrationName, { color: colors.textPrimary }]}>{config.name}</Text>
+          <Text style={[styles.integrationDesc, { color: colors.textTertiary }]}>{config.description}</Text>
+        </View>
+        {isConnecting ? (
+          <ActivityIndicator size="small" color={colors.accent} />
+        ) : connected ? (
+          <View style={[styles.statusBadge, { backgroundColor: colors.success + '20' }]}>
+            <Text style={[styles.statusText, { color: colors.success }]}>Connected</Text>
+          </View>
+        ) : (
+          <Text style={[styles.connectText, { color: colors.accent }]}>Connect</Text>
+        )}
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.bgPrimary }]} edges={['top']}>
-      {/* Sheet Handle */}
+      {/* Handle */}
       <View style={styles.handleContainer}>
         <View style={[styles.handle, { backgroundColor: colors.textTertiary }]} />
       </View>
 
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Profile Section */}
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        {/* Profile */}
         <View style={styles.profileSection}>
-          <View style={styles.avatarContainer}>
-            <Image
-              source={{ uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(avatarName)}&background=random&size=128` }}
-              style={styles.avatarImage}
-            />
-          </View>
+          <Image
+            source={{ uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(avatarName)}&background=random&size=128` }}
+            style={styles.avatar}
+          />
           <View style={styles.profileInfo}>
             <Text style={[styles.profileName, { color: colors.textPrimary }]}>{displayName}</Text>
             <Text style={[styles.profileEmail, { color: colors.textSecondary }]}>{displayEmail}</Text>
           </View>
         </View>
 
-        {/* Menu Section */}
+        {/* Integrations */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Menu</Text>
-
-          {/* Calendar Row */}
-          <TouchableOpacity style={styles.menuRow} onPress={() => router.push('/(main)/calendar')} activeOpacity={0.7}>
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} />
-            </View>
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Calendar</Text>
-            <View style={{ flex: 1 }} />
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-
-          {/* Contact Us Row */}
-          <TouchableOpacity style={styles.menuRow} onPress={handleContactUs} activeOpacity={0.7}>
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
-            </View>
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Contact Us</Text>
-            <View style={{ flex: 1 }} />
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Appearance Section */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Appearance</Text>
-
-          {/* System Option */}
-          <TouchableOpacity
-            style={styles.menuRow}
-            onPress={() => setThemeMode('system')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="phone-portrait-outline" size={20} color={colors.textSecondary} />
-            </View>
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>System</Text>
-            <View style={{ flex: 1 }} />
-            {themeMode === 'system' && (
-              <Ionicons name="checkmark" size={20} color={colors.accent} />
-            )}
-          </TouchableOpacity>
-
-          {/* Light Option */}
-          <TouchableOpacity
-            style={styles.menuRow}
-            onPress={() => setThemeMode('light')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="sunny-outline" size={20} color={colors.textSecondary} />
-            </View>
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Light</Text>
-            <View style={{ flex: 1 }} />
-            {themeMode === 'light' && (
-              <Ionicons name="checkmark" size={20} color={colors.accent} />
-            )}
-          </TouchableOpacity>
-
-          {/* Dark Option */}
-          <TouchableOpacity
-            style={styles.menuRow}
-            onPress={() => setThemeMode('dark')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.menuIconContainer}>
-              <Ionicons name="moon-outline" size={20} color={colors.textSecondary} />
-            </View>
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Dark</Text>
-            <View style={{ flex: 1 }} />
-            {themeMode === 'dark' && (
-              <Ionicons name="checkmark" size={20} color={colors.accent} />
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Connected Accounts Section */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Connected Accounts</Text>
-
-          {/* Manage Accounts Expandable */}
-          <TouchableOpacity
-            style={styles.menuRow}
-            onPress={() => setIsAccountsExpanded(!isAccountsExpanded)}
-            activeOpacity={0.7}
-          >
-            <Image
-              source={{ uri: 'https://www.google.com/favicon.ico' }}
-              style={styles.googleLogo}
-            />
-            <Text style={[styles.menuText, { color: colors.textPrimary }]}>Manage Accounts</Text>
-            <View style={{ flex: 1 }} />
-            <Ionicons
-              name={isAccountsExpanded ? "chevron-down" : "chevron-forward"}
-              size={18}
-              color={colors.textTertiary}
-            />
-          </TouchableOpacity>
-
-          {/* Expanded Accounts List */}
-          {isAccountsExpanded && (
-            <View style={[styles.accountsExpanded, { backgroundColor: colors.bgSecondary }]}>
-              {isLoadingStatus ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="small" color={colors.textTertiary} />
-                </View>
-              ) : isGoogleConnected ? (
-                /* Connected Account */
-                <View style={styles.accountRow}>
-                  <Text style={[styles.accountEmail, { color: colors.textPrimary }]}>{connectedEmail}</Text>
-                  <View style={[styles.connectedBadge, { backgroundColor: colors.success + '20' }]}>
-                    <Text style={[styles.connectedText, { color: colors.success }]}>CONNECTED</Text>
-                  </View>
-                </View>
-              ) : (
-                /* No accounts connected */
-                <TouchableOpacity
-                  style={styles.connectAccountRow}
-                  onPress={() => handleConnectGoogle()}
-                  disabled={isConnecting}
-                  activeOpacity={0.7}
-                >
-                  {isConnecting ? (
-                    <ActivityIndicator size="small" color={colors.textTertiary} />
-                  ) : (
-                    <>
-                      <Ionicons name="link-outline" size={18} color={colors.accent} />
-                      <Text style={[styles.connectAccountText, { color: colors.accent }]}>Connect Google Account</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Integrations</Text>
+          {isLoadingStatus ? (
+            <ActivityIndicator style={styles.loader} color={colors.textTertiary} />
+          ) : (
+            <>
+              {renderIntegrationRow('google')}
+              {renderIntegrationRow('slack')}
+              {renderIntegrationRow('notion')}
+            </>
           )}
         </View>
 
-        {/* Spacer */}
-        <View style={{ flex: 1 }} />
+        {/* Appearance */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Appearance</Text>
+          {(['system', 'light', 'dark'] as const).map((mode) => (
+            <TouchableOpacity
+              key={mode}
+              style={styles.themeRow}
+              onPress={() => setThemeMode(mode)}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={mode === 'system' ? 'phone-portrait-outline' : mode === 'light' ? 'sunny-outline' : 'moon-outline'}
+                size={20}
+                color={colors.textSecondary}
+              />
+              <Text style={[styles.themeText, { color: colors.textPrimary }]}>
+                {mode.charAt(0).toUpperCase() + mode.slice(1)}
+              </Text>
+              <View style={{ flex: 1 }} />
+              {themeMode === mode && <Ionicons name="checkmark" size={20} color={colors.accent} />}
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {/* Quick Actions */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Quick Actions</Text>
+          <TouchableOpacity
+            style={styles.actionRow}
+            onPress={() => router.push('/(main)/calendar')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="calendar-outline" size={20} color={colors.textSecondary} />
+            <Text style={[styles.actionText, { color: colors.textPrimary }]}>View Calendar</Text>
+            <View style={{ flex: 1 }} />
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.actionRow}
+            onPress={() => Linking.openURL('https://wa.me/917780185418')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chatbubble-outline" size={20} color={colors.textSecondary} />
+            <Text style={[styles.actionText, { color: colors.textPrimary }]}>Contact Support</Text>
+            <View style={{ flex: 1 }} />
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
-      {/* Bottom Actions - Fixed at bottom */}
+      {/* Bottom Actions */}
       <View style={[styles.bottomActions, { borderTopColor: colors.glassBorder }]}>
-        {/* Sign Out */}
         <TouchableOpacity style={styles.bottomRow} onPress={handleSignOut} activeOpacity={0.7}>
           <Ionicons name="log-out-outline" size={20} color={colors.error} />
-          <Text style={[styles.signOutText, { color: colors.error }]}>Sign Out</Text>
+          <Text style={[styles.bottomText, { color: colors.error }]}>Sign Out</Text>
         </TouchableOpacity>
-
-        {/* Delete Account */}
         <TouchableOpacity style={styles.bottomRow} onPress={handleDeleteAccount} activeOpacity={0.7}>
           <Ionicons name="trash-outline" size={20} color={colors.textTertiary} />
-          <Text style={[styles.deleteText, { color: colors.textTertiary }]}>Delete Account</Text>
+          <Text style={[styles.bottomText, { color: colors.textTertiary }]}>Delete Account</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -356,162 +345,66 @@ export default function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  handleContainer: {
-    alignItems: 'center',
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.xs,
-  },
-  handle: {
-    width: 36,
-    height: 5,
-    borderRadius: 2.5,
-    opacity: 0.4,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingBottom: spacing.lg,
-  },
-  // Profile Section
+  container: { flex: 1 },
+  handleContainer: { alignItems: 'center', paddingTop: spacing.sm, paddingBottom: spacing.xs },
+  handle: { width: 36, height: 5, borderRadius: 2.5, opacity: 0.4 },
+  scrollView: { flex: 1 },
+
+  // Profile
   profileSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    gap: spacing.md,
-  },
-  avatarContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    overflow: 'hidden',
-  },
-  avatarImage: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-  },
-  avatarPlaceholder: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  profileInfo: {
-    flex: 1,
-  },
-  profileName: {
-    fontSize: 17,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  profileEmail: {
-    fontSize: 14,
-    marginTop: 2,
-  },
-  // Section
-  section: {
-    marginTop: spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '400',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-  },
-  // Menu Row
-  menuRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    gap: spacing.md,
-  },
-  menuIconContainer: {
-    width: 28,
-    height: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  menuText: {
-    fontSize: 16,
-    fontWeight: '400',
-  },
-  googleLogo: {
-    width: 20,
-    height: 20,
-    marginRight: spacing.md,
-  },
-  // Accounts Expanded
-  accountsExpanded: {
-    marginLeft: spacing.lg + 28 + spacing.md, // Align with text
-    marginRight: spacing.lg,
-    borderRadius: borderRadius.md,
-    overflow: 'hidden',
-  },
-  loadingContainer: {
     padding: spacing.lg,
-    alignItems: 'center',
+    gap: spacing.md,
   },
-  accountRow: {
+  avatar: { width: 56, height: 56, borderRadius: 28 },
+  profileInfo: { flex: 1 },
+  profileName: { fontSize: 17, fontWeight: '600', letterSpacing: 0.5 },
+  profileEmail: { fontSize: 14, marginTop: 2 },
+
+  // Section
+  section: { marginTop: spacing.md },
+  sectionTitle: { fontSize: 13, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  loader: { padding: spacing.lg },
+
+  // Integration Row
+  integrationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  accountEmail: {
-    fontSize: 14,
-    flex: 1,
-  },
-  connectedBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: borderRadius.sm,
-  },
-  connectedText: {
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  connectAccountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.md,
-    gap: spacing.xs,
-  },
-  connectAccountText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  // Bottom Actions
-  bottomActions: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xl,
-    borderTopWidth: 1,
-    paddingTop: spacing.md,
-  },
-  bottomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingVertical: spacing.md,
     gap: spacing.md,
   },
-  signOutText: {
-    fontSize: 16,
-    fontWeight: '400',
+  integrationIcon: { width: 32, height: 32, borderRadius: 8 },
+  integrationInfo: { flex: 1 },
+  integrationName: { fontSize: 16, fontWeight: '500' },
+  integrationDesc: { fontSize: 12, marginTop: 2 },
+  statusBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.sm },
+  statusText: { fontSize: 11, fontWeight: '600' },
+  connectText: { fontSize: 14, fontWeight: '500' },
+
+  // Theme Row
+  themeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: spacing.md,
   },
-  deleteText: {
-    fontSize: 16,
-    fontWeight: '400',
+  themeText: { fontSize: 16 },
+
+  // Action Row
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: spacing.md,
   },
+  actionText: { fontSize: 16 },
+
+  // Bottom
+  bottomActions: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, borderTopWidth: 1, paddingTop: spacing.md },
+  bottomRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, gap: spacing.md },
+  bottomText: { fontSize: 16 },
 });

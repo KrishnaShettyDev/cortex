@@ -1,215 +1,87 @@
+/**
+ * Integrations Service
+ *
+ * Handles OAuth connections for:
+ * - Google (Gmail, Calendar, Drive, Docs via Google Super)
+ * - Slack
+ * - Notion
+ */
+
 import { api } from './api';
 
-export interface IntegrationStatus {
+export interface ProviderStatus {
   connected: boolean;
-  email: string | null;
-  last_sync: string | null;
-  status: 'active' | 'expired' | 'not_connected';
-  gmail_connected: boolean;
-  calendar_connected: boolean;
+  email?: string | null;
+  lastSync?: string | null;
 }
 
 export interface IntegrationsStatus {
-  google: IntegrationStatus;
-  microsoft: IntegrationStatus;
+  google?: ProviderStatus;
+  googlesuper?: ProviderStatus;
+  slack?: ProviderStatus;
+  notion?: ProviderStatus;
 }
 
-export interface OAuthRedirectResponse {
-  redirect_url: string;
-}
-
-export interface SyncResponse {
-  memories_added: number;
-  errors: string[];
-}
-
-// Calendar types - kept for future implementation
-export interface CalendarEventAttendee {
-  email: string;
-  name?: string;
-  optional?: boolean;
-}
-
-export type MeetingType = 'google_meet' | 'zoom' | 'teams' | 'webex' | 'video' | 'offline';
-
-export interface CalendarEventItem {
-  id: string;
-  title: string;
-  start_time: string;
-  end_time: string;
-  is_all_day: boolean;
-  location?: string;
-  description?: string;
-  attendees: string[];
-  color?: string;
-  html_link?: string;
-  meet_link?: string;
-  meeting_type: MeetingType;
-}
-
-export interface TimeSlot {
-  // Primary format used by UI
-  start: string;
-  end: string;
-  duration_minutes?: number;
-  // Alternative format from backend
-  start_time?: string;
-  end_time?: string;
-}
-
-export interface CreateCalendarEventRequest {
-  title: string;
-  start_time: string;
-  end_time: string;
-  description?: string;
-  location?: string;
-  attendees?: string[];
-  add_meet_link?: boolean;
-  send_notifications?: boolean;
+export interface ConnectResponse {
+  redirectUrl: string;
+  linkToken?: string;
+  expiresAt?: string;
 }
 
 class IntegrationsService {
   /**
-   * Get the connection status of all integrations
+   * Get connection status for all integrations
    */
   async getStatus(): Promise<IntegrationsStatus> {
     return api.request<IntegrationsStatus>('/integrations/status');
   }
 
   /**
-   * Connect Gmail - initiates OAuth flow
-   * Backend endpoint: POST /integrations/gmail/connect
+   * Connect Google (Gmail, Calendar, Drive, Docs)
    */
-  async connectGmail(): Promise<OAuthRedirectResponse> {
-    return api.request<OAuthRedirectResponse>('/integrations/gmail/connect', {
+  async getGoogleConnectUrl(returnUrl?: string): Promise<string> {
+    const response = await api.request<ConnectResponse>('/integrations/google/connect', {
       method: 'POST',
+      body: returnUrl ? { return_url: returnUrl } : undefined,
     });
+    return response.redirectUrl;
   }
 
   /**
-   * Connect Google Calendar - initiates OAuth flow
-   * Backend endpoint: POST /integrations/calendar/connect
+   * Connect Slack
    */
-  async connectCalendar(): Promise<OAuthRedirectResponse> {
-    return api.request<OAuthRedirectResponse>('/integrations/calendar/connect', {
+  async getSlackConnectUrl(returnUrl?: string): Promise<string> {
+    const response = await api.request<ConnectResponse>('/integrations/slack/connect', {
       method: 'POST',
+      body: returnUrl ? { return_url: returnUrl } : undefined,
     });
+    return response.redirectUrl;
   }
 
   /**
-   * Connect both Gmail and Calendar (convenience method)
-   * Calls both connect endpoints and returns both redirect URLs
+   * Connect Notion
    */
-  async connectGoogle(): Promise<{ gmail: string; calendar: string }> {
-    const [gmailResponse, calendarResponse] = await Promise.all([
-      this.connectGmail(),
-      this.connectCalendar(),
-    ]);
-    return {
-      gmail: gmailResponse.redirect_url,
-      calendar: calendarResponse.redirect_url,
-    };
-  }
-
-  /**
-   * Get the Google OAuth connect URL
-   * Used for initiating OAuth flow from settings/connected-accounts screens
-   * @param returnUrl - The URL to redirect back to after OAuth completes
-   */
-  async getGoogleConnectUrl(returnUrl: string): Promise<string> {
-    const response = await api.request<{ redirect_url: string }>('/auth/google/connect', {
+  async getNotionConnectUrl(returnUrl?: string): Promise<string> {
+    const response = await api.request<ConnectResponse>('/integrations/notion/connect', {
       method: 'POST',
-      body: { return_url: returnUrl },
+      body: returnUrl ? { return_url: returnUrl } : undefined,
     });
-    return response.redirect_url;
+    return response.redirectUrl;
   }
 
   /**
-   * Disconnect a provider (gmail, calendar, etc.)
-   * Backend endpoint: DELETE /integrations/:provider
+   * Disconnect a provider
    */
-  async disconnect(provider: 'gmail' | 'calendar' | 'google'): Promise<void> {
-    await api.request(`/integrations/${provider}`, { method: 'DELETE' });
+  async disconnect(provider: 'google' | 'slack' | 'notion'): Promise<void> {
+    await api.request(`/integrations/${provider}/disconnect`, { method: 'DELETE' });
   }
 
   /**
-   * Disconnect Google (both Gmail and Calendar)
+   * Trigger sync for a provider
    */
-  async disconnectGoogle(): Promise<void> {
-    await this.disconnect('google');
+  async sync(provider: 'google' | 'slack' | 'notion'): Promise<{ success: boolean }> {
+    return api.request(`/integrations/${provider}/sync`, { method: 'POST' });
   }
-
-  /**
-   * Trigger Gmail sync
-   * Backend endpoint: POST /integrations/gmail/sync
-   */
-  async syncGmail(): Promise<SyncResponse> {
-    return api.request<SyncResponse>('/integrations/gmail/sync', {
-      method: 'POST',
-    });
-  }
-
-  /**
-   * Trigger Calendar sync
-   * Backend endpoint: POST /integrations/calendar/sync
-   */
-  async syncCalendar(): Promise<SyncResponse> {
-    return api.request<SyncResponse>('/integrations/calendar/sync', {
-      method: 'POST',
-    });
-  }
-
-  /**
-   * Sync both Gmail and Calendar
-   */
-  async syncGoogle(): Promise<{ gmail: SyncResponse; calendar: SyncResponse }> {
-    const [gmailResult, calendarResult] = await Promise.all([
-      this.syncGmail(),
-      this.syncCalendar(),
-    ]);
-    return {
-      gmail: gmailResult,
-      calendar: calendarResult,
-    };
-  }
-
-  // ============== Calendar CRUD ==============
-  // NOTE: These endpoints are not yet implemented in the backend.
-  // The UI should hide these features or show "coming soon" until backend adds support.
-  // Keeping the type definitions for future use.
-
-  /**
-   * @deprecated Calendar CRUD not implemented in backend yet
-   */
-  async getCalendarEvents(_startDate: Date, _endDate: Date): Promise<{ events: CalendarEventItem[] }> {
-    console.warn('IntegrationsService: getCalendarEvents not implemented in backend');
-    return { events: [] };
-  }
-
-  /**
-   * @deprecated Calendar CRUD not implemented in backend yet
-   */
-  async createCalendarEvent(_request: CreateCalendarEventRequest): Promise<{ success: boolean; event_id?: string; message?: string }> {
-    console.warn('IntegrationsService: createCalendarEvent not implemented in backend');
-    return { success: false, message: 'Calendar event creation not yet available' };
-  }
-
-  /**
-   * @deprecated Calendar availability not implemented in backend yet
-   */
-  async getCalendarAvailability(
-    _date: string,
-    _durationMinutes: number,
-    _startHour?: number,
-    _endHour?: number
-  ): Promise<{ success: boolean; free_slots: TimeSlot[]; message?: string }> {
-    console.warn('IntegrationsService: getCalendarAvailability not implemented in backend');
-    return { success: false, free_slots: [], message: 'Calendar availability not yet available' };
-  }
-
-  // ============== Email CRUD ==============
-  // NOTE: Email listing/sending not implemented in backend yet.
-  // The UI should hide these features until backend adds support.
 }
 
 export const integrationsService = new IntegrationsService();

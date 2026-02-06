@@ -1,9 +1,18 @@
+/**
+ * Main App Layout - Chat-First Architecture
+ *
+ * Screens:
+ * - chat: Primary interface (everything flows through here)
+ * - settings: Account, theme, integrations (minimal)
+ * - add-memory: Quick context capture
+ * - calendar: View-only calendar (actions via chat)
+ */
+
 import { Stack } from 'expo-router';
 import { colors } from '../../src/theme';
 import { useAnalytics } from '../../src/hooks/useAnalytics';
 
 export default function MainLayout() {
-  // Initialize analytics and auto-identify user
   useAnalytics();
 
   return (
@@ -13,7 +22,10 @@ export default function MainLayout() {
         contentStyle: { backgroundColor: colors.bgPrimary },
       }}
     >
+      {/* Primary: Chat */}
       <Stack.Screen name="chat" />
+
+      {/* Settings Modal */}
       <Stack.Screen
         name="settings"
         options={{
@@ -21,6 +33,8 @@ export default function MainLayout() {
           animation: 'slide_from_bottom',
         }}
       />
+
+      {/* Add Memory Modal */}
       <Stack.Screen
         name="add-memory"
         options={{
@@ -28,50 +42,10 @@ export default function MainLayout() {
           animation: 'slide_from_bottom',
         }}
       />
-      <Stack.Screen
-        name="connected-accounts"
-        options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
-        }}
-      />
-      <Stack.Screen
-        name="people"
-        options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
-        }}
-      />
-      <Stack.Screen
-        name="person/[name]"
-        options={{
-          presentation: 'card',
-          animation: 'slide_from_right',
-        }}
-      />
-      <Stack.Screen
-        name="insights"
-        options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
-        }}
-      />
-      <Stack.Screen
-        name="relationships"
-        options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
-        }}
-      />
+
+      {/* Calendar Modal */}
       <Stack.Screen
         name="calendar"
-        options={{
-          presentation: 'modal',
-          animation: 'slide_from_bottom',
-        }}
-      />
-      <Stack.Screen
-        name="notification-settings"
         options={{
           presentation: 'modal',
           animation: 'slide_from_bottom',
