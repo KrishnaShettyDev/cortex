@@ -234,11 +234,12 @@ export default function CalendarScreen() {
     setLoading(true);
 
     try {
-      // Check connection status first
+      // Check connection status first - use Google Super (unified integration)
       const status = await integrationsService.getStatus();
-      setConnected(status.google.calendar_connected);
+      const isGoogleConnected = status.googlesuper?.connected || status.google?.connected || false;
+      setConnected(isGoogleConnected);
 
-      if (!status.google.calendar_connected) {
+      if (!isGoogleConnected) {
         setEvents([], currentMonthKey);
         setLoading(false);
         return;
@@ -1180,15 +1181,15 @@ export default function CalendarScreen() {
       ) : !isConnected ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="calendar-outline" size={48} color={colors.textTertiary} />
-          <Text style={styles.emptyTitle}>Calendar not connected</Text>
+          <Text style={styles.emptyTitle}>Google not connected</Text>
           <Text style={styles.emptyText}>
-            Connect your Google Calendar to see your events here.
+            Connect Google to see your calendar, manage events, and let Cortex help with scheduling.
           </Text>
           <TouchableOpacity
             style={styles.connectButton}
             onPress={() => router.push('/(main)/settings')}
           >
-            <Text style={styles.connectButtonText}>Connect Calendar</Text>
+            <Text style={styles.connectButtonText}>Connect Google</Text>
           </TouchableOpacity>
         </View>
       ) : error ? (

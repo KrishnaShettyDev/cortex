@@ -353,6 +353,11 @@ app.post('/integrations/:provider/sync', integrationHandlers.triggerSync);
 app.post('/integrations/gmail/connect', integrationHandlers.connectGmail);
 app.post('/integrations/calendar/connect', integrationHandlers.connectCalendar);
 
+// Calendar events API
+console.log('[Routes] Registering calendar events API endpoints');
+app.get('/integrations/google/calendar/events', integrationHandlers.getCalendarEvents);
+app.post('/integrations/google/calendar/events', integrationHandlers.createCalendarEvent);
+
 // Legacy autonomous actions endpoints (required by web app)
 // GET /autonomous-actions - List pending actions in frontend format
 app.get('/autonomous-actions', async (c) => {
@@ -783,3 +788,4 @@ export default {
     }
   },
 };
+// Force deploy Sat Feb  7 01:41:47 IST 2026

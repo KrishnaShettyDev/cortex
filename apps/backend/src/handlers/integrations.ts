@@ -276,3 +276,185 @@ function errorPage(message: string): string {
     </html>
   `;
 }
+
+// ============================================================================
+// CALENDAR EVENTS
+// ============================================================================
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  description?: string;
+  start_time: string;
+  end_time: string;
+  location?: string;
+  meet_link?: string;
+  meeting_type?: 'google_meet' | 'zoom' | 'teams' | 'webex' | 'offline';
+  color?: string;
+  attendees?: string[];
+  is_all_day?: boolean;
+}
+
+/**
+ * Get calendar events for a date range
+ */
+export async function getCalendarEvents(c: Context<{ Bindings: Bindings }>): Promise<Response> {
+  console.log('[Calendar] getCalendarEvents handler called');
+  const userId = c.get('jwtPayload').sub;
+  console.log('[Calendar] userId:', userId);
+
+  const startParam = c.req.query('start');
+  const endParam = c.req.query('end');
+
+  if (!startParam || !endParam) {
+    return c.json({ error: 'Missing start or end parameter' }, 400);
+  }
+
+  // Get connected Google account
+  const integration = await c.env.DB.prepare(`
+    SELECT access_token FROM integrations
+    WHERE user_id = ? AND provider = 'googlesuper' AND connected = 1
+  `).bind(userId).first<{ access_token: string }>();
+
+  if (!integration?.access_token) {
+    return c.json({ error: 'Google not connected', events: [] }, 400);
+  }
+
+  try {
+    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+
+    // Fetch events from Google Calendar via Composio
+    const result = await composio.calendar.listEvents({
+      connectedAccountId: integration.access_token,
+      timeMin: startParam,
+      timeMax: endParam,
+      maxResults: 250,
+    });
+
+    if (!result.successful || !result.data?.items) {
+      console.error('[Calendar] Failed to fetch events:', result.error);
+      return c.json({ events: [] });
+    }
+
+    // Transform to our format
+    const events: CalendarEvent[] = result.data.items.map((event: any) => {
+      const meetLink = detectMeetLink(event);
+      return {
+        id: event.id,
+        title: event.summary || '(No Title)',
+        description: event.description || undefined,
+        start_time: event.start?.dateTime || event.start?.date,
+        end_time: event.end?.dateTime || event.end?.date,
+        location: event.location || undefined,
+        meet_link: meetLink?.url,
+        meeting_type: meetLink?.type || 'offline',
+        attendees: event.attendees?.map((a: any) => a.email) || [],
+        is_all_day: !!event.start?.date && !event.start?.dateTime,
+      };
+    });
+
+    return c.json({ events });
+  } catch (error: any) {
+    console.error('[Calendar] Error fetching events:', error);
+    return c.json({ error: error.message, events: [] }, 500);
+  }
+}
+
+/**
+ * Create a new calendar event
+ */
+export async function createCalendarEvent(c: Context<{ Bindings: Bindings }>): Promise<Response> {
+  const userId = c.get('jwtPayload').sub;
+  const body = await c.req.json();
+
+  const { title, start_time, end_time, description, location, attendees, send_notifications } = body;
+
+  if (!title || !start_time || !end_time) {
+    return c.json({ error: 'Missing required fields: title, start_time, end_time' }, 400);
+  }
+
+  // Get connected Google account
+  const integration = await c.env.DB.prepare(`
+    SELECT access_token FROM integrations
+    WHERE user_id = ? AND provider = 'googlesuper' AND connected = 1
+  `).bind(userId).first<{ access_token: string }>();
+
+  if (!integration?.access_token) {
+    return c.json({ error: 'Google not connected', success: false }, 400);
+  }
+
+  try {
+    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+
+    const result = await composio.calendar.createEvent({
+      connectedAccountId: integration.access_token,
+      summary: title,
+      description: description || '',
+      start: { dateTime: start_time },
+      end: { dateTime: end_time },
+      location: location || '',
+      attendees: attendees?.map((email: string) => ({ email })) || [],
+      sendNotifications: send_notifications ?? true,
+    });
+
+    if (!result.successful) {
+      console.error('[Calendar] Failed to create event:', result.error);
+      return c.json({ error: result.error, success: false }, 500);
+    }
+
+    const event = result.data;
+    const meetLink = detectMeetLink(event);
+
+    return c.json({
+      success: true,
+      event: {
+        id: event.id,
+        title: event.summary,
+        start_time: event.start?.dateTime || event.start?.date,
+        end_time: event.end?.dateTime || event.end?.date,
+        location: event.location,
+        meet_link: meetLink?.url,
+        meeting_type: meetLink?.type || 'offline',
+      },
+    });
+  } catch (error: any) {
+    console.error('[Calendar] Error creating event:', error);
+    return c.json({ error: error.message, success: false }, 500);
+  }
+}
+
+/**
+ * Detect meeting link and type from calendar event
+ */
+function detectMeetLink(event: any): { url: string; type: 'google_meet' | 'zoom' | 'teams' | 'webex' } | null {
+  // Check Google Meet
+  if (event.hangoutLink) {
+    return { url: event.hangoutLink, type: 'google_meet' };
+  }
+  if (event.conferenceData?.entryPoints) {
+    const videoEntry = event.conferenceData.entryPoints.find((e: any) => e.entryPointType === 'video');
+    if (videoEntry?.uri) {
+      return { url: videoEntry.uri, type: 'google_meet' };
+    }
+  }
+
+  // Check description and location for other meeting links
+  const textToSearch = `${event.description || ''} ${event.location || ''}`.toLowerCase();
+
+  if (textToSearch.includes('zoom.us')) {
+    const zoomMatch = textToSearch.match(/https?:\/\/[^\s]*zoom\.us\/[^\s]*/i);
+    if (zoomMatch) return { url: zoomMatch[0], type: 'zoom' };
+  }
+
+  if (textToSearch.includes('teams.microsoft.com')) {
+    const teamsMatch = textToSearch.match(/https?:\/\/[^\s]*teams\.microsoft\.com\/[^\s]*/i);
+    if (teamsMatch) return { url: teamsMatch[0], type: 'teams' };
+  }
+
+  if (textToSearch.includes('webex.com')) {
+    const webexMatch = textToSearch.match(/https?:\/\/[^\s]*webex\.com\/[^\s]*/i);
+    if (webexMatch) return { url: webexMatch[0], type: 'webex' };
+  }
+
+  return null;
+}

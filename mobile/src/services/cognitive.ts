@@ -413,12 +413,17 @@ class CognitiveService {
 
   /**
    * Get pre-computed session context from last sleep compute
+   * Note: This endpoint was deprecated - returns empty context gracefully
    */
   async getSessionContext(): Promise<{
     context: SessionContext | null;
     generated_at: string | null;
   }> {
-    return api.request('/v3/sleep/context');
+    // Return empty context - sleep compute endpoint was deprecated
+    return {
+      context: null,
+      generated_at: null,
+    };
   }
 
   /**

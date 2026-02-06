@@ -330,41 +330,37 @@ class ChatService {
   }
 
   /**
-   * Get a dynamic, contextual greeting based on sleep compute context.
-   * Uses v3/sleep/context instead of the stub.
+   * Get a dynamic, contextual greeting.
    */
   async getGreeting(): Promise<GreetingResponse> {
+    const hour = new Date().getHours();
+    let timeGreeting: string;
+    if (hour < 12) {
+      timeGreeting = 'Good morning';
+    } else if (hour < 17) {
+      timeGreeting = 'Good afternoon';
+    } else {
+      timeGreeting = 'Good evening';
+    }
+
     try {
+      // Try to get briefing for contextual message
       const response = await api.request<{
-        context: SessionContext | null;
-        generatedAt: string | null;
-      }>('/v3/sleep/context', {
-        method: 'GET',
-      });
+        commitments?: { todayCount?: number; overdue?: any[] };
+        nudges?: any[];
+      }>('/v3/briefing', { method: 'GET' });
 
-      const context = response.context;
-      if (!context) {
-        return {
-          greeting: 'Welcome back!',
-          contextual_message: null,
-        };
-      }
+      const overdueCount = response.commitments?.overdue?.length || 0;
+      const todayCount = response.commitments?.todayCount || 0;
+      const nudgeCount = response.nudges?.length || 0;
 
-      // Build contextual greeting from cognitive state
-      const hour = new Date().getHours();
-      let timeGreeting = 'Hello';
-      if (hour < 12) timeGreeting = 'Good morning';
-      else if (hour < 17) timeGreeting = 'Good afternoon';
-      else timeGreeting = 'Good evening';
-
-      // Build contextual message from pending items and learnings
-      let contextualMessage = null;
-      const pending = context.pendingItems;
-      if (pending.unresolvedConflicts > 0) {
-        contextualMessage = `You have ${pending.unresolvedConflicts} belief conflict${pending.unresolvedConflicts > 1 ? 's' : ''} to resolve.`;
-      } else if (context.topLearnings.length > 0) {
-        const topLearning = context.topLearnings[0];
-        contextualMessage = `Recent insight: "${topLearning.insight}"`;
+      let contextualMessage: string | null = null;
+      if (overdueCount > 0) {
+        contextualMessage = `You have ${overdueCount} overdue commitment${overdueCount > 1 ? 's' : ''}.`;
+      } else if (todayCount > 0) {
+        contextualMessage = `${todayCount} thing${todayCount > 1 ? 's' : ''} on your plate today.`;
+      } else if (nudgeCount > 0) {
+        contextualMessage = `${nudgeCount} relationship nudge${nudgeCount > 1 ? 's' : ''} for you.`;
       }
 
       return {
@@ -372,9 +368,8 @@ class ChatService {
         contextual_message: contextualMessage,
       };
     } catch (error) {
-      logger.warn('ChatService: Failed to fetch greeting from /v3/sleep/context', error);
       return {
-        greeting: 'Welcome back!',
+        greeting: `${timeGreeting}!`,
         contextual_message: null,
       };
     }
@@ -500,8 +495,9 @@ class ChatService {
         });
       });
 
-      // Add recent learnings as insights
-      response.cognitive.recentLearnings.slice(0, 2).forEach((l: { id: string; insight: string; confidence: number }) => {
+      // Add recent learnings as insights (if available)
+      const recentLearnings = response.cognitive?.recentLearnings || [];
+      recentLearnings.slice(0, 2).forEach((l: { id: string; insight: string; confidence: number }) => {
         items.push({
           id: l.id,
           type: 'memory',

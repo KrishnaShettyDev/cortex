@@ -460,6 +460,86 @@ export class CalendarService {
       },
     });
   }
+
+  async listEventsDelta(params: {
+    connectedAccountId: string;
+    syncToken: string;
+    maxResults?: number;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GOOGLECALENDAR_SYNC_EVENTS',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        sync_token: params.syncToken,
+        max_results: params.maxResults || 250,
+      },
+    });
+  }
+
+  async createEvent(params: {
+    connectedAccountId: string;
+    summary: string;
+    description?: string;
+    start: { dateTime: string } | { date: string };
+    end: { dateTime: string } | { date: string };
+    location?: string;
+    attendees?: Array<{ email: string }>;
+    sendNotifications?: boolean;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GOOGLECALENDAR_CREATE_EVENT',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        summary: params.summary,
+        description: params.description || '',
+        start: params.start,
+        end: params.end,
+        location: params.location || '',
+        attendees: params.attendees || [],
+        sendUpdates: params.sendNotifications ? 'all' : 'none',
+      },
+    });
+  }
+
+  async updateEvent(params: {
+    connectedAccountId: string;
+    eventId: string;
+    summary?: string;
+    description?: string;
+    start?: { dateTime: string } | { date: string };
+    end?: { dateTime: string } | { date: string };
+    location?: string;
+    attendees?: Array<{ email: string }>;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GOOGLECALENDAR_UPDATE_EVENT',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        event_id: params.eventId,
+        summary: params.summary,
+        description: params.description,
+        start: params.start,
+        end: params.end,
+        location: params.location,
+        attendees: params.attendees,
+      },
+    });
+  }
+
+  async deleteEvent(params: {
+    connectedAccountId: string;
+    eventId: string;
+    sendNotifications?: boolean;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GOOGLECALENDAR_DELETE_EVENT',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        event_id: params.eventId,
+        sendUpdates: params.sendNotifications ? 'all' : 'none',
+      },
+    });
+  }
 }
 
 /**
