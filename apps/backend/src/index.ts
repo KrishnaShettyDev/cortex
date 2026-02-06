@@ -609,16 +609,22 @@ app.get('/notifications/status', notificationHandlers.getNotificationStatus);
 // Webhooks (public - no auth, verified by signature)
 app.route('/webhooks', webhooksRouter);
 
-// Proactive monitoring (webhook endpoints are public, verified by signature)
-// Public webhook endpoint - must be before auth middleware
-app.post('/proactive/webhook/:provider', async (c) => {
-  const proactive = await import('./handlers/proactive');
-  const handler = proactive.default;
-  // Forward to the proactive router's webhook handler
-  return handler.fetch(c.req.raw, c.env, c.executionCtx);
+// Proactive monitoring
+// Public webhook endpoint - verified by signature, not JWT
+app.post('/proactive/webhook', async (c) => {
+  const { handleWebhook } = await import('./lib/proactive');
+  const rawBody = await c.req.text();
+  const signature = c.req.header('x-composio-signature') || '';
+  const secret = c.env.COMPOSIO_WEBHOOK_SECRET || '';
+
+  const result = await handleWebhook(c.env.DB, rawBody, signature, secret);
+  if (!result.success) {
+    return c.json({ error: result.error }, 400);
+  }
+  return c.json({ success: true, eventId: result.eventId });
 });
 
-// Protected proactive endpoints (preferences, VIP senders, events, stats)
+// Protected proactive endpoints
 app.use('/proactive/*', authenticateWithJwt);
 app.route('/proactive', proactiveRouter);
 

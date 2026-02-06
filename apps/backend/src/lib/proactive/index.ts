@@ -110,14 +110,14 @@ export async function handleWebhook(
     return { success: false, error: 'invalid_json' };
   }
 
-  // Get user from connection
+  // Get user from connection (Composio sends connectedAccountId as connectionId)
   const connectionId = payload.connectionId;
   if (!connectionId) {
     return { success: false, error: 'missing_connection_id' };
   }
 
   const conn = await db.prepare(`
-    SELECT user_id FROM integration_connections WHERE connection_id = ?
+    SELECT user_id FROM sync_connections WHERE composio_account_id = ?
   `).bind(connectionId).first<{ user_id: string }>();
 
   if (!conn) {
