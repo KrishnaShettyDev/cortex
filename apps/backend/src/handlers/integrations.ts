@@ -381,6 +381,271 @@ export async function triggerCalendarSync(c: Context<{ Bindings: Bindings }>) {
 }
 
 /**
+ * GET /integrations/calendar/events
+ * Get calendar events from synced data
+ *
+ * Query params:
+ * - start: ISO date string (required)
+ * - end: ISO date string (required)
+ */
+export async function getCalendarEvents(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = c.get('jwtPayload').sub;
+    const start = c.req.query('start');
+    const end = c.req.query('end');
+
+    if (!start || !end) {
+      return c.json({ error: 'start and end query parameters are required' }, 400);
+    }
+
+    // Query sync_items joined with memories to get calendar events
+    const eventsResult = await c.env.DB.prepare(`
+      SELECT
+        si.provider_item_id as id,
+        si.subject as title,
+        si.event_date as start_time,
+        m.content,
+        m.metadata,
+        m.created_at
+      FROM sync_items si
+      LEFT JOIN memories m ON si.memory_id = m.id
+      WHERE si.item_type = 'calendar_event'
+        AND m.user_id = ?
+        AND si.event_date >= ?
+        AND si.event_date <= ?
+      ORDER BY si.event_date ASC
+    `).bind(userId, start, end).all();
+
+    // Parse events into the format frontend expects
+    const events = (eventsResult.results as any[]).map((row) => {
+      // Parse metadata if exists
+      let metadata: any = {};
+      if (row.metadata) {
+        try {
+          metadata = JSON.parse(row.metadata);
+        } catch {
+          // Ignore parse errors
+        }
+      }
+
+      // Extract event details from content
+      const content = row.content || '';
+
+      // Parse end_time from content or estimate 1 hour
+      let endTime = row.start_time;
+      const durationMatch = content.match(/Duration:\s*(\d+)\s*(?:minutes?|mins?|hours?|hrs?)/i);
+      if (durationMatch) {
+        const duration = parseInt(durationMatch[1], 10);
+        const startDate = new Date(row.start_time);
+        if (content.toLowerCase().includes('hour')) {
+          startDate.setHours(startDate.getHours() + duration);
+        } else {
+          startDate.setMinutes(startDate.getMinutes() + duration);
+        }
+        endTime = startDate.toISOString();
+      } else {
+        // Default to 1 hour
+        const startDate = new Date(row.start_time);
+        startDate.setHours(startDate.getHours() + 1);
+        endTime = startDate.toISOString();
+      }
+
+      // Extract location from content
+      const locationMatch = content.match(/Location:\s*(.+?)(?:\n|$)/i);
+      const location = locationMatch ? locationMatch[1].trim() : metadata.location || undefined;
+
+      // Extract attendees from content
+      const attendeesMatch = content.match(/Attendees?:\s*(.+?)(?:\n|$)/i);
+      const attendees = attendeesMatch
+        ? attendeesMatch[1].split(',').map((a: string) => a.trim())
+        : metadata.attendees || [];
+
+      // Extract description
+      const descMatch = content.match(/Description:\s*(.+?)(?:\n\n|$)/is);
+      const description = descMatch ? descMatch[1].trim() : undefined;
+
+      // Detect meeting type from content
+      let meetingType: string | undefined;
+      let meetLink: string | undefined;
+
+      if (content.includes('meet.google.com')) {
+        meetingType = 'google_meet';
+        const linkMatch = content.match(/(https:\/\/meet\.google\.com\/[^\s]+)/);
+        meetLink = linkMatch ? linkMatch[1] : undefined;
+      } else if (content.includes('zoom.us')) {
+        meetingType = 'zoom';
+        const linkMatch = content.match(/(https:\/\/[^\s]*zoom\.us[^\s]+)/);
+        meetLink = linkMatch ? linkMatch[1] : undefined;
+      } else if (content.includes('teams.microsoft.com')) {
+        meetingType = 'teams';
+        const linkMatch = content.match(/(https:\/\/teams\.microsoft\.com[^\s]+)/);
+        meetLink = linkMatch ? linkMatch[1] : undefined;
+      }
+
+      return {
+        id: row.id,
+        title: row.title || 'Untitled Event',
+        description,
+        start_time: row.start_time,
+        end_time: endTime,
+        location,
+        attendees,
+        meeting_type: meetingType,
+        meet_link: meetLink,
+        source: 'google_calendar',
+        created_at: row.created_at,
+      };
+    });
+
+    return c.json({
+      success: true,
+      events,
+      message: `Found ${events.length} events`,
+    });
+  });
+}
+
+/**
+ * POST /integrations/calendar/events
+ * Create a calendar event via Composio
+ */
+export async function createCalendarEvent(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = c.get('jwtPayload').sub;
+    const body = await c.req.json();
+
+    const { title, start_time, end_time, location, description, attendees, send_notifications } = body;
+
+    if (!title || !start_time || !end_time) {
+      return c.json({ error: 'title, start_time, and end_time are required' }, 400);
+    }
+
+    // Get connected account
+    const integration = await c.env.DB.prepare(
+      'SELECT access_token FROM integrations WHERE user_id = ? AND provider = ? AND connected = 1'
+    ).bind(userId, 'googlecalendar').first();
+
+    if (!integration) {
+      return c.json({ error: 'Calendar not connected' }, 400);
+    }
+
+    const connectedAccountId = integration.access_token as string;
+    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+
+    // Create event via Composio
+    const result = await composio.calendar.createEvent({
+      connectedAccountId,
+      title,
+      startTime: start_time,
+      endTime: end_time,
+      location,
+      description,
+      attendees: attendees?.map((email: string) => ({ email })),
+      sendNotifications: send_notifications ?? true,
+    });
+
+    if (!result.successful) {
+      return c.json({ error: 'Failed to create event', details: result.error }, 500);
+    }
+
+    const event = result.data;
+
+    return c.json({
+      id: event.id,
+      title: event.summary || title,
+      start_time: event.start?.dateTime || start_time,
+      end_time: event.end?.dateTime || end_time,
+      location: event.location,
+      description: event.description,
+      attendees: event.attendees?.map((a: any) => a.email) || attendees,
+      source: 'google_calendar',
+      created_at: new Date().toISOString(),
+    });
+  });
+}
+
+/**
+ * PUT /integrations/calendar/events/:id
+ * Update a calendar event
+ */
+export async function updateCalendarEvent(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = c.get('jwtPayload').sub;
+    const eventId = c.req.param('id');
+    const body = await c.req.json();
+
+    // Get connected account
+    const integration = await c.env.DB.prepare(
+      'SELECT access_token FROM integrations WHERE user_id = ? AND provider = ? AND connected = 1'
+    ).bind(userId, 'googlecalendar').first();
+
+    if (!integration) {
+      return c.json({ error: 'Calendar not connected' }, 400);
+    }
+
+    const connectedAccountId = integration.access_token as string;
+    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+
+    // Update event via Composio
+    const result = await composio.calendar.updateEvent({
+      connectedAccountId,
+      eventId,
+      ...body,
+    });
+
+    if (!result.successful) {
+      return c.json({ error: 'Failed to update event', details: result.error }, 500);
+    }
+
+    return c.json({
+      id: eventId,
+      ...body,
+      updated_at: new Date().toISOString(),
+    });
+  });
+}
+
+/**
+ * DELETE /integrations/calendar/events/:id
+ * Delete a calendar event
+ */
+export async function deleteCalendarEvent(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = c.get('jwtPayload').sub;
+    const eventId = c.req.param('id');
+
+    // Get connected account
+    const integration = await c.env.DB.prepare(
+      'SELECT access_token FROM integrations WHERE user_id = ? AND provider = ? AND connected = 1'
+    ).bind(userId, 'googlecalendar').first();
+
+    if (!integration) {
+      return c.json({ error: 'Calendar not connected' }, 400);
+    }
+
+    const connectedAccountId = integration.access_token as string;
+    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+
+    // Delete event via Composio
+    const result = await composio.calendar.deleteEvent({
+      connectedAccountId,
+      eventId,
+    });
+
+    if (!result.successful) {
+      return c.json({ error: 'Failed to delete event', details: result.error }, 500);
+    }
+
+    // Also delete from sync_items
+    await c.env.DB.prepare(
+      'DELETE FROM sync_items WHERE provider_item_id = ?'
+    ).bind(eventId).run();
+
+    return c.json({ success: true });
+  });
+}
+
+/**
  * DELETE /integrations/:provider
  * Disconnect an integration
  */

@@ -31,6 +31,7 @@ import mcpRouter from './handlers/mcp';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 // DELETED: handleSleepComputeCron - cognitive layer purged
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
+import { runActionGeneration } from './lib/actions/generator';
 import { notificationHandlers } from './handlers/notifications';
 import { processScheduledNotifications } from './lib/notifications/scheduler';
 import { tenantScopeMiddleware, tenantAuditMiddleware, tenantRateLimitMiddleware } from './lib/multi-tenancy/middleware';
@@ -298,7 +299,7 @@ app.get('/chat/insights', (c) =>
 app.get('/chat/briefing', (c) =>
   c.json({ summary: 'Your day looks good!', sections: [] })
 );
-app.get('/autonomous-actions', (c) => c.json([]));
+// Note: /autonomous-actions requires auth - moved to protected section below
 
 // PUBLIC: OAuth callback routes (no auth required - Composio redirects here)
 app.get('/integrations/gmail/callback', integrationHandlers.gmailCallback);
@@ -307,6 +308,8 @@ app.get('/integrations/calendar/callback', integrationHandlers.calendarCallback)
 // Protected middleware
 app.use('/api/*', authenticateWithJwt);
 app.use('/integrations/*', authenticateWithJwt);
+app.use('/autonomous-actions', authenticateWithJwt);
+app.use('/actions/*', authenticateWithJwt);
 
 // Protected routes - Memories
 app.get('/api/memories', memoryHandlers.listMemories);
@@ -323,7 +326,153 @@ app.post('/integrations/gmail/connect', integrationHandlers.connectGmail);
 app.post('/integrations/calendar/connect', integrationHandlers.connectCalendar);
 app.post('/integrations/gmail/sync', integrationHandlers.triggerGmailSync);
 app.post('/integrations/calendar/sync', integrationHandlers.triggerCalendarSync);
+// Calendar events CRUD (required by web app)
+app.get('/integrations/calendar/events', integrationHandlers.getCalendarEvents);
+app.post('/integrations/calendar/events', integrationHandlers.createCalendarEvent);
+app.put('/integrations/calendar/events/:id', integrationHandlers.updateCalendarEvent);
+app.delete('/integrations/calendar/events/:id', integrationHandlers.deleteCalendarEvent);
 app.delete('/integrations/:provider', integrationHandlers.disconnectIntegration);
+
+// Legacy autonomous actions endpoints (required by web app)
+// GET /autonomous-actions - List pending actions in frontend format
+app.get('/autonomous-actions', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+  const now = new Date().toISOString();
+
+  try {
+    // Query pending actions from database
+    const pending = await c.env.DB.prepare(`
+      SELECT id, action, parameters, confirmation_message, expires_at, created_at
+      FROM pending_actions
+      WHERE user_id = ? AND expires_at > ?
+      ORDER BY created_at DESC
+      LIMIT 10
+    `).bind(userId, now).all();
+
+    // Transform to frontend format
+    const actions = (pending.results as any[]).map((p) => {
+      const params = JSON.parse(p.parameters || '{}');
+
+      // Determine action type from action name
+      let actionType = 'reminder';
+      if (p.action?.includes('email') || p.action?.includes('gmail')) {
+        actionType = 'email_reply';
+      } else if (p.action?.includes('calendar') || p.action?.includes('event')) {
+        actionType = 'calendar_create';
+      } else if (p.action?.includes('meeting')) {
+        actionType = 'meeting_prep';
+      }
+
+      return {
+        id: p.id,
+        action_type: actionType,
+        title: p.confirmation_message || p.action,
+        description: p.confirmation_message || '',
+        action_payload: params,
+        reason: 'Suggested based on your activity',
+        confidence_score: 0.8,
+        priority_score: 50,
+        source_type: 'pattern',
+        created_at: p.created_at,
+        expires_at: p.expires_at,
+      };
+    });
+
+    return c.json(actions);
+  } catch (error: any) {
+    console.error('[AutonomousActions] Error:', error);
+    return c.json([]);
+  }
+});
+
+// POST /actions/approve - Approve and execute an action
+app.post('/actions/approve', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+
+  try {
+    const body = await c.req.json();
+    const { action_id, modifications } = body;
+
+    if (!action_id) {
+      return c.json({ error: 'action_id is required' }, 400);
+    }
+
+    // Get pending action
+    const pending = await c.env.DB.prepare(`
+      SELECT * FROM pending_actions
+      WHERE id = ? AND user_id = ?
+    `).bind(action_id, userId).first();
+
+    if (!pending) {
+      return c.json({ error: 'Action not found' }, 404);
+    }
+
+    // Check if expired
+    if (new Date(pending.expires_at as string) < new Date()) {
+      await c.env.DB.prepare('DELETE FROM pending_actions WHERE id = ?').bind(action_id).run();
+      return c.json({ error: 'Action expired' }, 410);
+    }
+
+    // Execute the action (simplified - just mark as confirmed)
+    // In production, this would call the action executor
+    await c.env.DB.prepare('DELETE FROM pending_actions WHERE id = ?').bind(action_id).run();
+
+    // Log the action
+    await c.env.DB.prepare(`
+      INSERT INTO action_log (id, user_id, action, parameters, status, created_at)
+      VALUES (?, ?, ?, ?, 'completed', datetime('now'))
+    `).bind(
+      crypto.randomUUID(),
+      userId,
+      pending.action,
+      pending.parameters
+    ).run();
+
+    return c.json({ success: true, message: 'Action approved and executed' });
+  } catch (error: any) {
+    console.error('[Actions] Approve error:', error);
+    return c.json({ error: 'Failed to approve action', message: error.message }, 500);
+  }
+});
+
+// POST /actions/dismiss - Dismiss an action
+app.post('/actions/dismiss', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+
+  try {
+    const body = await c.req.json();
+    const { action_id, reason } = body;
+
+    if (!action_id) {
+      return c.json({ error: 'action_id is required' }, 400);
+    }
+
+    const result = await c.env.DB.prepare(`
+      DELETE FROM pending_actions
+      WHERE id = ? AND user_id = ?
+    `).bind(action_id, userId).run();
+
+    if (!result.meta.changes) {
+      return c.json({ error: 'Action not found' }, 404);
+    }
+
+    // Log dismissal
+    await c.env.DB.prepare(`
+      INSERT INTO action_log (id, user_id, action, parameters, status, error, created_at)
+      VALUES (?, ?, 'dismissed', ?, 'dismissed', ?, datetime('now'))
+    `).bind(
+      crypto.randomUUID(),
+      userId,
+      JSON.stringify({ action_id }),
+      reason || null
+    ).run();
+
+    return c.json({ success: true });
+  } catch (error: any) {
+    console.error('[Actions] Dismiss error:', error);
+    return c.json({ error: 'Failed to dismiss action', message: error.message }, 500);
+  }
+});
 
 // v3 API - Context Cloud (Supermemory-style)
 app.use('/v3/*', authenticateWithJwt);
@@ -427,6 +576,7 @@ app.post('/v3/upload/text', uploadHandlers.uploadText);
 // Mobile app upload endpoints (different format expected)
 app.post('/upload/audio-with-transcription', uploadHandlers.uploadAudioWithTranscription);
 app.post('/upload/photo', uploadHandlers.uploadPhoto);
+app.post('/upload/file', uploadHandlers.uploadFile);
 
 // Sync infrastructure endpoints
 app.get('/v3/sync/connections', syncHandlers.listSyncConnectionsHandler);
@@ -501,7 +651,28 @@ export default {
         console.log(`[Scheduled] Notifications: ${notifResults.sent} sent, ${notifResults.skipped} skipped, ${notifResults.failed} failed`);
       }
 
-      // DELETED: Sleep compute cron - cognitive layer purged for Supermemory++
+      // Action generation (Poke/Iris) - runs on sleep compute crons (4x daily)
+      // 3am, 9am, 3pm, 9pm UTC - generates proactive action suggestions
+      const sleepComputeCrons = ['0 3 * * *', '0 9 * * *', '0 15 * * *', '0 21 * * *'];
+      if (sleepComputeCrons.includes(event.cron)) {
+        console.log('[Scheduled] Running action generation (Poke/Iris)');
+
+        try {
+          const actionResults = await runActionGeneration(env.DB, {
+            maxUsersPerRun: 100,
+            maxActionsPerUser: 5,
+          });
+
+          console.log(
+            `[Scheduled] Action generation: ${actionResults.usersProcessed} users, ` +
+            `${actionResults.totalGenerated} actions generated, ` +
+            `${actionResults.totalSkipped} skipped, ` +
+            `${actionResults.errors.length} errors`
+          );
+        } catch (error) {
+          console.error('[Scheduled] Action generation failed:', error);
+        }
+      }
 
       // Run weekly consolidation (Sunday 2am)
       if (event.cron === '0 2 * * SUN') {

@@ -51,20 +51,17 @@ app.get('/', async (c) => {
 
   try {
     // Parallelize all queries using Promise.allSettled
+    // Note: cognitive layer tables (learnings, beliefs, outcomes) were purged in Supermemory++ migration
     const [
       userResult,
       timezoneResult,
       upcomingResult,
       overdueResult,
       nudgesResult,
-      learningsResult,
-      beliefsResult,
-      outcomeStatsResult,
-      sleepContextResult,
+      recentMemoriesResult,
+      upcomingEventsResult,
       memoriesCountResult,
       entitiesCountResult,
-      learningsCountResult,
-      beliefsCountResult,
     ] = await Promise.allSettled([
       // User info for greeting
       c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first<{ name: string }>(),
@@ -88,7 +85,7 @@ app.get('/', async (c) => {
          ORDER BY due_date ASC LIMIT 10`
       ).bind(userId, nowIso).all(),
 
-      // Top nudges
+      // Top nudges (safe - table exists)
       c.env.DB.prepare(
         `SELECT * FROM nudges
          WHERE user_id = ? AND status = 'pending'
@@ -98,39 +95,26 @@ app.get('/', async (c) => {
          LIMIT 3`
       ).bind(userId).all().catch(() => ({ results: [] })),
 
-      // Recent learnings
+      // Recent memories (replacement for cognitive layer)
       c.env.DB.prepare(
-        `SELECT id, insight, category, confidence, status, created_at
-         FROM learnings
-         WHERE user_id = ? AND status = 'active'
+        `SELECT id, content, source, importance_score, created_at
+         FROM memories
+         WHERE user_id = ? AND is_forgotten = 0
          ORDER BY created_at DESC LIMIT 5`
-      ).bind(userId).all(),
+      ).bind(userId).all().catch(() => ({ results: [] })),
 
-      // Top beliefs by confidence
+      // Upcoming calendar events from sync_items
       c.env.DB.prepare(
-        `SELECT id, proposition, belief_type, current_confidence, domain, status
-         FROM beliefs
-         WHERE user_id = ? AND status = 'active'
-         ORDER BY current_confidence DESC LIMIT 5`
-      ).bind(userId).all(),
-
-      // Outcome stats
-      c.env.DB.prepare(
-        `SELECT
-           COUNT(*) as total,
-           SUM(CASE WHEN feedback_signal = 'positive' THEN 1 ELSE 0 END) as positive,
-           SUM(CASE WHEN feedback_signal IS NOT NULL THEN 1 ELSE 0 END) as with_feedback
-         FROM outcomes
-         WHERE user_id = ?`
-      ).bind(userId).first<{ total: number; positive: number; with_feedback: number }>(),
-
-      // Sleep context
-      c.env.DB.prepare(
-        `SELECT context_data, generated_at
-         FROM session_contexts
-         WHERE user_id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))
-         ORDER BY generated_at DESC LIMIT 1`
-      ).bind(userId).first<{ context_data: string; generated_at: string }>(),
+        `SELECT si.subject as title, si.event_date, m.content
+         FROM sync_items si
+         LEFT JOIN memories m ON si.memory_id = m.id
+         WHERE si.item_type = 'calendar_event'
+           AND m.user_id = ?
+           AND si.event_date >= ?
+           AND si.event_date <= ?
+         ORDER BY si.event_date ASC
+         LIMIT 5`
+      ).bind(userId, nowIso, sevenDaysFromNow).all().catch(() => ({ results: [] })),
 
       // Stats: total memories
       c.env.DB.prepare(
@@ -141,16 +125,6 @@ app.get('/', async (c) => {
       c.env.DB.prepare(
         'SELECT COUNT(*) as count FROM entities WHERE user_id = ?'
       ).bind(userId).first<{ count: number }>(),
-
-      // Stats: total learnings
-      c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM learnings WHERE user_id = ? AND status = 'active'"
-      ).bind(userId).first<{ count: number }>(),
-
-      // Stats: total beliefs
-      c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM beliefs WHERE user_id = ? AND status = 'active'"
-      ).bind(userId).first<{ count: number }>(),
     ]);
 
     // Extract values with fallbacks
@@ -159,27 +133,8 @@ app.get('/', async (c) => {
     const upcoming = upcomingResult.status === 'fulfilled' ? upcomingResult.value?.results || [] : [];
     const overdue = overdueResult.status === 'fulfilled' ? overdueResult.value?.results || [] : [];
     const nudges = nudgesResult.status === 'fulfilled' ? nudgesResult.value?.results || [] : [];
-    const learnings = learningsResult.status === 'fulfilled' ? learningsResult.value?.results || [] : [];
-    const beliefs = beliefsResult.status === 'fulfilled' ? beliefsResult.value?.results || [] : [];
-    const outcomeStats = outcomeStatsResult.status === 'fulfilled' ? outcomeStatsResult.value : null;
-    const sleepContext = sleepContextResult.status === 'fulfilled' ? sleepContextResult.value : null;
-
-    // Parse sleep context
-    let parsedSleepContext = null;
-    let sleepGeneratedAt = null;
-    if (sleepContext?.context_data) {
-      try {
-        parsedSleepContext = JSON.parse(sleepContext.context_data);
-        sleepGeneratedAt = sleepContext.generated_at;
-      } catch {
-        // Invalid JSON, ignore
-      }
-    }
-
-    // Calculate positive rate
-    const total = outcomeStats?.total || 0;
-    const positive = outcomeStats?.positive || 0;
-    const positiveRate = total > 0 ? positive / total : 0;
+    const recentMemories = recentMemoriesResult.status === 'fulfilled' ? recentMemoriesResult.value?.results || [] : [];
+    const upcomingEvents = upcomingEventsResult.status === 'fulfilled' ? upcomingEventsResult.value?.results || [] : [];
 
     // Count today's commitments
     const todayEnd = new Date(now);
@@ -188,9 +143,36 @@ app.get('/', async (c) => {
       c.due_date && new Date(c.due_date) <= todayEnd
     ).length;
 
+    // Build urgent items for frontend (combines overdue commitments, today's events, nudges)
+    const urgentItems = [
+      ...overdue.slice(0, 3).map((c: any) => ({
+        type: 'commitment_overdue',
+        title: c.title || c.content?.slice(0, 50),
+        due_date: c.due_date,
+        priority: 'high',
+      })),
+      ...upcomingEvents.filter((e: any) => {
+        const eventDate = new Date(e.event_date);
+        return eventDate >= now && eventDate <= todayEnd;
+      }).slice(0, 3).map((e: any) => ({
+        type: 'calendar_event',
+        title: e.title,
+        due_date: e.event_date,
+        priority: 'medium',
+      })),
+      ...nudges.slice(0, 2).map((n: any) => ({
+        type: 'nudge',
+        title: n.content || n.title,
+        priority: n.priority || 'medium',
+      })),
+    ];
+
     return c.json({
       greeting: buildGreeting(userName, userTimezone),
       timezone: userTimezone,
+
+      // Urgent items for frontend display
+      urgent_items: urgentItems,
 
       commitments: {
         upcoming,
@@ -200,25 +182,25 @@ app.get('/', async (c) => {
 
       nudges,
 
-      cognitive: {
-        recentLearnings: learnings,
-        topBeliefs: beliefs,
-        outcomeStats: {
-          total,
-          positiveRate: Math.round(positiveRate * 100) / 100,
-        },
-      },
+      // Upcoming calendar events
+      upcomingEvents: upcomingEvents.map((e: any) => ({
+        title: e.title,
+        event_date: e.event_date,
+      })),
 
-      sleepCompute: {
-        lastRun: sleepGeneratedAt,
-        context: parsedSleepContext,
-      },
+      // Recent activity (replacement for cognitive layer)
+      recentActivity: recentMemories.map((m: any) => ({
+        id: m.id,
+        snippet: m.content?.slice(0, 100),
+        source: m.source,
+        created_at: m.created_at,
+      })),
 
       stats: {
         totalMemories: memoriesCountResult.status === 'fulfilled' ? memoriesCountResult.value?.count || 0 : 0,
         totalEntities: entitiesCountResult.status === 'fulfilled' ? entitiesCountResult.value?.count || 0 : 0,
-        totalLearnings: learningsCountResult.status === 'fulfilled' ? learningsCountResult.value?.count || 0 : 0,
-        totalBeliefs: beliefsCountResult.status === 'fulfilled' ? beliefsCountResult.value?.count || 0 : 0,
+        todayCommitments: todayCount,
+        overdueCount: overdue.length,
       },
     });
   } catch (error: any) {

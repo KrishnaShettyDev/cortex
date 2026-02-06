@@ -356,6 +356,158 @@ export async function uploadPhoto(c: Context<{ Bindings: Bindings }>) {
 }
 
 /**
+ * POST /upload/file
+ *
+ * Generic file upload endpoint for documents, PDFs, etc.
+ * Stores in R2 and optionally creates a memory.
+ *
+ * Accepts: multipart/form-data with 'file' field
+ * Optional: 'create_memory' boolean to create a memory from the file
+ * Returns: { url, fileId, memoryId? }
+ */
+export async function uploadFile(c: Context<{ Bindings: Bindings }>) {
+  const userId = c.get('jwtPayload').sub;
+  const tenantScope = c.get('tenantScope') || { containerTag: 'default' };
+  const containerTag = tenantScope.containerTag;
+
+  const SUPPORTED_DOCUMENT_FORMATS = [
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'application/json',
+    'text/csv',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ];
+  const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File | null;
+    const createMemory = formData.get('create_memory') === 'true';
+
+    if (!file) {
+      return c.json({ error: 'No file provided. Use field name "file".' }, 400);
+    }
+
+    const mimeType = file.type;
+
+    // Allow all supported types + images
+    const isImage = mimeType.startsWith('image/');
+    const isDocument = SUPPORTED_DOCUMENT_FORMATS.includes(mimeType);
+
+    if (!isImage && !isDocument) {
+      return c.json(
+        {
+          error: `Unsupported file format: ${mimeType}`,
+          supported: [...SUPPORTED_DOCUMENT_FORMATS, 'image/*'],
+        },
+        400
+      );
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      return c.json(
+        {
+          error: `File too large. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+        },
+        400
+      );
+    }
+
+    console.log(`[Upload] File: ${file.name}, ${file.size} bytes, ${mimeType}`);
+
+    const fileData = await file.arrayBuffer();
+
+    // Determine folder based on type
+    let folder = 'files';
+    if (isImage) folder = 'photos';
+    else if (mimeType === 'application/pdf') folder = 'documents';
+
+    // Upload to R2
+    const fileId = nanoid();
+    const extension = file.name.split('.').pop() || 'bin';
+    const fileKey = `${folder}/${userId}/${fileId}.${extension}`;
+
+    await c.env.MEDIA.put(fileKey, fileData, {
+      httpMetadata: { contentType: mimeType },
+      customMetadata: {
+        originalName: file.name,
+        uploadedAt: new Date().toISOString(),
+      },
+    });
+
+    const fileUrl = `https://media.askcortex.com/${fileKey}`;
+
+    console.log(`[Upload] File stored: ${fileUrl}`);
+
+    let memoryId: string | null = null;
+
+    // Optionally create a memory from the file
+    if (createMemory) {
+      memoryId = nanoid();
+
+      // For text files, read content. For others, create a reference.
+      let content = `File uploaded: ${file.name}`;
+      if (mimeType === 'text/plain' || mimeType === 'text/markdown') {
+        const textContent = new TextDecoder().decode(fileData);
+        content = textContent.slice(0, 10000); // Limit content length
+      }
+
+      await createMemory(c.env.DB, {
+        id: memoryId,
+        userId,
+        containerTag,
+        content,
+        source: 'file_upload',
+        metadata: {
+          source_type: 'file',
+          file_url: fileUrl,
+          file_name: file.name,
+          file_size: file.size,
+          mime_type: mimeType,
+        },
+      });
+
+      // Queue for processing if available
+      if (c.env.PROCESSING_QUEUE) {
+        try {
+          const job = await createProcessingJob(c.env.DB, {
+            memoryId,
+            userId,
+            containerTag,
+          });
+          await enqueueProcessingJob(c.env.PROCESSING_QUEUE, job);
+        } catch (e) {
+          console.warn('[Upload] Queue unavailable for file upload');
+        }
+      }
+    }
+
+    return c.json({
+      success: true,
+      url: fileUrl,
+      fileId,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType,
+      memoryId,
+    });
+  } catch (error: any) {
+    console.error('[Upload] File upload failed:', error);
+    return c.json(
+      {
+        error: 'Failed to upload file',
+        message: error.message,
+      },
+      500
+    );
+  }
+}
+
+/**
  * POST /v3/upload/text
  *
  * Quick text upload for creating memories.
