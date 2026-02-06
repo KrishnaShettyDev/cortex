@@ -28,6 +28,8 @@ import briefingRouter from './handlers/briefing';
 import actionsRouter from './handlers/actions';
 import webhooksRouter from './handlers/webhooks';
 import mcpRouter from './handlers/mcp';
+import proactiveRouter from './handlers/proactive';
+import { cleanup as runProactiveCleanup } from './lib/proactive';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 // DELETED: handleSleepComputeCron - cognitive layer purged
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
@@ -211,6 +213,14 @@ app.get('/', (c) =>
           audio: '/v3/upload/audio (POST, multipart/form-data)',
           text: '/v3/upload/text (POST, JSON body)',
         },
+      },
+      proactive: {
+        preferences: '/proactive/preferences (GET/PATCH)',
+        vip_senders: '/proactive/vip-senders (GET/POST)',
+        vip_sender_delete: '/proactive/vip-senders/:email (DELETE)',
+        events: '/proactive/events (GET)',
+        stats: '/proactive/stats (GET)',
+        webhook: '/proactive/webhook/:provider (POST, public)',
       },
     },
     getting_started: {
@@ -599,6 +609,19 @@ app.get('/notifications/status', notificationHandlers.getNotificationStatus);
 // Webhooks (public - no auth, verified by signature)
 app.route('/webhooks', webhooksRouter);
 
+// Proactive monitoring (webhook endpoints are public, verified by signature)
+// Public webhook endpoint - must be before auth middleware
+app.post('/proactive/webhook/:provider', async (c) => {
+  const proactive = await import('./handlers/proactive');
+  const handler = proactive.default;
+  // Forward to the proactive router's webhook handler
+  return handler.fetch(c.req.raw, c.env, c.executionCtx);
+});
+
+// Protected proactive endpoints (preferences, VIP senders, events, stats)
+app.use('/proactive/*', authenticateWithJwt);
+app.route('/proactive', proactiveRouter);
+
 // MCP Server (Model Context Protocol for AI clients)
 app.route('/mcp', mcpRouter);
 
@@ -671,6 +694,22 @@ export default {
           );
         } catch (error) {
           console.error('[Scheduled] Action generation failed:', error);
+        }
+      }
+
+      // Proactive cleanup - runs with 6-hourly trigger reconciliation
+      // NO POLLING - webhooks are push-based, Composio handles the push
+      if (event.cron === '0 */6 * * *') {
+        try {
+          const cleanupResults = await runProactiveCleanup(env.DB);
+          if (cleanupResults.eventsDeleted > 0) {
+            console.log(
+              `[Scheduled] Proactive cleanup: ${cleanupResults.eventsDeleted} events, ` +
+              `${cleanupResults.cacheEntriesDeleted} cache entries deleted`
+            );
+          }
+        } catch (error) {
+          console.error('[Scheduled] Proactive cleanup failed:', error);
         }
       }
 
