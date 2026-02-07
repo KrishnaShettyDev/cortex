@@ -1,0 +1,283 @@
+/**
+ * Action Parser
+ *
+ * Uses AI to extract actionable intents from natural language messages.
+ * Supports:
+ * - Calendar actions (schedule, reschedule, cancel meetings)
+ * - Email actions (send, reply, draft emails)
+ * - Query actions (search emails, get calendar, summarize)
+ */
+
+import { AVAILABLE_ACTIONS, type ActionDefinition } from './executor';
+
+export interface ParsedAction {
+  action: string;
+  parameters: Record<string, any>;
+  confidence: number;
+  confirmationMessage: string;
+}
+
+export interface ParseResult {
+  hasAction: boolean;
+  actions: ParsedAction[];
+  queryIntent?: string; // For read-only queries
+  rawResponse?: string;
+}
+
+const ACTION_PARSING_PROMPT = `You are an action parser for a personal AI assistant. Your job is to extract actionable intents from user messages.
+
+Available actions:
+${AVAILABLE_ACTIONS.map(a => `- ${a.name}: ${a.description}`).join('\n')}
+
+When analyzing a message, determine if the user wants to:
+1. CREATE something (email, event, draft)
+2. UPDATE something (reschedule, modify event)
+3. DELETE something (cancel meeting, delete event)
+4. QUERY something (search emails, get calendar, summarize)
+
+For each action, extract the relevant parameters. Be smart about inferring:
+- Relative dates: "tomorrow at 3pm" → convert to ISO datetime
+- Duration: "30 minute meeting" → calculate end_time from start_time
+- Context: "meeting with John" → john should be in attendees if you can find their email
+
+IMPORTANT RULES:
+1. If the user mentions specific people but no email, set needs_contact_lookup: true
+2. For time, always convert to ISO 8601 format using today's date: {current_date}
+3. For recurring events, just create the first instance
+4. If multiple actions are needed, list them in order
+5. Set confidence 0-1 based on how clear the intent is
+
+Respond in JSON format:
+{
+  "hasAction": boolean,
+  "actions": [
+    {
+      "action": "action_name",
+      "parameters": { ... },
+      "confidence": 0.95,
+      "confirmationMessage": "Human readable confirmation"
+    }
+  ],
+  "queryIntent": "description if this is just a question/query",
+  "needsMoreInfo": ["list of missing info if action is unclear"]
+}
+
+Examples:
+
+User: "Schedule a meeting with Sarah tomorrow at 2pm for 30 minutes"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_calendar_event",
+    "parameters": {
+      "title": "Meeting with Sarah",
+      "start_time": "2024-01-16T14:00:00",
+      "end_time": "2024-01-16T14:30:00",
+      "attendees_names": ["Sarah"],
+      "needs_contact_lookup": true
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Schedule 30-minute meeting with Sarah tomorrow at 2:00 PM?"
+  }]
+}
+
+User: "Send Josh an email about the project update"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "send_email",
+    "parameters": {
+      "to_name": "Josh",
+      "subject": "Project Update",
+      "needs_content_generation": true,
+      "needs_contact_lookup": true
+    },
+    "confidence": 0.85,
+    "confirmationMessage": "Send email to Josh about the project update?"
+  }],
+  "needsMoreInfo": ["email body content"]
+}
+
+User: "What meetings do I have tomorrow?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "get_calendar_events",
+    "parameters": {
+      "start_time": "2024-01-16T00:00:00",
+      "end_time": "2024-01-16T23:59:59"
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Get calendar events for tomorrow"
+  }],
+  "queryIntent": "User wants to see tomorrow's schedule"
+}
+
+User: "Move my 3pm meeting to 4pm"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "update_calendar_event",
+    "parameters": {
+      "needs_event_lookup": true,
+      "original_time": "15:00",
+      "new_start_time": "2024-01-15T16:00:00"
+    },
+    "confidence": 0.8,
+    "confirmationMessage": "Move your 3pm meeting to 4pm?"
+  }],
+  "needsMoreInfo": ["Which specific meeting at 3pm?"]
+}`;
+
+/**
+ * Parse a user message to extract actions
+ */
+export async function parseActionsFromMessage(
+  message: string,
+  openaiKey: string,
+  context?: {
+    currentDate?: string;
+    userTimezone?: string;
+    recentEmails?: any[];
+    todayEvents?: any[];
+  }
+): Promise<ParseResult> {
+  const currentDate = context?.currentDate || new Date().toISOString().split('T')[0];
+  const timezone = context?.userTimezone || 'UTC';
+
+  const prompt = ACTION_PARSING_PROMPT
+    .replace('{current_date}', currentDate)
+    + `\n\nUser's timezone: ${timezone}\nCurrent datetime: ${new Date().toISOString()}`;
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: message },
+        ],
+        temperature: 0.3,
+        max_tokens: 1000,
+        response_format: { type: 'json_object' },
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('[ActionParser] OpenAI error:', await response.text());
+      return { hasAction: false, actions: [] };
+    }
+
+    const data = await response.json() as {
+      choices: Array<{ message: { content: string } }>;
+    };
+
+    const parsed = JSON.parse(data.choices[0].message.content);
+
+    // Post-process: convert relative times to absolute if needed
+    if (parsed.actions) {
+      for (const action of parsed.actions) {
+        if (action.parameters) {
+          // Ensure ISO format for time fields
+          if (action.parameters.start_time && !action.parameters.start_time.includes('T')) {
+            action.parameters.start_time = parseRelativeTime(action.parameters.start_time, currentDate);
+          }
+          if (action.parameters.end_time && !action.parameters.end_time.includes('T')) {
+            action.parameters.end_time = parseRelativeTime(action.parameters.end_time, currentDate);
+          }
+        }
+      }
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error('[ActionParser] Parse error:', error);
+    return { hasAction: false, actions: [] };
+  }
+}
+
+/**
+ * Parse relative time expressions to ISO format
+ */
+function parseRelativeTime(timeStr: string, baseDate: string): string {
+  // Simple implementation - the AI should handle most cases
+  // This is a fallback for edge cases
+  const date = new Date(baseDate);
+
+  if (timeStr.toLowerCase().includes('tomorrow')) {
+    date.setDate(date.getDate() + 1);
+  }
+
+  // Try to extract time
+  const timeMatch = timeStr.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
+  if (timeMatch) {
+    let hours = parseInt(timeMatch[1]);
+    const minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+    const meridiem = timeMatch[3]?.toLowerCase();
+
+    if (meridiem === 'pm' && hours < 12) hours += 12;
+    if (meridiem === 'am' && hours === 12) hours = 0;
+
+    date.setHours(hours, minutes, 0, 0);
+  }
+
+  return date.toISOString();
+}
+
+/**
+ * Generate a confirmation message for an action
+ */
+export function generateConfirmationMessage(action: ParsedAction): string {
+  const { action: actionName, parameters } = action;
+
+  switch (actionName) {
+    case 'create_calendar_event': {
+      const time = parameters.start_time
+        ? new Date(parameters.start_time).toLocaleString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })
+        : 'unspecified time';
+      return `Create "${parameters.title}" on ${time}?`;
+    }
+
+    case 'send_email':
+      return `Send email to ${parameters.to || parameters.to_name} about "${parameters.subject}"?`;
+
+    case 'reply_to_email':
+      return `Send reply to the email thread?`;
+
+    case 'update_calendar_event':
+      return `Update the calendar event?`;
+
+    case 'delete_calendar_event':
+      return `Cancel/delete this meeting?`;
+
+    default:
+      return action.confirmationMessage || `Execute ${actionName}?`;
+  }
+}
+
+/**
+ * Check if an action requires confirmation
+ */
+export function requiresConfirmation(actionName: string): boolean {
+  const actionDef = AVAILABLE_ACTIONS.find(a => a.name === actionName);
+  return actionDef?.requiresConfirmation ?? true;
+}
+
+/**
+ * Get the category of an action
+ */
+export function getActionCategory(actionName: string): string {
+  const actionDef = AVAILABLE_ACTIONS.find(a => a.name === actionName);
+  return actionDef?.category || 'general';
+}

@@ -2,6 +2,8 @@
  * Shared types for Cortex API
  */
 
+import type { Context } from 'hono';
+
 export interface Bindings {
   DB: D1Database;
   VECTORIZE: Vectorize;
@@ -61,3 +63,25 @@ export interface IntegrationsResponse {
   google: IntegrationStatus;
   apple: IntegrationStatus;
 }
+
+// Env alias for Bindings (used in some handlers)
+export type Env = Bindings;
+
+// User type for authenticated contexts
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  timezone?: string;
+}
+
+// Authenticated context with user attached
+export type AuthenticatedContext = Context<{
+  Bindings: Bindings;
+  Variables: {
+    user: User;
+    jwtPayload: { sub: string; email: string };
+    userId: string;
+    tenantScope?: { containerTag: string };
+  };
+}>;

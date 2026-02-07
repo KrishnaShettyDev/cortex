@@ -29,7 +29,11 @@ import actionsRouter from './handlers/actions';
 import webhooksRouter from './handlers/webhooks';
 import mcpRouter from './handlers/mcp';
 import proactiveRouter from './handlers/proactive';
+import triggersRouter from './handlers/triggers';
 import { cleanup as runProactiveCleanup } from './lib/proactive';
+import { processDueTriggers } from './lib/triggers/executor';
+import { flushDueBatches, cleanupStaleBatches, resetDailyCounters } from './lib/proactive/batcher';
+import { runIncrementalSync, cleanupSeenEvents, cleanupClassificationCache } from './lib/proactive/sync';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 // DELETED: handleSleepComputeCron - cognitive layer purged
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
@@ -335,6 +339,11 @@ app.delete('/api/memories/:id', memoryHandlers.deleteExistingMemory);
 app.post('/api/search', memoryHandlers.search);
 app.post('/api/chat', memoryHandlers.chatWithMemories);
 
+// Action-enhanced chat (Iris/Poke-style)
+app.post('/api/chat/actions', memoryHandlers.chatWithActionsHandler);
+app.post('/api/actions/:id/confirm', memoryHandlers.confirmActionHandler);
+app.post('/api/actions/:id/cancel', memoryHandlers.cancelActionHandler);
+
 // Protected routes - Integrations (callbacks are public, defined above)
 app.get('/integrations/status', integrationHandlers.getIntegrationStatus);
 
@@ -354,7 +363,6 @@ app.post('/integrations/gmail/connect', integrationHandlers.connectGmail);
 app.post('/integrations/calendar/connect', integrationHandlers.connectCalendar);
 
 // Calendar events API
-console.log('[Routes] Registering calendar events API endpoints');
 app.get('/integrations/google/calendar/events', integrationHandlers.getCalendarEvents);
 app.post('/integrations/google/calendar/events', integrationHandlers.createCalendarEvent);
 
@@ -654,6 +662,11 @@ app.route('/proactive', proactiveRouter);
 // MCP Server (Model Context Protocol for AI clients)
 app.route('/mcp', mcpRouter);
 
+// User-defined triggers (natural language scheduling)
+app.use('/v3/triggers', authenticateWithJwt);
+app.use('/v3/triggers/*', authenticateWithJwt);
+app.route('/v3/triggers', triggersRouter);
+
 export default {
   fetch: app.fetch,
 
@@ -682,8 +695,55 @@ export default {
     console.log(`[Scheduled] Cron triggered: ${event.cron}`);
 
     try {
-      // Run trigger reconciliation every 6 hours
-      // This ensures triggers are set up correctly and catches any missed events
+      // =================================================================
+      // 1-MINUTE CRON: Proactive system heartbeat
+      // Handles: batch flushing, trigger execution, incremental sync
+      // =================================================================
+      if (event.cron === '* * * * *') {
+        const proactiveEnabled = env.PROACTIVE_ENABLED !== 'false';
+
+        if (proactiveEnabled) {
+          console.log('[Scheduled] Running 1-minute proactive cycle');
+
+          // 1. Flush due notification batches
+          try {
+            const batchResults = await flushDueBatches(env.DB);
+            if (batchResults.length > 0) {
+              console.log(`[Scheduled] Flushed ${batchResults.length} notification batches`);
+            }
+          } catch (error) {
+            console.error('[Scheduled] Batch flush failed:', error);
+          }
+
+          // 2. Process due user triggers
+          try {
+            const triggerResults = await processDueTriggers(env.DB);
+            if (triggerResults.length > 0) {
+              const successful = triggerResults.filter(r => r.status === 'success').length;
+              console.log(`[Scheduled] Processed ${triggerResults.length} triggers (${successful} successful)`);
+            }
+          } catch (error) {
+            console.error('[Scheduled] Trigger processing failed:', error);
+          }
+
+          // 3. Run incremental sync for active users (fallback for missed webhooks)
+          try {
+            if (env.COMPOSIO_API_KEY && env.OPENAI_API_KEY) {
+              const syncResults = await runIncrementalSync(env.DB, env.COMPOSIO_API_KEY, env.OPENAI_API_KEY);
+              const totalNewEvents = syncResults.reduce((sum, r) => sum + r.newEvents, 0);
+              if (totalNewEvents > 0) {
+                console.log(`[Scheduled] Incremental sync: ${totalNewEvents} new events from ${syncResults.length} users`);
+              }
+            }
+          } catch (error) {
+            console.error('[Scheduled] Incremental sync failed:', error);
+          }
+        }
+      }
+
+      // =================================================================
+      // 6-HOURLY CRON: Reconciliation and cleanup
+      // =================================================================
       if (event.cron === '0 */6 * * *') {
         console.log('[Scheduled] Running trigger reconciliation (6-hourly)');
 
@@ -737,8 +797,36 @@ export default {
               `${cleanupResults.cacheEntriesDeleted} cache entries deleted`
             );
           }
+
+          // Clean up stale notification batches
+          const staleBatches = await cleanupStaleBatches(env.DB);
+          if (staleBatches > 0) {
+            console.log(`[Scheduled] Cleaned up ${staleBatches} stale notification batches`);
+          }
+
+          // Clean up seen events cache (24h TTL)
+          const seenEventsDeleted = await cleanupSeenEvents(env.DB);
+          if (seenEventsDeleted > 0) {
+            console.log(`[Scheduled] Cleaned up ${seenEventsDeleted} seen events`);
+          }
+
+          // Clean up classification cache (1h TTL)
+          const classificationDeleted = await cleanupClassificationCache(env.DB);
+          if (classificationDeleted > 0) {
+            console.log(`[Scheduled] Cleaned up ${classificationDeleted} classification cache entries`);
+          }
         } catch (error) {
           console.error('[Scheduled] Proactive cleanup failed:', error);
+        }
+      }
+
+      // Reset daily notification counters at midnight UTC
+      // This runs with one of the 6-hourly crons
+      if (event.cron === '0 */6 * * *') {
+        try {
+          await resetDailyCounters(env.DB);
+        } catch (error) {
+          console.error('[Scheduled] Daily counter reset failed:', error);
         }
       }
 
@@ -788,4 +876,3 @@ export default {
     }
   },
 };
-// Force deploy Sat Feb  7 01:41:47 IST 2026

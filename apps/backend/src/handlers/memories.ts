@@ -12,7 +12,7 @@ import {
   deleteMemory,
   searchMemories,
 } from '../memory';
-import { chat, chatWithHistory } from '../chat';
+import { chat, chatWithHistory, chatWithActions, confirmAction, cancelAction } from '../chat';
 import { handleError } from '../utils/errors';
 
 function getUserId(c: Context): string {
@@ -166,6 +166,80 @@ export async function chatWithMemories(c: Context<{ Bindings: Bindings }>) {
             contextLimit: contextLimit || 5,
           }
         );
+
+    return c.json(result);
+  });
+}
+
+/**
+ * Chat with action support (Iris/Poke-style)
+ * Parses natural language for calendar/email actions
+ */
+export async function chatWithActionsHandler(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = getUserId(c);
+    const { message, history, model, contextLimit, autoExecuteQueries } = await c.req.json();
+
+    if (!message || message.trim().length === 0) {
+      return c.json({ error: 'Message is required' }, 400);
+    }
+
+    const result = await chatWithActions(
+      c.env.DB,
+      c.env.VECTORIZE,
+      userId,
+      message,
+      c.env.OPENAI_API_KEY,
+      c.env.COMPOSIO_API_KEY,
+      c.env.AI,
+      {
+        model: model || 'gpt-4o-mini',
+        contextLimit: contextLimit || 5,
+        autoExecuteQueries: autoExecuteQueries ?? true,
+        history,
+      }
+    );
+
+    return c.json(result);
+  });
+}
+
+/**
+ * Confirm and execute a pending action
+ */
+export async function confirmActionHandler(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = getUserId(c);
+    const actionId = c.req.param('id');
+
+    if (!actionId) {
+      return c.json({ error: 'Action ID is required' }, 400);
+    }
+
+    const result = await confirmAction(
+      c.env.DB,
+      userId,
+      actionId,
+      c.env.COMPOSIO_API_KEY
+    );
+
+    return c.json(result);
+  });
+}
+
+/**
+ * Cancel a pending action
+ */
+export async function cancelActionHandler(c: Context<{ Bindings: Bindings }>) {
+  return handleError(c, async () => {
+    const userId = getUserId(c);
+    const actionId = c.req.param('id');
+
+    if (!actionId) {
+      return c.json({ error: 'Action ID is required' }, 400);
+    }
+
+    const result = await cancelAction(c.env.DB, userId, actionId);
 
     return c.json(result);
   });

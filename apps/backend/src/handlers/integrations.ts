@@ -82,6 +82,19 @@ async function connectProvider(
     callbackUrl,
   });
 
+  // Store pending connection for callback lookup
+  // The linkToken is the connection ID from Composio
+  if (authLink.linkToken) {
+    console.log(`[${config.name}] Storing pending connection: ${authLink.linkToken} for user ${userId}`);
+    await c.env.DB.prepare(`
+      INSERT INTO pending_connections (id, user_id, provider, created_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(user_id, provider) DO UPDATE SET
+        id = excluded.id,
+        created_at = datetime('now')
+    `).bind(authLink.linkToken, userId, provider).run();
+  }
+
   return c.json({
     redirectUrl: authLink.redirectUrl,
     linkToken: authLink.linkToken,
@@ -99,14 +112,73 @@ async function handleCallback(
 ): Promise<Response> {
   const config = PROVIDER_CONFIG[provider];
 
-  const connectedAccountId = c.req.query('connectedAccountId') || c.req.query('connected_account_id');
+  // Log full URL for debugging
+  const fullUrl = c.req.url;
+  console.log(`[${config.name} Callback] Full URL:`, fullUrl);
+
+  // Try multiple parameter variations that Composio might use
+  let connectedAccountId = c.req.query('connectedAccountId')
+    || c.req.query('connected_account_id')
+    || c.req.query('connectionId')
+    || c.req.query('connection_id');
   const status = c.req.query('status');
-  const userId = c.req.query('entityId') || c.req.query('userId');
+  let userId = c.req.query('entityId')
+    || c.req.query('userId')
+    || c.req.query('user_id')
+    || c.req.query('entity_id');
 
-  console.log(`[${config.name} Callback]`, { status, connectedAccountId, userId });
+  console.log(`[${config.name} Callback] Parsed from URL:`, { status, connectedAccountId, userId });
 
-  if (status !== 'success' || !connectedAccountId || !userId) {
-    return c.html(errorPage(`${config.name} connection failed. Please try again.`));
+  // If userId is missing, look up pending connection from database
+  // This handles Composio v3 API which sends connectedAccountId but not userId
+  if (!userId) {
+    console.log(`[${config.name} Callback] userId missing, looking up pending connection...`);
+
+    // Find most recent pending connection for this provider (within last 10 minutes)
+    const pending = await c.env.DB.prepare(`
+      SELECT id, user_id FROM pending_connections
+      WHERE provider = ? AND created_at > datetime('now', '-10 minutes')
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).bind(provider).first<{ id: string; user_id: string }>();
+
+    if (pending) {
+      // Use Composio's connectedAccountId if provided, otherwise use our stored one
+      if (!connectedAccountId) {
+        connectedAccountId = pending.id;
+      }
+      userId = pending.user_id;
+      console.log(`[${config.name} Callback] Found pending connection:`, { connectedAccountId, userId });
+
+      // Verify connection is active with Composio
+      try {
+        const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+        const connection = await composio.client.getConnectedAccount(connectedAccountId);
+        console.log(`[${config.name} Callback] Connection status:`, connection.status);
+
+        if (connection.status !== 'ACTIVE') {
+          console.error(`[${config.name} Callback] Connection not active:`, connection.status);
+          return c.html(errorPage(`${config.name} connection is ${connection.status}. Please try again.`));
+        }
+      } catch (err: any) {
+        console.error(`[${config.name} Callback] Failed to verify connection:`, err.message);
+        // Continue anyway - the connection might still be valid
+      }
+    } else {
+      console.error(`[${config.name} Callback] No pending connection found`);
+      return c.html(errorPage(`${config.name} connection failed. No pending connection found. Please try again.`));
+    }
+  }
+
+  // Clean up pending connection
+  await c.env.DB.prepare(`
+    DELETE FROM pending_connections WHERE user_id = ? AND provider = ?
+  `).bind(userId, provider).run();
+
+  // Ensure we have a connected account ID
+  if (!connectedAccountId) {
+    console.error(`[${config.name} Callback] No connectedAccountId found`);
+    return c.html(errorPage(`${config.name} connection failed. Missing account ID. Please try again.`));
   }
 
   const now = new Date().toISOString();
@@ -299,9 +371,7 @@ export interface CalendarEvent {
  * Get calendar events for a date range
  */
 export async function getCalendarEvents(c: Context<{ Bindings: Bindings }>): Promise<Response> {
-  console.log('[Calendar] getCalendarEvents handler called');
   const userId = c.get('jwtPayload').sub;
-  console.log('[Calendar] userId:', userId);
 
   const startParam = c.req.query('start');
   const endParam = c.req.query('end');

@@ -7,7 +7,7 @@ import { MemoryReference, PendingAction, ActionTaken } from '../types';
 export type { ActionTaken } from '../types';
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   body?: unknown;
   headers?: Record<string, string>;
   requiresAuth?: boolean;

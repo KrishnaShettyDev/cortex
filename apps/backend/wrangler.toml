@@ -50,7 +50,8 @@ dead_letter_queue = "cortex-dlq"
 # Scheduled tasks
 [triggers]
 crons = [
-  "0 */6 * * *",    # Every 6h for trigger reconciliation (was: */5min polling)
+  "* * * * *",      # Every minute: flush batches, process triggers, incremental sync
+  "0 */6 * * *",    # Every 6h for trigger reconciliation and cache cleanup
   "0 2 * * SUN",    # Sunday 2am for consolidation
   "0 3 * * *",      # 3am UTC - Sleep compute
   "0 9 * * *",      # 9am UTC - Sleep compute
@@ -61,6 +62,14 @@ crons = [
 # Environment variables
 [vars]
 ENVIRONMENT = "production"
+# Proactive system configuration
+PROACTIVE_ENABLED = "true"
+PROACTIVE_LLM_MODEL = "gpt-4o-mini"
+PROACTIVE_CACHE_TTL = "3600"
+PROACTIVE_BATCH_CRITICAL = "0"
+PROACTIVE_BATCH_HIGH = "30000"
+PROACTIVE_BATCH_MEDIUM = "60000"
+PROACTIVE_MAX_SYNC_USERS = "10"
 
 # Secrets (set with: wrangler secret put SECRET_NAME)
 # Required:

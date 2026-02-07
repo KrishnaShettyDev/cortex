@@ -28,7 +28,13 @@ export interface NotificationData {
     | 'promise_reminder'
     | 'intention_nudge'
     | 'snoozed_email'
-    | 'decision_outcome';
+    | 'decision_outcome'
+    // Proactive system types (Poke/Iris-style)
+    | 'proactive_message'
+    | 'trigger_reminder'
+    | 'email_notification'
+    | 'calendar_notification'
+    | 'action_result';
 
   // Common fields
   full_content?: string;
@@ -71,6 +77,30 @@ export interface NotificationData {
   // Entity fields
   entity_id?: string;
   total_neglected?: number;
+
+  // Proactive system fields
+  proactive_message_id?: string;
+  trigger_id?: string;
+  action_id?: string;
+  urgency?: 'critical' | 'high' | 'medium' | 'low';
+  suggested_actions?: Array<{
+    type: string;
+    label: string;
+    payload?: Record<string, any>;
+  }>;
+}
+
+/**
+ * Deep link target for notification handling.
+ */
+export interface DeepLinkTarget {
+  screen: 'chat' | 'settings' | 'triggers' | 'briefing';
+  params?: {
+    messageId?: string;
+    triggerId?: string;
+    scrollToMessage?: boolean;
+    actionToExecute?: string;
+  };
 }
 
 // Lazy-loaded modules
@@ -136,6 +166,122 @@ const getNotifications = async (): Promise<typeof NotificationsType | null> => {
 class NotificationService {
   private pushToken: string | null = null;
   private initialized = false;
+  private responseCallback: ((target: DeepLinkTarget) => void) | null = null;
+
+  /**
+   * Set a callback for handling notification taps.
+   * The callback receives the deep link target to navigate to.
+   */
+  setResponseHandler(callback: (target: DeepLinkTarget) => void): void {
+    this.responseCallback = callback;
+  }
+
+  /**
+   * Parse notification data into a deep link target.
+   */
+  parseDeepLinkTarget(data: NotificationData | null): DeepLinkTarget {
+    if (!data) {
+      return { screen: 'chat' };
+    }
+
+    // Proactive message types
+    if (data.type === 'proactive_message' || data.proactive_message_id) {
+      return {
+        screen: 'chat',
+        params: {
+          messageId: data.proactive_message_id,
+          scrollToMessage: true,
+        },
+      };
+    }
+
+    // Trigger-related notifications
+    if (data.type === 'trigger_reminder' || data.trigger_id) {
+      return {
+        screen: 'chat',
+        params: {
+          triggerId: data.trigger_id,
+          scrollToMessage: true,
+        },
+      };
+    }
+
+    // Email notifications
+    if (data.type === 'email_notification' || data.type === 'urgent_email') {
+      return {
+        screen: 'chat',
+        params: {
+          messageId: data.proactive_message_id,
+          scrollToMessage: true,
+        },
+      };
+    }
+
+    // Calendar notifications
+    if (data.type === 'calendar_notification' || data.type === 'meeting_prep') {
+      return {
+        screen: 'chat',
+        params: {
+          messageId: data.proactive_message_id,
+          scrollToMessage: true,
+        },
+      };
+    }
+
+    // Briefing
+    if (data.type === 'briefing') {
+      return {
+        screen: 'briefing',
+      };
+    }
+
+    // Commitment/reminder
+    if (data.type === 'commitment' || data.type === 'reminder') {
+      return {
+        screen: 'chat',
+        params: {
+          messageId: data.proactive_message_id || data.commitment_id,
+          scrollToMessage: true,
+        },
+      };
+    }
+
+    // Default to chat
+    return { screen: 'chat' };
+  }
+
+  /**
+   * Get the Android notification channel for a given notification type.
+   */
+  getChannelForType(type: NotificationData['type']): string {
+    switch (type) {
+      case 'briefing':
+        return 'briefings';
+      case 'meeting_prep':
+      case 'calendar_notification':
+        return 'meeting_prep';
+      case 'urgent_email':
+      case 'email_notification':
+        return 'urgent_email';
+      case 'commitment':
+      case 'promise_reminder':
+      case 'trigger_reminder':
+        return 'commitments';
+      case 'pattern_warning':
+        return 'patterns';
+      case 'reconnection_nudge':
+      case 'important_date_reminder':
+      case 'connection':
+        return 'relationships';
+      case 'reminder':
+      case 'proactive_message':
+        return 'reminders';
+      case 'memory_insight':
+        return 'insights';
+      default:
+        return 'default';
+    }
+  }
 
   /**
    * Initialize notification service.
@@ -281,6 +427,25 @@ class NotificationService {
       importance: Notifications.AndroidImportance.DEFAULT,
       sound: 'default',
     });
+
+    // Proactive notifications channel (critical urgency)
+    await Notifications.setNotificationChannelAsync('proactive_critical', {
+      name: 'Critical Alerts',
+      description: 'OTPs, security alerts, and urgent notifications',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 500, 200, 500],
+      sound: 'default',
+      bypassDnd: true,
+    });
+
+    // Proactive notifications channel (high urgency)
+    await Notifications.setNotificationChannelAsync('proactive_high', {
+      name: 'Important Notifications',
+      description: 'VIP emails, payment issues, and direct requests',
+      importance: Notifications.AndroidImportance.HIGH,
+      vibrationPattern: [0, 250],
+      sound: 'default',
+    });
   }
 
   /**
@@ -370,11 +535,39 @@ class NotificationService {
       return { remove: () => {} };
     }
     try {
-      return NotificationsModule.addNotificationResponseReceivedListener(callback);
+      return NotificationsModule.addNotificationResponseReceivedListener((response) => {
+        // Parse deep link target - cast through unknown to avoid strict type checking
+        const rawData = response.notification.request.content.data;
+        const data = (rawData && typeof rawData === 'object' && 'type' in rawData)
+          ? rawData as unknown as NotificationData
+          : null;
+        if (data && this.responseCallback) {
+          const target = this.parseDeepLinkTarget(data);
+          this.responseCallback(target);
+        }
+        // Also call the original callback
+        callback(response);
+      });
     } catch (error) {
       logger.warn('addNotificationResponseReceivedListener not available');
       return { remove: () => {} };
     }
+  }
+
+  /**
+   * Handle notification that was opened while app was closed.
+   * Call this on app startup to handle any pending deep links.
+   */
+  async handleInitialNotification(): Promise<DeepLinkTarget | null> {
+    const response = await this.getLastNotificationResponse();
+    if (!response) return null;
+
+    // Cast through unknown to avoid strict type checking
+    const rawData = response.notification.request.content.data;
+    const data = (rawData && typeof rawData === 'object' && 'type' in rawData)
+      ? rawData as unknown as NotificationData
+      : null;
+    return this.parseDeepLinkTarget(data);
   }
 
   /**

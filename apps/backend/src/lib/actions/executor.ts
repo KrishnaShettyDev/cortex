@@ -184,13 +184,18 @@ export class ActionExecutor {
       (integrations.results as any[]).map((i) => i.provider)
     );
 
+    // Google Super provides email + calendar access
+    const hasGoogleSuper = connectedProviders.has('googlesuper');
+
     // Filter actions based on connected providers
     return AVAILABLE_ACTIONS.filter((action) => {
       switch (action.category) {
         case 'email':
-          return connectedProviders.has('gmail');
+          // Gmail is part of Google Super
+          return hasGoogleSuper || connectedProviders.has('gmail');
         case 'calendar':
-          return connectedProviders.has('googlecalendar');
+          // Calendar is part of Google Super
+          return hasGoogleSuper || connectedProviders.has('googlecalendar');
         case 'search':
         case 'general':
         case 'memory':
@@ -296,8 +301,23 @@ export class ActionExecutor {
 
   /**
    * Get connected account ID for a provider
+   * Google Super is preferred over individual Gmail/Calendar providers
    */
   private async getConnectedAccountId(provider: string): Promise<string | null> {
+    // For email/calendar, try Google Super first
+    if (provider === 'gmail' || provider === 'googlecalendar') {
+      const googleSuper = await this.db.prepare(`
+        SELECT access_token
+        FROM integrations
+        WHERE user_id = ? AND provider = 'googlesuper' AND connected = 1
+      `).bind(this.userId).first<{ access_token: string }>();
+
+      if (googleSuper?.access_token) {
+        return googleSuper.access_token;
+      }
+    }
+
+    // Fall back to specific provider
     const integration = await this.db.prepare(`
       SELECT access_token
       FROM integrations

@@ -44,6 +44,35 @@ export interface ChatStreamCallbacks {
   onError?: (error: string) => void;
 }
 
+// Action-enhanced chat response (Iris/Poke-style)
+export interface ActionChatResponse {
+  response: string;
+  memories_used: number;
+  model: string;
+  actions?: {
+    pending: ActionPendingItem[];
+    executed: ActionExecutedItem[];
+  };
+  queryResults?: any;
+}
+
+export interface ActionPendingItem {
+  id: string;
+  action: string;
+  parameters: Record<string, any>;
+  confirmationMessage: string;
+  confidence: number;
+  expiresAt: string;
+}
+
+export interface ActionExecutedItem {
+  success: boolean;
+  action: string;
+  message: string;
+  result?: any;
+  error?: string;
+}
+
 // Types for cognitive layer responses
 interface SessionContext {
   topBeliefs: Array<{ id: string; proposition: string; confidence: number }>;
@@ -74,6 +103,24 @@ interface Commitment {
   status: string;
   due_date: string | null;
   entity_name: string | null;
+}
+
+// Proactive message types (Poke/Iris-style)
+export interface ProactiveMessage {
+  id: string;
+  messageType: 'notification' | 'briefing' | 'reminder' | 'insight' | 'action_result';
+  content: string;
+  suggestedActions: SuggestedAction[];
+  isRead: boolean;
+  createdAt: string;
+  eventId?: string;
+  triggerId?: string;
+}
+
+export interface SuggestedAction {
+  type: string;
+  label: string;
+  payload?: Record<string, any>;
 }
 
 class ChatService {
@@ -299,6 +346,143 @@ class ChatService {
         message: 'Action execution not available',
         result: {},
       };
+    }
+  }
+
+  /**
+   * Action-enhanced chat (Iris/Poke-style)
+   * Parses natural language for calendar/email actions
+   */
+  async chatWithActions(
+    message: string,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    options?: {
+      model?: string;
+      contextLimit?: number;
+      autoExecuteQueries?: boolean;
+    }
+  ): Promise<ActionChatResponse> {
+    const response = await api.request<ActionChatResponse>('/api/chat/actions', {
+      method: 'POST',
+      body: {
+        message,
+        history,
+        model: options?.model || 'gpt-4o-mini',
+        contextLimit: options?.contextLimit || 5,
+        autoExecuteQueries: options?.autoExecuteQueries ?? true,
+      },
+    });
+
+    return response;
+  }
+
+  /**
+   * Confirm a pending action (calendar event, email, etc.)
+   */
+  async confirmPendingAction(actionId: string): Promise<{
+    success: boolean;
+    action: string;
+    message: string;
+    result?: any;
+    error?: string;
+  }> {
+    return api.request(`/api/actions/${actionId}/confirm`, {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Cancel a pending action
+   */
+  async cancelPendingAction(actionId: string): Promise<{
+    success: boolean;
+    message: string;
+  }> {
+    return api.request(`/api/actions/${actionId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  /**
+   * Stream chat with action support
+   * This provides Iris/Poke-style chat with calendar/email action capabilities
+   */
+  async chatStreamWithActions(
+    message: string,
+    conversationId: string | undefined,
+    callbacks: ChatStreamCallbacks
+  ): Promise<void> {
+    try {
+      callbacks.onSearchingMemories?.();
+      callbacks.onStatus?.({ step: 'searching', message: 'Understanding your request...' });
+
+      const response = await this.chatWithActions(message);
+
+      callbacks.onMemoriesFound?.([]);
+
+      // Check if there are pending actions that need confirmation
+      if (response.actions?.pending && response.actions.pending.length > 0) {
+        callbacks.onStatus?.({ step: 'processing', message: 'Action requires confirmation...' });
+
+        // Convert to PendingAction format
+        const pendingActions: PendingAction[] = response.actions.pending.map(p => ({
+          action_id: p.id,
+          tool: p.action,
+          arguments: p.parameters,
+        }));
+
+        callbacks.onPendingActions?.(pendingActions);
+      }
+
+      // Check if actions were executed
+      if (response.actions?.executed && response.actions.executed.length > 0) {
+        const actionsTaken: ActionTaken[] = response.actions.executed.map(e => ({
+          tool: e.action,
+          arguments: {},
+          result: {
+            success: e.success,
+            data: e.result,
+            message: e.message,
+          },
+        }));
+
+        callbacks.onActionsTaken?.(actionsTaken);
+      }
+
+      callbacks.onStatus?.({ step: 'generating', message: 'Generating response...' });
+
+      // Stream the response content
+      const fullContent = response.response;
+      const chunkSize = 20;
+      for (let i = 0; i < fullContent.length; i += chunkSize) {
+        const chunk = fullContent.slice(i, i + chunkSize);
+        callbacks.onContent?.(chunk, fullContent.slice(0, i + chunkSize));
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+
+      callbacks.onComplete?.({
+        response: fullContent,
+        conversation_id: conversationId || '',
+        memories_used: [],
+        pending_actions: response.actions?.pending?.map(p => ({
+          action_id: p.id,
+          tool: p.action,
+          arguments: p.parameters,
+        })) || [],
+        actions_taken: response.actions?.executed?.map(e => ({
+          tool: e.action,
+          arguments: {},
+          result: {
+            success: e.success,
+            data: e.result,
+            message: e.message,
+          },
+        })) || [],
+      });
+    } catch (error) {
+      logger.error('ChatService: chatStreamWithActions failed', error);
+      // Fall back to regular chat
+      await this.chatStreamFallback(message, conversationId, callbacks);
     }
   }
 
@@ -593,6 +777,258 @@ class ChatService {
         has_urgent: false,
         generated_at: new Date().toISOString(),
       };
+    }
+  }
+
+  // =============================================================================
+  // PROACTIVE MESSAGES (Poke/Iris-style)
+  // =============================================================================
+
+  /**
+   * Fetch proactive messages for the chat UI.
+   * These are system-initiated messages (notifications, reminders, insights).
+   */
+  async getProactiveMessages(options?: {
+    unreadOnly?: boolean;
+    limit?: number;
+  }): Promise<ProactiveMessage[]> {
+    try {
+      const params = new URLSearchParams();
+      if (options?.unreadOnly) params.append('unread', 'true');
+      if (options?.limit) params.append('limit', options.limit.toString());
+
+      const response = await api.request<{
+        success: boolean;
+        messages: Array<{
+          id: string;
+          message_type: string;
+          content: string;
+          suggested_actions: string;
+          is_read: number;
+          created_at: string;
+          event_id?: string;
+          trigger_id?: string;
+        }>;
+      }>(`/proactive/messages?${params.toString()}`, { method: 'GET' });
+
+      return (response.messages || []).map(msg => ({
+        id: msg.id,
+        messageType: msg.message_type as ProactiveMessage['messageType'],
+        content: msg.content,
+        suggestedActions: JSON.parse(msg.suggested_actions || '[]'),
+        isRead: msg.is_read === 1,
+        createdAt: msg.created_at,
+        eventId: msg.event_id,
+        triggerId: msg.trigger_id,
+      }));
+    } catch (error) {
+      logger.warn('ChatService: Failed to fetch proactive messages', error);
+      return [];
+    }
+  }
+
+  /**
+   * Mark a proactive message as read.
+   */
+  async markProactiveMessageRead(messageId: string): Promise<boolean> {
+    try {
+      await api.request(`/proactive/messages/${messageId}/read`, {
+        method: 'POST',
+      });
+      return true;
+    } catch (error) {
+      logger.warn('ChatService: Failed to mark message as read', error);
+      return false;
+    }
+  }
+
+  /**
+   * Execute a suggested action from a proactive message.
+   */
+  async executeProactiveAction(
+    messageId: string,
+    actionType: string,
+    payload?: Record<string, any>
+  ): Promise<{ success: boolean; result?: any; error?: string }> {
+    try {
+      const response = await api.request<{
+        success: boolean;
+        result?: any;
+        error?: string;
+      }>(`/proactive/messages/${messageId}/action`, {
+        method: 'POST',
+        body: { actionType, payload },
+      });
+      return response;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Action failed',
+      };
+    }
+  }
+
+  /**
+   * Get unread proactive message count for badge display.
+   */
+  async getUnreadProactiveCount(): Promise<number> {
+    try {
+      const response = await api.request<{
+        success: boolean;
+        count: number;
+      }>('/proactive/messages/unread-count', { method: 'GET' });
+      return response.count || 0;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Poll for new proactive messages (used by mobile app).
+   * Returns only messages created after the given timestamp.
+   */
+  async pollProactiveMessages(since?: string): Promise<ProactiveMessage[]> {
+    try {
+      const params = new URLSearchParams();
+      if (since) params.append('since', since);
+      params.append('limit', '10');
+
+      const response = await api.request<{
+        success: boolean;
+        messages: Array<{
+          id: string;
+          message_type: string;
+          content: string;
+          suggested_actions: string;
+          is_read: number;
+          created_at: string;
+          event_id?: string;
+          trigger_id?: string;
+        }>;
+      }>(`/proactive/messages/poll?${params.toString()}`, { method: 'GET' });
+
+      return (response.messages || []).map(msg => ({
+        id: msg.id,
+        messageType: msg.message_type as ProactiveMessage['messageType'],
+        content: msg.content,
+        suggestedActions: JSON.parse(msg.suggested_actions || '[]'),
+        isRead: msg.is_read === 1,
+        createdAt: msg.created_at,
+        eventId: msg.event_id,
+        triggerId: msg.trigger_id,
+      }));
+    } catch (error) {
+      logger.warn('ChatService: Failed to poll proactive messages', error);
+      return [];
+    }
+  }
+
+  // =============================================================================
+  // USER TRIGGERS (Natural language scheduling)
+  // =============================================================================
+
+  /**
+   * Create a new trigger from natural language.
+   * Example: "Remind me every weekday at 9am to check emails"
+   */
+  async createTrigger(input: string, options?: {
+    name?: string;
+    timezone?: string;
+  }): Promise<{
+    success: boolean;
+    trigger?: {
+      id: string;
+      name: string;
+      cronExpression: string;
+      humanReadable: string;
+      nextTriggerAt: string;
+    };
+    error?: string;
+  }> {
+    try {
+      const response = await api.request<{
+        success: boolean;
+        trigger: {
+          id: string;
+          name: string;
+          cronExpression: string;
+          humanReadable: string;
+          nextTriggerAt: string;
+        };
+        error?: string;
+      }>('/v3/triggers', {
+        method: 'POST',
+        body: {
+          input,
+          name: options?.name,
+          timezone: options?.timezone,
+        },
+      });
+      return response;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to create trigger',
+      };
+    }
+  }
+
+  /**
+   * Get list of user's triggers.
+   */
+  async getTriggers(): Promise<Array<{
+    id: string;
+    name: string;
+    humanReadable: string;
+    isActive: boolean;
+    nextTriggerAt: string | null;
+    lastTriggeredAt: string | null;
+  }>> {
+    try {
+      const response = await api.request<{
+        success: boolean;
+        triggers: Array<{
+          id: string;
+          name: string;
+          humanReadable: string;
+          isActive: boolean;
+          nextTriggerAt: string | null;
+          lastTriggeredAt: string | null;
+        }>;
+      }>('/v3/triggers', { method: 'GET' });
+      return response.triggers || [];
+    } catch (error) {
+      logger.warn('ChatService: Failed to fetch triggers', error);
+      return [];
+    }
+  }
+
+  /**
+   * Pause or resume a trigger.
+   */
+  async toggleTrigger(triggerId: string, isActive: boolean): Promise<boolean> {
+    try {
+      await api.request(`/v3/triggers/${triggerId}`, {
+        method: 'PATCH',
+        body: { isActive },
+      });
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Delete a trigger.
+   */
+  async deleteTrigger(triggerId: string): Promise<boolean> {
+    try {
+      await api.request(`/v3/triggers/${triggerId}`, {
+        method: 'DELETE',
+      });
+      return true;
+    } catch (error) {
+      return false;
     }
   }
 }

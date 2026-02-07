@@ -11,6 +11,7 @@
 import { fetchWithTimeout, DEFAULT_TIMEOUTS, FetchTimeoutError } from './fetch-with-timeout';
 
 const COMPOSIO_API_BASE = 'https://backend.composio.dev/api/v3';
+const COMPOSIO_API_V2 = 'https://backend.composio.dev/api/v2';
 
 /** Timeout for Composio API calls (30s - they can be slow) */
 const COMPOSIO_TIMEOUT = DEFAULT_TIMEOUTS.SLOW;
@@ -248,6 +249,8 @@ export class ComposioClient {
   /**
    * Execute a Composio tool/action
    *
+   * Uses v2 API for action execution (v3 doesn't support this endpoint)
+   *
    * RESILIENCE: Throws ComposioTokenExpiredError on 401 with connection ID
    * so callers can prompt user to reauthorize that specific connection.
    */
@@ -256,17 +259,61 @@ export class ComposioClient {
     connectedAccountId: string;
     arguments: Record<string, any>;
   }): Promise<ToolExecutionResult<T>> {
-    return this.request<ToolExecutionResult<T>>(
-      `/actions/${params.toolSlug}/execute`,
-      {
+    // Use v2 API for action execution
+    const url = `${COMPOSIO_API_V2}/actions/${params.toolSlug}/execute`;
+    const headers = {
+      'x-api-key': this.apiKey,
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const response = await fetchWithTimeout(url, {
         method: 'POST',
+        headers,
         body: JSON.stringify({
-          connectionId: params.connectedAccountId,
+          connectedAccountId: params.connectedAccountId,
           input: params.arguments,
         }),
-      },
-      { connectedAccountId: params.connectedAccountId }
-    );
+        timeout: COMPOSIO_TIMEOUT,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+
+        // Handle 401 - OAuth token expired
+        if (response.status === 401) {
+          console.error(`[Composio] 401 Unauthorized for ${params.toolSlug} - OAuth token likely expired`);
+          throw new ComposioTokenExpiredError(
+            `OAuth token expired for connection. User needs to reauthorize.`,
+            params.connectedAccountId
+          );
+        }
+
+        // Handle 429 - Rate limited
+        if (response.status === 429) {
+          const retryAfter = parseInt(response.headers.get('Retry-After') || '60', 10);
+          console.error(`[Composio] 429 Rate limited for ${params.toolSlug}, retry after ${retryAfter}s`);
+          throw new ComposioRateLimitError(
+            `Composio rate limited, retry after ${retryAfter} seconds`,
+            retryAfter
+          );
+        }
+
+        throw new Error(`Composio API error: ${response.status} - ${errorText}`);
+      }
+
+      return response.json();
+    } catch (error: any) {
+      if (error instanceof FetchTimeoutError) {
+        console.error(`[Composio] Request to ${params.toolSlug} timed out after ${COMPOSIO_TIMEOUT}ms`);
+        throw new Error(`Composio request timed out: ${params.toolSlug}`);
+      }
+      // Re-throw our custom errors as-is
+      if (error instanceof ComposioTokenExpiredError || error instanceof ComposioRateLimitError) {
+        throw error;
+      }
+      throw error;
+    }
   }
 
   /**
