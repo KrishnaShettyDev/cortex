@@ -199,20 +199,46 @@ export async function handleWebhook(
   }
 
   // Get user from connection (Composio sends connectedAccountId as connectionId)
-  const connectionId = payload.connectionId;
-  if (!connectionId) {
-    return { success: false, error: 'missing_connection_id' };
+  // Also check client_id which is our user ID for trigger webhooks
+  const connectionId = payload.connectionId || payload.connection_id;
+  const clientId = payload.client_id; // For trigger webhooks, this is our user_id
+
+  let userId: string | null = null;
+
+  // First try: direct user ID from client_id (trigger webhooks)
+  if (clientId) {
+    const user = await db.prepare(`
+      SELECT id FROM users WHERE id = ?
+    `).bind(clientId).first<{ id: string }>();
+    if (user) {
+      userId = user.id;
+    }
   }
 
-  const conn = await db.prepare(`
-    SELECT user_id FROM sync_connections WHERE composio_account_id = ?
-  `).bind(connectionId).first<{ user_id: string }>();
+  // Second try: lookup by connection ID in integrations table
+  if (!userId && connectionId) {
+    const conn = await db.prepare(`
+      SELECT user_id FROM integrations WHERE access_token = ? AND connected = 1
+    `).bind(connectionId).first<{ user_id: string }>();
+    if (conn) {
+      userId = conn.user_id;
+    }
+  }
 
-  if (!conn) {
+  // Third try: legacy sync_connections table (fallback)
+  if (!userId && connectionId) {
+    const syncConn = await db.prepare(`
+      SELECT user_id FROM sync_connections WHERE composio_account_id = ?
+    `).bind(connectionId).first<{ user_id: string }>();
+    if (syncConn) {
+      userId = syncConn.user_id;
+    }
+  }
+
+  if (!userId) {
+    console.error('[Proactive] Unknown connection:', { connectionId, clientId });
     return { success: false, error: 'unknown_connection' };
   }
-
-  const userId = conn.user_id;
 
   // Check if user has proactive enabled
   const prefs = await db.prepare(`
