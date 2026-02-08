@@ -125,78 +125,10 @@ export interface SuggestedAction {
 
 class ChatService {
   /**
-   * Send a chat message using intelligent recall from the cognitive layer.
-   *
-   * Uses /v3/recall/intelligent which:
-   * - Searches memories, learnings, and beliefs
-   * - Tracks the outcome for feedback
-   * - Returns an outcome_id for feedback submission
+   * Send a chat message with memory-augmented context.
+   * Uses /api/chat which searches memories and generates a response.
    */
   async chatStream(
-    message: string,
-    conversationId: string | undefined,
-    callbacks: ChatStreamCallbacks
-  ): Promise<void> {
-    try {
-      // Signal that we're starting to search
-      callbacks.onSearchingMemories?.();
-      callbacks.onStatus?.({ step: 'searching', message: 'Searching memories...' });
-
-      // Use intelligent recall endpoint for cognitive layer integration
-      const response = await api.request<{
-        response: string;
-        outcome_id: string;
-        sources: {
-          memories: number;
-          learnings: number;
-          beliefs: number;
-        };
-        processing_time_ms: number;
-        top_beliefs_used?: Array<{ id: string; proposition: string; confidence: number }>;
-        top_learnings_used?: Array<{ id: string; insight: string; confidence: number }>;
-      }>('/v3/recall/intelligent', {
-        method: 'POST',
-        body: {
-          query: message,
-          include_beliefs: true,
-          include_learnings: true,
-        },
-      });
-
-      // Notify that memories/context was found
-      callbacks.onMemoriesFound?.([]);
-      callbacks.onStatus?.({ step: 'generating', message: 'Generating response...' });
-
-      // Simulate typing effect by streaming content in chunks
-      const fullContent = response.response;
-      const chunkSize = 20; // Characters per chunk
-      for (let i = 0; i < fullContent.length; i += chunkSize) {
-        const chunk = fullContent.slice(i, i + chunkSize);
-        callbacks.onContent?.(chunk, fullContent.slice(0, i + chunkSize));
-        // Small delay to simulate streaming
-        await new Promise(resolve => setTimeout(resolve, 30));
-      }
-
-      callbacks.onComplete?.({
-        response: fullContent,
-        conversation_id: conversationId || response.outcome_id,
-        memories_used: [],
-        pending_actions: [],
-        actions_taken: [],
-        outcome_id: response.outcome_id,
-        sources: response.sources,
-      });
-    } catch (error) {
-      logger.error('ChatService: intelligentRecall failed, falling back to basic chat', error);
-      // Fallback to basic chat endpoint
-      await this.chatStreamFallback(message, conversationId, callbacks);
-    }
-  }
-
-  /**
-   * Fallback chat method when intelligent recall is unavailable.
-   */
-  private async chatStreamFallback(
     message: string,
     conversationId: string | undefined,
     callbacks: ChatStreamCallbacks
