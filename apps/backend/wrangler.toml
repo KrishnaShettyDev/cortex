@@ -19,10 +19,10 @@ database_id = "9f0902b3-51cf-4cd1-81ca-4cd0c90fed53"
 binding = "VECTORIZE"
 index_name = "cortex-embeddings"
 
-# R2 Storage
-[[r2_buckets]]
-binding = "MEDIA"
-bucket_name = "cortex-uploads"
+# R2 Storage (temporarily disabled - enable R2 subscription to use)
+# [[r2_buckets]]
+# binding = "MEDIA"
+# bucket_name = "cortex-uploads"
 
 # AI (for embeddings)
 [ai]
@@ -47,16 +47,14 @@ max_batch_timeout = 30
 max_retries = 3
 dead_letter_queue = "cortex-dlq"
 
-# Scheduled tasks
+# Scheduled tasks (max 5 on free plan)
 [triggers]
 crons = [
   "* * * * *",      # Every minute: flush batches, process triggers, incremental sync
   "0 */6 * * *",    # Every 6h for trigger reconciliation and cache cleanup
   "0 2 * * SUN",    # Sunday 2am for consolidation
-  "0 3 * * *",      # 3am UTC - Sleep compute
-  "0 9 * * *",      # 9am UTC - Sleep compute
-  "0 15 * * *",     # 3pm UTC - Sleep compute
-  "0 21 * * *"      # 9pm UTC - Sleep compute
+  "0 8 * * *",      # 8am UTC - Morning notifications
+  "0 20 * * *"      # 8pm UTC - Evening briefing
 ]
 
 # Environment variables
