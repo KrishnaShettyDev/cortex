@@ -40,7 +40,7 @@ import { SyncOrchestrator } from './lib/sync/orchestrator';
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
 import { runActionGeneration } from './lib/actions/generator';
 import { notificationHandlers } from './handlers/notifications';
-import { processScheduledNotifications } from './lib/notifications/scheduler';
+import { processScheduledNotifications, processProactiveNotificationQueue } from './lib/notifications/scheduler';
 import { tenantScopeMiddleware, tenantAuditMiddleware, tenantRateLimitMiddleware } from './lib/multi-tenancy/middleware';
 import { PerformanceTimer, logPerformance, trackPerformanceMetrics } from './lib/monitoring/performance';
 import { handleUncaughtError } from './lib/monitoring/errors';
@@ -657,6 +657,8 @@ app.use('/proactive/settings', authenticateWithJwt);
 app.use('/proactive/vip', authenticateWithJwt);
 app.use('/proactive/vip/*', authenticateWithJwt);
 app.use('/proactive/events', authenticateWithJwt);
+app.use('/proactive/messages', authenticateWithJwt);
+app.use('/proactive/messages/*', authenticateWithJwt);
 app.use('/proactive/cleanup', authenticateWithJwt);
 app.route('/proactive', proactiveRouter);
 
@@ -776,6 +778,16 @@ export default {
             }
           } catch (error) {
             console.error('[Scheduled] Trigger processing failed:', error);
+          }
+
+          // 3. Process proactive notification queue (webhook → push)
+          try {
+            const queueResults = await processProactiveNotificationQueue(env.DB);
+            if (queueResults.sent > 0 || queueResults.failed > 0) {
+              console.log(`[Scheduled] Notification queue: ${queueResults.sent} sent, ${queueResults.skipped} skipped, ${queueResults.failed} failed`);
+            }
+          } catch (error) {
+            console.error('[Scheduled] Notification queue processing failed:', error);
           }
 
           // NOTE: No incremental sync here - pure event-driven via Composio webhooks

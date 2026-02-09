@@ -106,3 +106,14 @@ interface ChatState {
 // This can be used with Zustand for local chat state
 // For now, export types for component usage
 export type { ChatMessage };
+
+// Fetch proactive messages (Poke/Iris-style)
+export const useProactiveMessages = () => {
+  return useQuery({
+    queryKey: queryKeys.chat.proactiveMessages(),
+    queryFn: () => chatService.getProactiveMessages({ unreadOnly: false, limit: 10 }),
+    staleTime: 30 * 1000, // 30 seconds
+    refetchOnWindowFocus: true,
+    refetchOnMount: 'always',
+  });
+};

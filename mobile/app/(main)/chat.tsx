@@ -43,7 +43,7 @@ import { chatService, speechService, api, StatusUpdate } from '../../src/service
 import { ChatMessage, PendingAction, MemoryReference, ActionTaken } from '../../src/types';
 import { colors, spacing, borderRadius, useTheme } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
-import { useChatSuggestions, useGreeting } from '../../src/hooks/useChat';
+import { useChatSuggestions, useGreeting, useProactiveMessages } from '../../src/hooks/useChat';
 import { useAppStore } from '../../src/stores/appStore';
 import { SkeletonChip } from '../../src/components/Skeleton';
 import { usePostHog } from 'posthog-react-native';
@@ -87,8 +87,14 @@ export default function ChatScreen() {
   const suggestions = suggestionsData?.suggestions || [];
   const suggestionsLoaded = !suggestionsLoading;
 
+  // Use React Query for proactive messages (Poke/Iris-style)
+  const { data: proactiveData, refetch: refetchProactive } = useProactiveMessages();
+
   // State to control when suggestions are visible (only after clicking Suggest actions)
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Track if we've loaded proactive messages this session
+  const [proactiveLoaded, setProactiveLoaded] = useState(false);
 
   // Pull-to-refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -104,6 +110,33 @@ export default function ChatScreen() {
   useEffect(() => {
     setChatDraft(inputText);
   }, [inputText, setChatDraft]);
+
+  // Load proactive messages on mount (Poke/Iris-style: Cortex texts you first)
+  useEffect(() => {
+    if (proactiveData && !proactiveLoaded && chatMessages.length === 0) {
+      const messages = proactiveData || [];
+      if (messages.length > 0) {
+        // Add recent proactive messages to chat
+        const proactiveMessages: ChatMessage[] = messages.slice(0, 3).map((msg: any) => ({
+          id: `proactive-${msg.id}`,
+          role: 'assistant' as const,
+          content: msg.content,
+          timestamp: new Date(msg.created_at),
+          isProactive: true,
+          proactiveType: msg.message_type,
+          metadata: msg.metadata,
+        }));
+
+        // Add messages in chronological order (oldest first)
+        proactiveMessages.reverse().forEach((msg) => {
+          addChatMessage(msg);
+        });
+
+        setProactiveLoaded(true);
+        logger.log('[Chat] Loaded proactive messages:', proactiveMessages.length);
+      }
+    }
+  }, [proactiveData, proactiveLoaded, chatMessages.length, addChatMessage]);
 
   // Auto-refresh suggestions when screen comes into focus
   useFocusEffect(

@@ -59,6 +59,7 @@ export const queryKeys = {
     suggestions: () => ['chat', 'suggestions'] as const,
     conversation: (id?: string) => ['chat', 'conversation', id] as const,
     greeting: () => ['chat', 'greeting'] as const,
+    proactiveMessages: () => ['chat', 'proactiveMessages'] as const,
   },
   // Integrations
   integrations: {

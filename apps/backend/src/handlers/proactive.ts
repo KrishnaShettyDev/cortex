@@ -83,6 +83,149 @@ proactiveRouter.get('/events', async (c) => {
 });
 
 // =============================================================================
+// MESSAGES (for chat UI - combines events + trigger messages)
+// =============================================================================
+
+proactiveRouter.get('/messages', async (c) => {
+  const userId = c.get('jwtPayload')?.sub;
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(c.req.url);
+  const unreadOnly = url.searchParams.get('unread') === 'true';
+  const limit = parseInt(url.searchParams.get('limit') || '20');
+  const since = url.searchParams.get('since');
+
+  try {
+    // Get proactive events (from webhooks)
+    let eventsQuery = `
+      SELECT
+        id,
+        'notification' as message_type,
+        COALESCE(title, 'New notification') as content,
+        '[]' as suggested_actions,
+        CASE WHEN notified = 1 THEN 1 ELSE 0 END as is_read,
+        created_at,
+        NULL as event_id,
+        NULL as trigger_id,
+        source,
+        urgency
+      FROM proactive_events
+      WHERE user_id = ?
+    `;
+    const eventsParams: any[] = [userId];
+
+    if (since) {
+      eventsQuery += ` AND created_at > ?`;
+      eventsParams.push(since);
+    }
+
+    eventsQuery += ` ORDER BY created_at DESC LIMIT ?`;
+    eventsParams.push(limit);
+
+    const eventsResult = await c.env.DB.prepare(eventsQuery).bind(...eventsParams).all();
+
+    // Get trigger messages (from user_triggers)
+    let messagesQuery = `
+      SELECT
+        id,
+        message_type,
+        content,
+        suggested_actions,
+        is_read,
+        created_at,
+        event_id,
+        trigger_id
+      FROM proactive_messages
+      WHERE user_id = ?
+    `;
+    const messagesParams: any[] = [userId];
+
+    if (unreadOnly) {
+      messagesQuery += ` AND is_read = 0`;
+    }
+    if (since) {
+      messagesQuery += ` AND created_at > ?`;
+      messagesParams.push(since);
+    }
+
+    messagesQuery += ` ORDER BY created_at DESC LIMIT ?`;
+    messagesParams.push(limit);
+
+    const messagesResult = await c.env.DB.prepare(messagesQuery).bind(...messagesParams).all();
+
+    // Combine and sort by created_at
+    const allMessages = [
+      ...(eventsResult.results || []).map((e: any) => ({
+        id: e.id,
+        message_type: e.message_type,
+        content: e.content,
+        suggested_actions: e.suggested_actions,
+        is_read: e.is_read,
+        created_at: e.created_at,
+        event_id: e.event_id,
+        trigger_id: e.trigger_id,
+        metadata: { source: e.source, urgency: e.urgency },
+      })),
+      ...(messagesResult.results || []).map((m: any) => ({
+        id: m.id,
+        message_type: m.message_type,
+        content: m.content,
+        suggested_actions: m.suggested_actions,
+        is_read: m.is_read,
+        created_at: m.created_at,
+        event_id: m.event_id,
+        trigger_id: m.trigger_id,
+        metadata: null,
+      })),
+    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+     .slice(0, limit);
+
+    return c.json({ success: true, messages: allMessages });
+  } catch (error: any) {
+    console.error('[Proactive] Messages fetch error:', error);
+    return c.json({ success: false, messages: [], error: error.message }, 500);
+  }
+});
+
+proactiveRouter.post('/messages/:id/read', async (c) => {
+  const userId = c.get('jwtPayload')?.sub;
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+
+  const messageId = c.req.param('id');
+
+  // Try to mark in proactive_messages first
+  await c.env.DB.prepare(`
+    UPDATE proactive_messages SET is_read = 1 WHERE id = ? AND user_id = ?
+  `).bind(messageId, userId).run();
+
+  // Also mark in proactive_events (notified = 1 means "read")
+  await c.env.DB.prepare(`
+    UPDATE proactive_events SET notified = 1 WHERE id = ? AND user_id = ?
+  `).bind(messageId, userId).run();
+
+  return c.json({ success: true });
+});
+
+proactiveRouter.get('/messages/unread-count', async (c) => {
+  const userId = c.get('jwtPayload')?.sub;
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+
+  // Count unread from both tables
+  const eventsCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as count FROM proactive_events WHERE user_id = ? AND notified = 0
+  `).bind(userId).first<{ count: number }>();
+
+  const messagesCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as count FROM proactive_messages WHERE user_id = ? AND is_read = 0
+  `).bind(userId).first<{ count: number }>();
+
+  return c.json({
+    success: true,
+    count: (eventsCount?.count || 0) + (messagesCount?.count || 0),
+  });
+});
+
+// =============================================================================
 // WEBHOOK (public - verified by signature)
 // =============================================================================
 

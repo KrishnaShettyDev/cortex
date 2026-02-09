@@ -527,3 +527,133 @@ async function logNotification(
     ticketId || null
   ).run();
 }
+
+/**
+ * Process proactive notification queue
+ *
+ * Sends queued notifications from scheduled_notifications table.
+ * Called by 1-minute cron to deliver webhooks → push notifications.
+ *
+ * SCALE: Processes 50 notifications per run to avoid resource exhaustion.
+ */
+export async function processProactiveNotificationQueue(
+  db: D1Database
+): Promise<{ sent: number; skipped: number; failed: number; errors: string[] }> {
+  const result = { sent: 0, skipped: 0, failed: 0, errors: [] as string[] };
+  const BATCH_SIZE = 50;
+
+  console.log('[NotificationQueue] Processing pending notifications');
+
+  try {
+    // Get pending notifications that are due
+    const pending = await db.prepare(`
+      SELECT id, user_id, notification_type, title, body, data, channel_id
+      FROM scheduled_notifications
+      WHERE status = 'pending'
+        AND scheduled_for_utc <= datetime('now')
+      ORDER BY scheduled_for_utc ASC
+      LIMIT ?
+    `).bind(BATCH_SIZE).all<{
+      id: string;
+      user_id: string;
+      notification_type: string;
+      title: string;
+      body: string;
+      data: string | null;
+      channel_id: string | null;
+    }>();
+
+    if (!pending.results?.length) {
+      return result;
+    }
+
+    console.log(`[NotificationQueue] Found ${pending.results.length} pending notifications`);
+
+    // Group by user to batch token lookups
+    const userNotifications = new Map<string, typeof pending.results>();
+    for (const notif of pending.results) {
+      if (!userNotifications.has(notif.user_id)) {
+        userNotifications.set(notif.user_id, []);
+      }
+      userNotifications.get(notif.user_id)!.push(notif);
+    }
+
+    // Process each user's notifications
+    for (const [userId, notifications] of userNotifications) {
+      // Get push tokens for this user
+      const tokensResult = await db.prepare(`
+        SELECT push_token FROM push_tokens WHERE user_id = ? AND is_active = 1
+      `).bind(userId).all<{ push_token: string }>();
+
+      const tokens = tokensResult.results || [];
+
+      if (tokens.length === 0) {
+        // No push tokens - mark as skipped but don't block queue
+        for (const notif of notifications) {
+          await db.prepare(`
+            UPDATE scheduled_notifications
+            SET status = 'skipped', updated_at = datetime('now')
+            WHERE id = ?
+          `).bind(notif.id).run();
+          result.skipped++;
+        }
+        continue;
+      }
+
+      // Send each notification to all tokens
+      for (const notif of notifications) {
+        let sent = false;
+
+        for (const { push_token } of tokens) {
+          if (!isValidExpoPushToken(push_token)) continue;
+
+          try {
+            const data = notif.data ? JSON.parse(notif.data) : {};
+            const pushResult = await sendPushNotification(
+              push_token,
+              notif.title,
+              notif.body,
+              data,
+              {
+                channelId: notif.channel_id || 'default',
+                priority: 'high',
+              }
+            );
+
+            if (pushResult.success) {
+              sent = true;
+            } else {
+              result.errors.push(`${notif.id}: ${pushResult.error}`);
+            }
+          } catch (error: any) {
+            result.errors.push(`${notif.id}: ${error.message}`);
+          }
+        }
+
+        // Update notification status
+        if (sent) {
+          await db.prepare(`
+            UPDATE scheduled_notifications
+            SET status = 'sent', updated_at = datetime('now')
+            WHERE id = ?
+          `).bind(notif.id).run();
+          result.sent++;
+        } else {
+          await db.prepare(`
+            UPDATE scheduled_notifications
+            SET status = 'failed', updated_at = datetime('now')
+            WHERE id = ?
+          `).bind(notif.id).run();
+          result.failed++;
+        }
+      }
+    }
+
+    console.log(`[NotificationQueue] Complete: ${result.sent} sent, ${result.skipped} skipped, ${result.failed} failed`);
+    return result;
+  } catch (error: any) {
+    console.error('[NotificationQueue] Fatal error:', error);
+    result.errors.push(`Fatal: ${error.message}`);
+    return result;
+  }
+}

@@ -95,6 +95,10 @@ export interface ChatMessage {
     learnings: number;
     beliefs: number;
   };
+  // Proactive message flags (Poke/Iris-style)
+  isProactive?: boolean;
+  proactiveType?: 'notification' | 'briefing' | 'reminder' | 'insight' | 'action_result';
+  metadata?: Record<string, any>;
 }
 
 export interface MemoryReference {
