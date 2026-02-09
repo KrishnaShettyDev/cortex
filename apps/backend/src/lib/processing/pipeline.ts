@@ -85,14 +85,10 @@ export class ProcessingPipeline {
         await this.runTemporalExtraction();
       });
 
-      // Step 5.5: Check for temporal conflicts (AUDN-style)
-      // This detects if the new memory contradicts or updates existing memories
-      try {
-        await this.runTemporalConflictResolution();
-      } catch (error) {
-        // Non-blocking - conflict resolution failure shouldn't stop pipeline
-        console.warn(`[Pipeline] Temporal conflict resolution failed (non-critical):`, error);
-      }
+      // NOTE: Step 5.5 (temporal conflict resolution) has been REMOVED.
+      // AUDN cycle already handles conflict detection at memory creation time.
+      // Running it again here was redundant and could produce conflicting decisions.
+      // See: src/lib/audn.ts for the canonical conflict resolution logic.
 
       // Step 6: Extract entities and relationships
       await this.runStep('entity_extraction', async () => {

@@ -38,7 +38,7 @@ export interface AUDNContext {
  * Determine what action to take with new memory
  */
 export async function determineAUDNAction(
-  env: { DB: D1Database; VECTORIZE: Vectorize; AI: any },
+  env: { DB: D1Database; VECTORIZE: Vectorize; AI: any; OPENAI_API_KEY?: string },
   userId: string,
   newContent: string,
   embedding: number[]
@@ -72,7 +72,7 @@ export async function determineAUDNAction(
   );
 
   // 3. Call LLM to make AUDN decision
-  const decision = await callAUDNDecisionModel(env.AI, {
+  const decision = await callAUDNDecisionModel(env, {
     new_content: newContent,
     similar_memories: similarMemories,
   });
@@ -82,47 +82,91 @@ export async function determineAUDNAction(
 
 /**
  * Call LLM to make AUDN decision
+ * Uses OpenAI API directly (gpt-4o-mini) for reliable JSON output
  */
 async function callAUDNDecisionModel(
-  ai: any,
+  env: { AI: any; OPENAI_API_KEY?: string },
   context: AUDNContext
 ): Promise<AUDNDecision> {
   const prompt = buildAUDNPrompt(context);
 
-  // Use GPT-4o-mini with temp=0.1 for deterministic results
-  const response = await ai.run('@cf/openai/gpt-4o-mini', {
-    messages: [
-      {
-        role: 'system',
-        content: AUDN_SYSTEM_PROMPT,
-      },
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ],
-    temperature: 0.1,
-    max_tokens: 200,
-  });
+  // Use OpenAI API directly for reliable AUDN decisions
+  if (env.OPENAI_API_KEY) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: AUDN_SYSTEM_PROMPT },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.1,
+          max_tokens: 200,
+          response_format: { type: 'json_object' },
+        }),
+      });
 
-  // Parse JSON response
-  try {
-    const parsed = JSON.parse(response.response);
-    return {
-      action: parsed.action,
-      target_memory_id: parsed.target_memory_id,
-      reason: parsed.reason,
-      confidence: parsed.confidence || 0.8,
-    };
-  } catch (error) {
-    console.error('[AUDN] Failed to parse LLM response:', error);
-    // Fallback to ADD if parsing fails
-    return {
-      action: 'add',
-      reason: 'Failed to determine action, defaulting to ADD',
-      confidence: 0.5,
-    };
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('[AUDN] OpenAI API error:', error);
+        throw new Error(`OpenAI API failed: ${response.status}`);
+      }
+
+      const data = await response.json() as any;
+      const content = data.choices?.[0]?.message?.content || '{}';
+      const parsed = JSON.parse(content);
+
+      return {
+        action: parsed.action || 'add',
+        target_memory_id: parsed.target_memory_id,
+        reason: parsed.reason || 'Parsed from OpenAI response',
+        confidence: parsed.confidence || 0.8,
+      };
+    } catch (error) {
+      console.error('[AUDN] OpenAI call failed, falling back to Llama:', error);
+      // Fall through to Llama fallback
+    }
   }
+
+  // Fallback to Cloudflare Workers AI (Llama)
+  try {
+    const response = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+      messages: [
+        { role: 'system', content: AUDN_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.1,
+      max_tokens: 200,
+    });
+
+    const text = response.response || '';
+
+    // Try to extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        action: parsed.action || 'add',
+        target_memory_id: parsed.target_memory_id,
+        reason: parsed.reason || 'Parsed from Llama response',
+        confidence: parsed.confidence || 0.7,
+      };
+    }
+  } catch (error) {
+    console.error('[AUDN] Llama call failed:', error);
+  }
+
+  // Fallback to ADD if all parsing fails
+  return {
+    action: 'add',
+    reason: 'Failed to determine action, defaulting to ADD',
+    confidence: 0.5,
+  };
 }
 
 /**
@@ -237,7 +281,7 @@ export async function applyAUDNDecision(
  * Full AUDN pipeline for new memory
  */
 export async function processMemoryWithAUDN(
-  env: { DB: D1Database; VECTORIZE: Vectorize; AI: any },
+  env: { DB: D1Database; VECTORIZE: Vectorize; AI: any; OPENAI_API_KEY?: string },
   userId: string,
   newContent: string,
   embedding: number[]

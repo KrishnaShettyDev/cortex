@@ -34,17 +34,17 @@ export interface RerankOptions {
   query: string;
   candidates: RerankCandidate[];
   topK: number; // How many to return after reranking
-  model?: 'haiku' | 'gpt-4o-mini'; // Default: haiku
+  model?: 'gpt-4o-mini' | 'llama'; // Default: gpt-4o-mini
 }
 
 /**
  * Rerank search results using LLM
  */
 export async function rerankResults(
-  ai: any,
+  env: { AI: any; OPENAI_API_KEY?: string },
   options: RerankOptions
 ): Promise<RerankResult[]> {
-  const { query, candidates, topK, model = 'haiku' } = options;
+  const { query, candidates, topK, model = 'gpt-4o-mini' } = options;
 
   if (candidates.length === 0) {
     return [];
@@ -61,7 +61,7 @@ export async function rerankResults(
   }
 
   // Call LLM to score each candidate
-  const scores = await callRerankModel(ai, query, candidates, model);
+  const scores = await callRerankModel(env, query, candidates, model);
 
   // Combine vector and rerank scores (70% rerank, 30% vector)
   const reranked = candidates.map((candidate, index) => ({
@@ -81,42 +81,84 @@ export async function rerankResults(
 
 /**
  * Call LLM to score relevance of each candidate
+ * Uses OpenAI API directly for reliable JSON output
  */
 async function callRerankModel(
-  ai: any,
+  env: { AI: any; OPENAI_API_KEY?: string },
   query: string,
   candidates: RerankCandidate[],
-  model: 'haiku' | 'gpt-4o-mini'
+  model: 'gpt-4o-mini' | 'llama'
 ): Promise<number[]> {
   const prompt = buildRerankPrompt(query, candidates);
 
-  const modelName =
-    model === 'haiku' ? '@cf/anthropic/claude-3-haiku' : '@cf/openai/gpt-4o-mini';
+  // Use OpenAI API for reliable reranking
+  if (env.OPENAI_API_KEY && model === 'gpt-4o-mini') {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: RERANK_SYSTEM_PROMPT },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.0,
+          max_tokens: 500,
+          response_format: { type: 'json_object' },
+        }),
+      });
 
+      if (!response.ok) {
+        const error = await response.text();
+        console.error('[Rerank] OpenAI API error:', error);
+        throw new Error(`OpenAI API failed: ${response.status}`);
+      }
+
+      const data = await response.json() as any;
+      const content = data.choices?.[0]?.message?.content || '{}';
+      const parsed = JSON.parse(content);
+
+      if (parsed.scores && Array.isArray(parsed.scores)) {
+        return parsed.scores;
+      }
+    } catch (error) {
+      console.error('[Rerank] OpenAI call failed, falling back to Llama:', error);
+      // Fall through to Llama fallback
+    }
+  }
+
+  // Fallback to Cloudflare Workers AI (Llama)
   try {
-    const response = await ai.run(modelName, {
+    const response = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
       messages: [
-        {
-          role: 'system',
-          content: RERANK_SYSTEM_PROMPT,
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
+        { role: 'system', content: RERANK_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
       ],
-      temperature: 0.0, // Deterministic
+      temperature: 0.0,
       max_tokens: 500,
     });
 
-    // Parse JSON array of scores
-    const parsed = JSON.parse(response.response);
-    return parsed.scores || candidates.map(() => 0.5);
+    const text = response.response || '';
+
+    // Try to extract JSON from response
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.scores && Array.isArray(parsed.scores)) {
+        return parsed.scores;
+      }
+    }
   } catch (error) {
-    console.error('[Rerank] Failed to parse scores, using original:', error);
-    // Fallback to original vector scores if reranking fails
-    return candidates.map((c) => c.score);
+    console.error('[Rerank] Llama call failed:', error);
   }
+
+  // Fallback to original vector scores
+  console.warn('[Rerank] All reranking attempts failed, using original scores');
+  return candidates.map((c) => c.score);
 }
 
 /**
@@ -176,14 +218,14 @@ Return only valid JSON. No additional text.`;
  * Rerank with batch processing for large result sets
  */
 export async function rerankBatched(
-  ai: any,
+  env: { AI: any; OPENAI_API_KEY?: string },
   options: RerankOptions
 ): Promise<RerankResult[]> {
   const { candidates } = options;
   const BATCH_SIZE = 20; // Process 20 at a time
 
   if (candidates.length <= BATCH_SIZE) {
-    return rerankResults(ai, options);
+    return rerankResults(env, options);
   }
 
   // Split into batches
@@ -195,7 +237,7 @@ export async function rerankBatched(
   // Process each batch
   const batchResults = await Promise.all(
     batches.map((batch) =>
-      rerankResults(ai, {
+      rerankResults(env, {
         ...options,
         candidates: batch,
         topK: Math.ceil(options.topK / batches.length),

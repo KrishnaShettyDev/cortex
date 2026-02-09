@@ -154,7 +154,7 @@ export async function hybridSearch(
   }
 
   // 2. Vector search
-  let vectorResults: Array<{ id: string; score: number; type: 'memory' | 'chunk' }> = [];
+  let vectorResults: Array<{ id: string; score: number; type: 'memory' | 'chunk'; content: string; created_at: string }> = [];
   if (options.searchMode !== 'keyword') {
     const queryEmbedding = await generateEmbedding(env, options.query);
     const vectorMatches = await vectorSearch(env.VECTORIZE, queryEmbedding, options.userId, {
@@ -168,6 +168,8 @@ export async function hybridSearch(
       id: match.id,
       score: match.score,
       type: match.metadata.type,
+      content: match.metadata.content || '', // Content preview from vector metadata
+      created_at: match.metadata.created_at || new Date().toISOString(),
     }));
   }
 
@@ -214,7 +216,7 @@ export async function hybridSearch(
       })),
     ];
 
-    const reranked = await rerankResults(env.AI, {
+    const reranked = await rerankResults({ AI: env.AI, OPENAI_API_KEY: (env as any).OPENAI_API_KEY }, {
       query: options.query,
       candidates,
       topK: options.limit || 10,
@@ -274,9 +276,10 @@ export async function hybridSearch(
 
 /**
  * Merge vector and keyword results with hybrid scoring
+ * FIXED: Now properly unions BOTH vector and keyword results
  */
 function mergeResults(
-  vectorResults: Array<{ id: string; score: number; type: 'memory' | 'chunk' }>,
+  vectorResults: Array<{ id: string; score: number; type: 'memory' | 'chunk'; content: string; created_at: string }>,
   keywordMemories: Memory[],
   keywordChunks: DocumentChunk[],
   limit: number
@@ -284,27 +287,65 @@ function mergeResults(
   memories: HybridSearchResult['memories'];
   chunks: HybridSearchResult['chunks'];
 } {
-  // Create score maps
+  // Create maps from vector results (includes content from vector metadata)
   const vectorScores = new Map<string, number>();
-  vectorResults.forEach((r) => vectorScores.set(r.id, r.score));
+  const vectorContent = new Map<string, string>();
+  const vectorCreatedAt = new Map<string, string>();
+  vectorResults.forEach((r) => {
+    vectorScores.set(r.id, r.score);
+    vectorContent.set(r.id, r.content);
+    vectorCreatedAt.set(r.id, r.created_at);
+  });
 
-  // Keyword score: decay by position (1.0 for first, 0.5 for last)
+  // Keyword scoring: binary (matched = 1.0)
+  // D1 LIKE search doesn't have relevance ranking
   const keywordMemoryScores = new Map<string, number>();
-  keywordMemories.forEach((m, idx) => {
-    const score = 1.0 - (idx / keywordMemories.length) * 0.5;
-    keywordMemoryScores.set(m.id, score);
+  keywordMemories.forEach((m) => {
+    keywordMemoryScores.set(m.id, 1.0);
   });
 
   const keywordChunkScores = new Map<string, number>();
-  keywordChunks.forEach((c, idx) => {
-    const score = 1.0 - (idx / keywordChunks.length) * 0.5;
-    keywordChunkScores.set(c.id, score);
+  keywordChunks.forEach((c) => {
+    keywordChunkScores.set(c.id, 1.0);
   });
 
-  // Combine memories
+  // Build complete memory map from BOTH sources
   const memoryMap = new Map<string, Memory>();
+
+  // Add keyword memories first (full content)
   keywordMemories.forEach((m) => memoryMap.set(m.id, m));
 
+  // Add vector-only memories with content from vector metadata
+  vectorResults.forEach((r) => {
+    if (r.type === 'memory' && !memoryMap.has(r.id)) {
+      memoryMap.set(r.id, {
+        id: r.id,
+        content: r.content, // Use content from vector metadata (up to 500 chars)
+        source: 'vector',
+        created_at: r.created_at,
+      } as Memory);
+    }
+  });
+
+  // Build complete chunk map from BOTH sources
+  const chunkMap = new Map<string, DocumentChunk>();
+
+  // Add keyword chunks first (full content)
+  keywordChunks.forEach((c) => chunkMap.set(c.id, c));
+
+  // Add vector-only chunks with content from vector metadata
+  vectorResults.forEach((r) => {
+    if (r.type === 'chunk' && !chunkMap.has(r.id)) {
+      chunkMap.set(r.id, {
+        id: r.id,
+        content: r.content, // Use content from vector metadata
+        document_id: '',
+        created_at: r.created_at,
+      } as DocumentChunk);
+    }
+  });
+
+  // Score ALL memories (union of vector + keyword)
   const memoriesWithScores = Array.from(memoryMap.values()).map((m) => {
     const vectorScore = vectorScores.get(m.id) || 0;
     const keywordScore = keywordMemoryScores.get(m.id) || 0;
@@ -320,10 +361,7 @@ function mergeResults(
     };
   });
 
-  // Combine chunks
-  const chunkMap = new Map<string, DocumentChunk>();
-  keywordChunks.forEach((c) => chunkMap.set(c.id, c));
-
+  // Score ALL chunks (union of vector + keyword)
   const chunksWithScores = Array.from(chunkMap.values()).map((c) => {
     const vectorScore = vectorScores.get(c.id) || 0;
     const keywordScore = keywordChunkScores.get(c.id) || 0;

@@ -177,14 +177,74 @@ export async function deleteVector(
 }
 
 /**
- * Delete all vectors for a user (cleanup)
+ * Delete all vectors for a user (GDPR compliance)
+ * Note: Vectorize doesn't support bulk delete by metadata filter,
+ * so we query and delete in batches.
+ *
+ * LIMITATION: If user has >10000 vectors, this may need multiple calls.
+ * The function returns stats about what was deleted.
  */
 export async function deleteUserVectors(
   vectorize: Vectorize,
   userId: string
-): Promise<void> {
-  // Note: Vectorize doesn't support bulk delete by metadata filter yet
-  // This would need to be done by querying all user vectors first, then deleting by IDs
-  // For now, this is a placeholder
-  console.warn('Bulk delete by user not yet implemented in Vectorize');
+): Promise<{ deleted: number; batches: number; complete: boolean }> {
+  const BATCH_SIZE = 100;
+  const MAX_QUERY = 1000; // Query up to 1000 vectors at a time
+  let totalDeleted = 0;
+  let batchCount = 0;
+  let hasMore = true;
+
+  // Dummy vector for querying by metadata filter
+  const dummyVector = new Array(768).fill(0);
+
+  while (hasMore) {
+    try {
+      // Query vectors for this user
+      const results = await vectorize.query(dummyVector, {
+        topK: MAX_QUERY,
+        filter: { user_id: userId },
+        returnValues: false,
+        returnMetadata: 'none',
+      });
+
+      if (results.matches.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      // Delete in batches
+      const ids = results.matches.map(m => m.id);
+
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        await vectorize.deleteByIds(batch);
+        totalDeleted += batch.length;
+        batchCount++;
+
+        console.log(`[Vectorize] Deleted batch ${batchCount}: ${batch.length} vectors for user ${userId}`);
+      }
+
+      // If we got less than MAX_QUERY, we're done
+      if (results.matches.length < MAX_QUERY) {
+        hasMore = false;
+      }
+
+      // Safety limit: don't loop forever
+      if (batchCount > 100) {
+        console.warn(`[Vectorize] Hit safety limit of 100 batches for user ${userId}`);
+        break;
+      }
+    } catch (error) {
+      console.error(`[Vectorize] Error deleting vectors for user ${userId}:`, error);
+      throw error;
+    }
+  }
+
+  console.log(`[Vectorize] Completed: deleted ${totalDeleted} vectors for user ${userId} in ${batchCount} batches`);
+
+  return {
+    deleted: totalDeleted,
+    batches: batchCount,
+    complete: !hasMore,
+  };
 }

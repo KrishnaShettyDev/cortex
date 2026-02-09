@@ -432,22 +432,63 @@ export function parseGroundedResponse(response: string): {
 
 /**
  * Call LLM with grounded evidence.
+ * Uses OpenAI API for reliable grounding, falls back to Llama.
  */
 export async function callGroundedLLM(
-  ai: any,
+  env: { AI: any; OPENAI_API_KEY?: string },
   query: string,
   evidence: EvidenceSnippet[]
 ): Promise<GatedSearchResult> {
   const prompt = buildGroundedPrompt(query, evidence);
 
+  // Try OpenAI first for reliable grounded responses
+  if (env.OPENAI_API_KEY) {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: GROUNDED_SYSTEM_INSTRUCTION },
+            { role: 'user', content: prompt },
+          ],
+          max_tokens: 1024,
+          temperature: 0.1,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json() as any;
+        const text = data.choices?.[0]?.message?.content || '';
+        const parsed = parseGroundedResponse(text);
+
+        return {
+          status: parsed.status,
+          evidence,
+          answer: parsed.answer,
+          citations: parsed.citations,
+        };
+      } else {
+        console.error('[GroundedLLM] OpenAI API error:', await response.text());
+      }
+    } catch (error) {
+      console.error('[GroundedLLM] OpenAI call failed, falling back to Llama:', error);
+    }
+  }
+
+  // Fallback to Llama
   try {
-    const response = await ai.run('@cf/meta/llama-3.1-8b-instruct', {
+    const response = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
       messages: [
         { role: 'system', content: GROUNDED_SYSTEM_INSTRUCTION },
         { role: 'user', content: prompt },
       ],
       max_tokens: 1024,
-      temperature: 0.1, // Low temperature for factual grounding
+      temperature: 0.1,
     });
 
     const text = response.response || '';

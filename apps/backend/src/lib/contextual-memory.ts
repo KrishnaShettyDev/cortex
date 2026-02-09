@@ -151,7 +151,7 @@ Output only valid JSON, no explanation.`;
           {
             role: 'system',
             content:
-              'You are a fact extraction expert. Extract standalone facts with resolved pronouns.',
+              'You are a fact extraction expert. Extract standalone facts with resolved pronouns. Output only valid JSON.',
           },
           { role: 'user', content: prompt },
         ],
@@ -159,20 +159,32 @@ Output only valid JSON, no explanation.`;
       });
       text = response.response || '';
 
-      // Extract JSON from response (handle cases where LLM adds explanation)
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        console.error('[ContextualMemory] No JSON found in Llama response:', text);
-        return [];
+      // Try to extract JSON from response (handle multiple formats)
+      // Format 1: {"memories": [...]} - expected format from prompt
+      let jsonMatch = text.match(/\{\s*"memories"\s*:\s*\[[\s\S]*?\]\s*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const memories: ContextualMemory[] = parsed.memories || [];
+          return memories.filter((m) => m.confidence >= 0.6);
+        } catch (error) {
+          console.error('[ContextualMemory] Failed to parse object format:', error);
+        }
       }
 
-      try {
-        const memories: ContextualMemory[] = JSON.parse(jsonMatch[0]);
-        return memories.filter((m) => m.confidence >= 0.6);
-      } catch (error) {
-        console.error('[ContextualMemory] Failed to parse Llama response:', error);
-        return [];
+      // Format 2: [...] - bare array (LLM sometimes returns this)
+      jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        try {
+          const memories: ContextualMemory[] = JSON.parse(jsonMatch[0]);
+          return memories.filter((m) => m.confidence >= 0.6);
+        } catch (error) {
+          console.error('[ContextualMemory] Failed to parse array format:', error);
+        }
       }
+
+      console.error('[ContextualMemory] No valid JSON found in Llama response:', text.substring(0, 500));
+      return [];
     }
   } catch (error) {
     console.error('[ContextualMemory] Extraction failed:', error);
