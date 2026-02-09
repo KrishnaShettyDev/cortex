@@ -135,7 +135,7 @@ app.get('/', (c) =>
     name: 'Cortex API',
     version: '3.0.0',
     status: 'live',
-    base_url: 'https://askcortex.plutas.in',
+    base_url: c.env.WEBHOOK_BASE_URL || 'https://askcortex.plutas.in',
     endpoints: {
       health: '/health',
       auth: {
@@ -660,6 +660,8 @@ app.use('/proactive/events', authenticateWithJwt);
 app.use('/proactive/messages', authenticateWithJwt);
 app.use('/proactive/messages/*', authenticateWithJwt);
 app.use('/proactive/cleanup', authenticateWithJwt);
+app.use('/proactive/sync/*', authenticateWithJwt);
+app.use('/proactive/health', authenticateWithJwt);
 app.route('/proactive', proactiveRouter);
 
 // MCP Server (Model Context Protocol for AI clients)
@@ -805,7 +807,7 @@ export default {
         // Reconcile Composio triggers
         if (env.COMPOSIO_API_KEY) {
           const client = new ComposioClient({ apiKey: env.COMPOSIO_API_KEY });
-          const triggerResults = await reconcileTriggers(client, env.DB);
+          const triggerResults = await reconcileTriggers(client, env.DB, env.WEBHOOK_BASE_URL);
           console.log(
             `[Scheduled] Trigger reconciliation: ${triggerResults.checked} checked, ` +
             `${triggerResults.created} created, ${triggerResults.removed} removed, ` +

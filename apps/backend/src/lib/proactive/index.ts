@@ -8,6 +8,7 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import { nanoid } from 'nanoid';
+import { sanitizeForPrompt } from '../sanitize';
 
 // =============================================================================
 // TYPES
@@ -257,7 +258,11 @@ export async function handleWebhook(
     return { success: true }; // unknown event type, ignore
   }
 
-  const { source, title, body, sender } = parsed;
+  // Sanitize all text fields from webhook to prevent prompt injection
+  const source = parsed.source;
+  const title = parsed.title ? sanitizeForPrompt(parsed.title, 500) : undefined;
+  const body = parsed.body ? sanitizeForPrompt(parsed.body, 2000) : undefined;
+  const sender = parsed.sender ? sanitizeForPrompt(parsed.sender, 200) : undefined;
 
   // Classify
   const urgency = classify(title, body, sender);

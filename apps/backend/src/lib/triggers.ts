@@ -14,8 +14,14 @@ type D1Database = import('@cloudflare/workers-types').D1Database;
 
 const logger = createLogger('triggers');
 
-const WEBHOOK_BASE_URL = 'https://askcortex.plutas.in';
+// Fallback for legacy calls - prefer passing baseUrl explicitly
+const DEFAULT_WEBHOOK_BASE_URL = 'https://askcortex.plutas.in';
 const WEBHOOK_PATH = '/proactive/webhook';
+
+// Helper to get webhook base URL from env or fallback
+export function getWebhookBaseUrl(webhookBaseUrl?: string): string {
+  return webhookBaseUrl || DEFAULT_WEBHOOK_BASE_URL;
+}
 
 // Provider configurations with their triggers
 export const PROVIDER_CONFIG = {
@@ -71,12 +77,13 @@ export async function setupTriggersForProvider(
   client: ComposioClient,
   provider: Provider,
   connectedAccountId: string,
-  userId: string
+  userId: string,
+  webhookBaseUrl?: string
 ): Promise<SetupResult> {
   const config = PROVIDER_CONFIG[provider];
   const triggers: TriggerInstance[] = [];
   const errors: string[] = [];
-  const webhookUrl = `${WEBHOOK_BASE_URL}${WEBHOOK_PATH}/${provider}`;
+  const webhookUrl = `${getWebhookBaseUrl(webhookBaseUrl)}${WEBHOOK_PATH}/${provider}`;
 
   logger.info('Setting up triggers', { provider, connectedAccountId, userId });
 
@@ -191,7 +198,8 @@ interface ReconcileResult {
  */
 export async function reconcileTriggers(
   client: ComposioClient,
-  db: D1Database
+  db: D1Database,
+  webhookBaseUrl?: string
 ): Promise<ReconcileResult> {
   const stats: ReconcileResult = { checked: 0, created: 0, removed: 0, errors: [] };
 
@@ -222,7 +230,8 @@ export async function reconcileTriggers(
         client,
         provider,
         conn.connected_account_id,
-        conn.user_id
+        conn.user_id,
+        webhookBaseUrl
       );
 
       stats.created += result.triggers.length;

@@ -19,6 +19,9 @@ import {
   sanitizeToolArgs,
   validateGoal,
 } from './safety';
+import { sanitizeForPrompt, detectInjectionAttempt } from '../lib/sanitize';
+import { parseTriggerInput } from '../lib/triggers/parser';
+import { createTrigger, getUserTriggers, deleteTrigger } from '../lib/triggers/executor';
 
 export interface RouterOptions {
   env: Bindings;
@@ -68,10 +71,34 @@ export class AgentRouter {
   private context: AgentContext;
   private interactionConfig: AgentConfig | null = null;
   private executionConfig: AgentConfig | null = null;
+  // Cache for connected account ID (per request)
+  private cachedConnectionId: string | null = null;
+  private connectionCacheChecked = false;
 
   constructor(options: RouterOptions) {
     this.env = options.env;
     this.context = options.context;
+  }
+
+  /**
+   * Get cached Google connection ID (avoids repeated DB lookups)
+   */
+  private async getGoogleConnectionId(): Promise<string | null> {
+    if (this.connectionCacheChecked) {
+      return this.cachedConnectionId;
+    }
+
+    const integration = await this.env.DB
+      .prepare(
+        `SELECT access_token FROM integrations
+         WHERE user_id = ? AND provider = 'googlesuper' AND connected = 1`
+      )
+      .bind(this.context.userId)
+      .first<{ access_token: string }>();
+
+    this.cachedConnectionId = integration?.access_token || null;
+    this.connectionCacheChecked = true;
+    return this.cachedConnectionId;
   }
 
   /**
@@ -211,15 +238,22 @@ export class AgentRouter {
       { role: 'system', content: config.systemPrompt },
     ];
 
-    // Add history
+    // Add history (sanitized)
     if (input.history) {
       for (const msg of input.history.slice(-10)) {
-        messages.push({ role: msg.role, content: msg.content });
+        messages.push({ role: msg.role, content: sanitizeForPrompt(msg.content, 2000) });
       }
     }
 
-    // Add current message
-    messages.push({ role: 'user', content: input.message });
+    // Add current message (sanitized)
+    const sanitizedMessage = sanitizeForPrompt(input.message, 4000);
+
+    // Log if injection attempt detected (for monitoring)
+    if (detectInjectionAttempt(input.message)) {
+      console.warn(`[Security] Potential injection attempt detected for user ${this.context.userId}`);
+    }
+
+    messages.push({ role: 'user', content: sanitizedMessage });
 
     // Define tools
     const tools = [
@@ -460,11 +494,22 @@ export class AgentRouter {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
+    // Sanitize goal and context for prompt injection protection
+    const sanitizedGoal = sanitizeForPrompt(params.goal, 2000);
+    const sanitizedContext = params.context
+      ? Object.fromEntries(
+          Object.entries(params.context).map(([k, v]) => [
+            k,
+            typeof v === 'string' ? sanitizeForPrompt(v, 500) : v,
+          ])
+        )
+      : {};
+
     const messages: OpenAIMessage[] = [
       { role: 'system', content: config.systemPrompt },
       {
         role: 'user',
-        content: `GOAL: ${params.goal}\n\nCONTEXT: ${JSON.stringify(params.context || {})}`,
+        content: `GOAL: ${sanitizedGoal}\n\nCONTEXT: ${JSON.stringify(sanitizedContext)}`,
       },
     ];
 
@@ -614,20 +659,21 @@ export class AgentRouter {
    * Execute a single tool call
    */
   private async executeToolCall(toolName: string, args: any): Promise<string> {
-    // Get user's Composio connection ID for Gmail/Calendar
-    const integration = await this.env.DB
-      .prepare(
-        `SELECT access_token FROM integrations
-         WHERE user_id = ? AND provider = 'googlesuper' AND connected = 1`
-      )
-      .bind(this.context.userId)
-      .first<{ access_token: string }>();
+    const t0 = Date.now();
 
-    if (!integration) {
-      return JSON.stringify({ error: 'Google integration not connected. Please connect your Google account.' });
+    // Tools that require Google integration
+    const googleTools = ['gmail_send_email', 'gmail_create_draft', 'gmail_search', 'calendar_create_event', 'calendar_list_events', 'calendar_update_event', 'calendar_delete_event'];
+
+    // Get integration only if needed (cached)
+    let connectedAccountId: string | null = null;
+    if (googleTools.includes(toolName)) {
+      connectedAccountId = await this.getGoogleConnectionId();
+      console.log(`[Perf] ${toolName} - Get connection (cached): ${Date.now() - t0}ms`);
+
+      if (!connectedAccountId) {
+        return JSON.stringify({ error: 'Google integration not connected. Please connect your Google account.' });
+      }
     }
-
-    const connectedAccountId = integration.access_token;
 
     switch (toolName) {
       case 'gmail_send_email':
@@ -744,6 +790,136 @@ export class AgentRouter {
         });
       }
 
+      // Trigger management tools
+      case 'create_user_trigger': {
+        // Get user's timezone from preferences
+        const prefs = await this.env.DB.prepare(`
+          SELECT timezone FROM notification_preferences WHERE user_id = ?
+        `).bind(this.context.userId).first<{ timezone: string }>();
+        const userTimezone = prefs?.timezone || this.context.timezone || 'Asia/Kolkata';
+
+        // Parse the natural language schedule
+        const parseResult = await parseTriggerInput(
+          args.schedule_description,
+          userTimezone,
+          this.env.OPENAI_API_KEY
+        );
+
+        if (!parseResult.success || !parseResult.trigger) {
+          return JSON.stringify({
+            success: false,
+            error: parseResult.error || 'Could not parse the schedule. Please try a different format like "every weekday at 9am" or "daily at 8:30am".',
+          });
+        }
+
+        const { cronExpression, humanReadable, nextTriggerAt } = parseResult.trigger;
+
+        // Create the trigger in the database
+        const triggerName = args.action.slice(0, 50); // Use action as name, truncated
+        const trigger = await createTrigger(this.env.DB, {
+          userId: this.context.userId,
+          name: triggerName,
+          originalInput: `${args.schedule_description}: ${args.action}`,
+          cronExpression,
+          actionType: args.trigger_type || 'custom',
+          actionPayload: {
+            action: args.action,
+            triggerType: args.trigger_type,
+            humanReadable,
+          },
+          timezone: userTimezone,
+        });
+
+        return JSON.stringify({
+          success: true,
+          trigger_id: trigger.id,
+          name: triggerName,
+          schedule: humanReadable,
+          next_run: nextTriggerAt,
+          message: `Done! I'll ${args.action.toLowerCase()} ${humanReadable}. First run: ${new Date(nextTriggerAt).toLocaleString('en-US', { timeZone: userTimezone })}`,
+        });
+      }
+
+      case 'list_user_triggers': {
+        const triggers = await getUserTriggers(this.env.DB, this.context.userId);
+
+        const activeTriggers = args.include_inactive
+          ? triggers
+          : triggers.filter((t: any) => t.is_active);
+
+        if (activeTriggers.length === 0) {
+          return JSON.stringify({
+            success: true,
+            triggers: [],
+            message: 'You don\'t have any active reminders or scheduled tasks.',
+          });
+        }
+
+        return JSON.stringify({
+          success: true,
+          triggers: activeTriggers.map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            schedule: t.actionPayload?.humanReadable || t.original_input,
+            next_run: t.next_trigger_at,
+            is_active: t.is_active,
+            action_type: t.action_type,
+          })),
+          count: activeTriggers.length,
+        });
+      }
+
+      case 'delete_user_trigger': {
+        // If trigger_id is provided, delete directly
+        if (args.trigger_id) {
+          await deleteTrigger(this.env.DB, args.trigger_id, this.context.userId);
+          return JSON.stringify({
+            success: true,
+            message: 'Trigger deleted successfully.',
+          });
+        }
+
+        // Otherwise, search by name pattern
+        if (args.name_pattern) {
+          const triggers = await getUserTriggers(this.env.DB, this.context.userId);
+          const pattern = args.name_pattern.toLowerCase();
+          const matching = triggers.filter((t: any) =>
+            t.name.toLowerCase().includes(pattern) ||
+            (t.original_input && t.original_input.toLowerCase().includes(pattern))
+          );
+
+          if (matching.length === 0) {
+            return JSON.stringify({
+              success: false,
+              error: `No triggers found matching "${args.name_pattern}". Use list_user_triggers to see your active triggers.`,
+            });
+          }
+
+          if (matching.length === 1) {
+            await deleteTrigger(this.env.DB, matching[0].id, this.context.userId);
+            return JSON.stringify({
+              success: true,
+              message: `Deleted trigger: ${matching[0].name}`,
+            });
+          }
+
+          // Multiple matches - return list for user to choose
+          return JSON.stringify({
+            success: false,
+            multiple_matches: matching.map((t: any) => ({
+              id: t.id,
+              name: t.name,
+            })),
+            message: `Found ${matching.length} matching triggers. Please specify which one to delete by ID.`,
+          });
+        }
+
+        return JSON.stringify({
+          success: false,
+          error: 'Please specify either a trigger_id or name_pattern to delete.',
+        });
+      }
+
       default:
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
@@ -757,6 +933,8 @@ export class AgentRouter {
     connectedAccountId: string,
     args: Record<string, any>
   ): Promise<string> {
+    const t0 = Date.now();
+
     try {
       // Use the correct v2 endpoint format: /actions/{toolSlug}/execute
       const response = await fetch(
@@ -774,6 +952,9 @@ export class AgentRouter {
         }
       );
 
+      const fetchTime = Date.now() - t0;
+      console.log(`[Perf] Composio ${toolSlug} - API call: ${fetchTime}ms`);
+
       if (!response.ok) {
         const error = await response.text();
         console.error(`[Composio] Tool ${toolSlug} failed:`, error);
@@ -781,6 +962,7 @@ export class AgentRouter {
       }
 
       const result = await response.json();
+      console.log(`[Perf] Composio ${toolSlug} - Total: ${Date.now() - t0}ms`);
       return JSON.stringify(result);
     } catch (error) {
       console.error(`[Composio] Tool ${toolSlug} error:`, error);
@@ -922,6 +1104,52 @@ export class AgentRouter {
               limit: { type: 'number', description: 'Max results (default: 5)' },
             },
             required: ['query'],
+          },
+        },
+      },
+      // Trigger management tools
+      {
+        type: 'function' as const,
+        function: {
+          name: 'create_user_trigger',
+          description: 'Create a recurring or one-time trigger/reminder for the user. Use when user says things like "remind me", "every morning", "check daily", "notify me when", "brief me at", "schedule".',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', description: 'What Cortex should do when trigger fires. Write as a goal, e.g., "Generate morning briefing with today\'s calendar and important emails"' },
+              schedule_description: { type: 'string', description: 'Human-readable schedule, e.g., "every weekday at 9am", "tomorrow at 3pm", "every Monday"' },
+              trigger_type: { type: 'string', enum: ['reminder', 'briefing', 'check', 'custom'], description: 'Type of trigger' },
+            },
+            required: ['action', 'schedule_description', 'trigger_type'],
+          },
+        },
+      },
+      {
+        type: 'function' as const,
+        function: {
+          name: 'list_user_triggers',
+          description: 'List all active triggers/reminders for the user. Use when user asks "what reminders do I have", "show my scheduled tasks", etc.',
+          parameters: {
+            type: 'object',
+            properties: {
+              include_inactive: { type: 'boolean', description: 'Include paused/disabled triggers (default: false)' },
+            },
+            required: [],
+          },
+        },
+      },
+      {
+        type: 'function' as const,
+        function: {
+          name: 'delete_user_trigger',
+          description: 'Delete or disable a trigger/reminder. Use when user says "cancel my morning briefing", "stop the daily reminder", etc.',
+          parameters: {
+            type: 'object',
+            properties: {
+              trigger_id: { type: 'string', description: 'The trigger ID to delete (if known)' },
+              name_pattern: { type: 'string', description: 'Pattern to match trigger name if ID not known, e.g., "morning briefing"' },
+            },
+            required: [],
           },
         },
       },

@@ -31,6 +31,8 @@ export interface Bindings {
   // Feature flags
   MULTI_AGENT_ENABLED?: string; // 'true' to enable multi-agent orchestration
   PROACTIVE_ENABLED?: string; // 'true' to enable proactive monitoring
+  // Base URLs (from wrangler.toml)
+  WEBHOOK_BASE_URL?: string; // e.g., 'https://askcortex.plutas.in'
 }
 
 export interface ErrorResponse {

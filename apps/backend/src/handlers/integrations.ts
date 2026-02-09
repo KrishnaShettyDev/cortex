@@ -21,9 +21,11 @@ import {
   setupTriggersForProvider,
   enableProactiveForUser,
   removeTriggersForAccount,
+  getWebhookBaseUrl,
 } from '../lib/triggers';
 
-const BASE_URL = 'https://askcortex.plutas.in';
+// Use env var with fallback
+const getBaseUrl = (env: Bindings): string => env.WEBHOOK_BASE_URL || 'https://askcortex.plutas.in';
 
 // ============================================================================
 // STATUS
@@ -71,7 +73,8 @@ async function connectProvider(
 ): Promise<Response> {
   const userId = c.get('jwtPayload').sub;
   const config = PROVIDER_CONFIG[provider];
-  const callbackUrl = `${BASE_URL}/integrations/${provider}/callback`;
+  const baseUrl = getBaseUrl(c.env);
+  const callbackUrl = `${baseUrl}/integrations/${provider}/callback`;
 
   console.log(`[${config.name}] Creating auth link for user ${userId}`);
 
@@ -202,7 +205,7 @@ async function handleCallback(
 
   // 2. Setup triggers (background)
   c.executionCtx.waitUntil(
-    setupTriggersInBackground(c.env, provider, connectedAccountId, userId)
+    setupTriggersInBackground(c.env, provider, connectedAccountId, userId, getBaseUrl(c.env))
   );
 
   // 3. Auto-enable proactive
@@ -217,7 +220,8 @@ async function setupTriggersInBackground(
   env: Bindings,
   provider: Provider,
   connectedAccountId: string,
-  userId: string
+  userId: string,
+  webhookBaseUrl?: string
 ): Promise<void> {
   try {
     const composio = createComposioServices(env.COMPOSIO_API_KEY);
@@ -225,7 +229,8 @@ async function setupTriggersInBackground(
       composio.client,
       provider,
       connectedAccountId,
-      userId
+      userId,
+      webhookBaseUrl
     );
     console.log(`[Triggers] ${provider}: ${result.triggers.length} setup, ${result.errors.length} errors`);
   } catch (error) {

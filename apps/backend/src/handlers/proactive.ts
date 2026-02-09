@@ -226,6 +226,154 @@ proactiveRouter.get('/messages/unread-count', async (c) => {
 });
 
 // =============================================================================
+// MANUAL SYNC (Pull-to-refresh fallback)
+// =============================================================================
+
+proactiveRouter.post('/sync/manual', async (c) => {
+  const userId = c.get('jwtPayload')?.sub;
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+
+  const t0 = Date.now();
+
+  try {
+    // Get user's Google integration
+    const integration = await c.env.DB.prepare(`
+      SELECT access_token FROM integrations
+      WHERE user_id = ? AND provider = 'googlesuper' AND connected = 1
+    `).bind(userId).first<{ access_token: string }>();
+
+    if (!integration?.access_token) {
+      return c.json({
+        success: false,
+        error: 'Google not connected',
+        newEvents: 0,
+      }, 400);
+    }
+
+    // Fetch recent emails (last 1 hour) via Composio
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    const response = await fetch(
+      'https://backend.composio.dev/api/v2/actions/GMAIL_FETCH_EMAILS/execute',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': c.env.COMPOSIO_API_KEY,
+        },
+        body: JSON.stringify({
+          connectedAccountId: integration.access_token,
+          input: {
+            query: `after:${Math.floor(Date.now() / 1000 - 3600)}`, // Unix timestamp for last hour
+            max_results: 20,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      console.error('[ManualSync] Composio fetch failed:', response.status);
+      return c.json({
+        success: false,
+        error: 'Failed to fetch emails',
+        newEvents: 0,
+      }, 500);
+    }
+
+    const result = await response.json() as any;
+    const emails = result.data?.emails || result.emails || [];
+
+    // Process each email through proactive pipeline
+    let newEvents = 0;
+    for (const email of emails) {
+      // Check if already processed (dedupe)
+      const existing = await c.env.DB.prepare(`
+        SELECT id FROM proactive_events
+        WHERE user_id = ? AND source = 'email'
+        AND title = ? AND created_at > datetime('now', '-1 hour')
+      `).bind(userId, email.subject || '').first();
+
+      if (existing) continue;
+
+      // Create synthetic webhook payload
+      const payload = {
+        type: 'GOOGLESUPER_NEW_MESSAGE',
+        connectionId: integration.access_token,
+        data: {
+          subject: email.subject,
+          snippet: email.snippet || email.bodyPreview,
+          from: email.from || email.sender,
+        },
+      };
+
+      // Process through webhook handler
+      const result = await handleWebhook(
+        c.env.DB,
+        JSON.stringify(payload),
+        '', // No signature for manual sync
+        '' // No secret needed
+      );
+
+      if (result.success && result.eventId) {
+        newEvents++;
+      }
+    }
+
+    // Get last webhook time for health check
+    const lastWebhook = await c.env.DB.prepare(`
+      SELECT MAX(created_at) as last FROM proactive_events
+      WHERE user_id = ? AND source = 'email'
+    `).bind(userId).first<{ last: string }>();
+
+    return c.json({
+      success: true,
+      newEvents,
+      emailsChecked: emails.length,
+      lastWebhookAt: lastWebhook?.last || null,
+      syncDurationMs: Date.now() - t0,
+    });
+  } catch (error: any) {
+    console.error('[ManualSync] Error:', error);
+    return c.json({
+      success: false,
+      error: error.message,
+      newEvents: 0,
+    }, 500);
+  }
+});
+
+// Health check for webhook reliability
+proactiveRouter.get('/health', async (c) => {
+  const userId = c.get('jwtPayload')?.sub;
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+
+  // Check when last webhook was received
+  const lastWebhook = await c.env.DB.prepare(`
+    SELECT MAX(created_at) as last FROM proactive_events
+    WHERE user_id = ? AND source = 'email'
+  `).bind(userId).first<{ last: string }>();
+
+  // Check if user has active integrations
+  const integration = await c.env.DB.prepare(`
+    SELECT provider FROM integrations
+    WHERE user_id = ? AND connected = 1
+  `).bind(userId).first<{ provider: string }>();
+
+  const lastWebhookTime = lastWebhook?.last ? new Date(lastWebhook.last) : null;
+  const hoursSinceWebhook = lastWebhookTime
+    ? (Date.now() - lastWebhookTime.getTime()) / (1000 * 60 * 60)
+    : null;
+
+  return c.json({
+    hasIntegration: !!integration,
+    lastWebhookAt: lastWebhook?.last || null,
+    hoursSinceWebhook,
+    webhookHealthy: hoursSinceWebhook !== null ? hoursSinceWebhook < 24 : null,
+    suggestManualSync: hoursSinceWebhook !== null && hoursSinceWebhook > 6,
+  });
+});
+
+// =============================================================================
 // WEBHOOK (public - verified by signature)
 // =============================================================================
 
