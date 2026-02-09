@@ -182,6 +182,8 @@ export async function chatWithHistory(
   options: {
     model?: string;
     contextLimit?: number;
+    userName?: string;
+    userEmail?: string;
   } = {}
 ): Promise<ChatResponse> {
   const model = options.model || 'gpt-4o-mini';
@@ -197,10 +199,19 @@ export async function chatWithHistory(
     { limit: contextLimit }
   );
 
+  // Build user identity string
+  const userIdentity = options.userName
+    ? `You are assisting ${options.userName}${options.userEmail ? ` (${options.userEmail})` : ''}.`
+    : options.userEmail
+    ? `You are assisting the user with email ${options.userEmail}.`
+    : '';
+
   // Format system message with memory context
   const systemMessage: ChatMessage = {
     role: 'system',
     content: `You are Cortex, an AI-powered second brain assistant. You help users remember information, make connections, and answer questions based on their memories.
+
+${userIdentity}
 
 ${formatMemoriesContext(memories)}
 
@@ -253,15 +264,18 @@ export async function chatWithActions(
     contextLimit?: number;
     autoExecuteQueries?: boolean; // Auto-execute read-only actions
     history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+    userName?: string;
+    userEmail?: string;
   } = {}
 ): Promise<ActionChatResponse> {
   const model = options.model || 'gpt-4o-mini';
   const contextLimit = Math.min(options.contextLimit || 5, 10);
   const autoExecuteQueries = options.autoExecuteQueries ?? true;
 
-  // Step 1: Parse message for actions
+  // Step 1: Parse message for actions (include history for context)
   const parseResult = await parseActionsFromMessage(message, openaiKey, {
     currentDate: new Date().toISOString().split('T')[0],
+    history: options.history,
   });
 
   // Step 2: Search for relevant memories
@@ -345,9 +359,18 @@ export async function chatWithActions(
   // Step 4: Generate response with context
   const actionContext = buildActionContext(parseResult, pendingActions, executedActions, queryResults);
 
+  // Build user identity string
+  const userIdentity = options.userName
+    ? `You are assisting ${options.userName}${options.userEmail ? ` (${options.userEmail})` : ''}.`
+    : options.userEmail
+    ? `You are assisting the user with email ${options.userEmail}.`
+    : '';
+
   const systemMessage: ChatMessage = {
     role: 'system',
     content: `You are Cortex, an AI assistant that helps manage calendar, email, and memories. You can take actions on behalf of the user.
+
+${userIdentity}
 
 ${formatMemoriesContext(memories)}
 
@@ -360,7 +383,8 @@ When responding:
 - Be conversational, concise, and helpful
 - Reference memories when relevant
 - For calendar events, mention the date/time clearly
-- For emails, mention who it's to/from`,
+- For emails, mention who it's to/from
+- When drafting emails, sign with the user's name (${options.userName || 'the user'}), never use placeholders like [Your Name]`,
   };
 
   const messages: ChatMessage[] = [systemMessage];

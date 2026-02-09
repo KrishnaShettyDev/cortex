@@ -180,7 +180,14 @@ interface ReconcileResult {
 }
 
 /**
- * Reconcile triggers for all active connections (cron job)
+ * Reconcile triggers for active connections (cron job)
+ *
+ * SCALE-OPTIMIZED: Only processes BATCH_SIZE users per run, cycling through
+ * all users over time. Uses last_trigger_reconciled_at to track progress.
+ * At 10k users with BATCH_SIZE=50, processes all users in ~200 cron cycles (50 days at 6h intervals)
+ *
+ * This is a FALLBACK mechanism - primary trigger setup happens on user connection.
+ * Don't need to reconcile frequently unless there are webhook issues.
  */
 export async function reconcileTriggers(
   client: ComposioClient,
@@ -188,11 +195,21 @@ export async function reconcileTriggers(
 ): Promise<ReconcileResult> {
   const stats: ReconcileResult = { checked: 0, created: 0, removed: 0, errors: [] };
 
+  // SCALE: Only process 50 users per run to avoid resource exhaustion
+  const BATCH_SIZE = 50;
+
+  // Get connections that haven't been reconciled in 7+ days, oldest first
+  // This ensures all users eventually get reconciled without overwhelming the system
   const connections = await db.prepare(`
     SELECT user_id, provider, access_token as connected_account_id
     FROM integrations
-    WHERE connected = 1 AND access_token IS NOT NULL
-  `).all();
+    WHERE connected = 1
+      AND access_token IS NOT NULL
+      AND (last_trigger_reconciled_at IS NULL
+           OR last_trigger_reconciled_at < datetime('now', '-7 days'))
+    ORDER BY last_trigger_reconciled_at ASC NULLS FIRST
+    LIMIT ?
+  `).bind(BATCH_SIZE).all();
 
   for (const conn of (connections.results || []) as any[]) {
     stats.checked++;
@@ -210,6 +227,17 @@ export async function reconcileTriggers(
 
       stats.created += result.triggers.length;
       stats.errors.push(...result.errors);
+
+      // Mark as reconciled (ignore error if column doesn't exist yet)
+      try {
+        await db.prepare(`
+          UPDATE integrations
+          SET last_trigger_reconciled_at = datetime('now')
+          WHERE user_id = ? AND provider = ?
+        `).bind(conn.user_id, conn.provider).run();
+      } catch {
+        // Column may not exist yet - that's fine
+      }
     } catch (error) {
       stats.errors.push(`User ${conn.user_id}: ${(error as Error).message}`);
     }

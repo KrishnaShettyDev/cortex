@@ -62,7 +62,13 @@ interface SchedulerResult {
 
 /**
  * Process scheduled notifications (morning/evening briefings)
- * Called by cron every 5 minutes
+ * Called by cron every 6 hours
+ *
+ * SCALE-OPTIMIZED:
+ * - Batches users (BATCH_SIZE per run)
+ * - Joins push_tokens to avoid N+1 queries
+ * - Only processes users who haven't been notified recently
+ * - At 10k users with BATCH_SIZE=200, all users processed in ~50 cycles
  */
 export async function processScheduledNotifications(
   db: D1Database,
@@ -76,31 +82,55 @@ export async function processScheduledNotifications(
     errors: [],
   };
 
+  // SCALE: Limit batch size to prevent resource exhaustion
+  const BATCH_SIZE = 200;
+
   console.log('[NotificationScheduler] Starting scheduled notification processing');
 
   try {
-    // Get all users with notification preferences
+    // SCALE-OPTIMIZED: Single query with JOIN to avoid N+1
+    // Only fetch users with active push tokens who haven't been notified in last 4 hours
     const prefsResult = await db.prepare(`
-      SELECT np.*, u.name as user_name
+      SELECT DISTINCT
+        np.*,
+        u.name as user_name,
+        pt.push_token,
+        pt.platform,
+        pt.device_name
       FROM notification_preferences np
       JOIN users u ON u.id = np.user_id
-      WHERE np.enable_morning_briefing = 1 OR np.enable_evening_briefing = 1
-    `).all<NotificationPrefs & { user_name: string }>();
+      JOIN push_tokens pt ON pt.user_id = np.user_id AND pt.is_active = 1
+      WHERE (np.enable_morning_briefing = 1 OR np.enable_evening_briefing = 1)
+        AND (np.last_notification_date IS NULL
+             OR np.last_notification_date < date('now', '-4 hours'))
+      ORDER BY np.last_notification_date ASC NULLS FIRST
+      LIMIT ?
+    `).bind(BATCH_SIZE).all<NotificationPrefs & { user_name: string; push_token: string; platform: string; device_name: string | null }>();
 
     const allPrefs = prefsResult.results || [];
-    console.log(`[NotificationScheduler] Processing ${allPrefs.length} users`);
+    console.log(`[NotificationScheduler] Processing ${allPrefs.length} users (batch of ${BATCH_SIZE})`);
 
-    for (const prefs of allPrefs) {
+    // Group by user_id to handle multiple push tokens
+    const userPrefsMap = new Map<string, { prefs: NotificationPrefs & { user_name: string }; tokens: PushToken[] }>();
+    for (const row of allPrefs) {
+      if (!userPrefsMap.has(row.user_id)) {
+        userPrefsMap.set(row.user_id, { prefs: row, tokens: [] });
+      }
+      userPrefsMap.get(row.user_id)!.tokens.push({
+        id: '',
+        user_id: row.user_id,
+        push_token: row.push_token,
+        platform: row.platform,
+        device_name: row.device_name,
+        is_active: 1,
+      });
+    }
+
+    for (const [userId, { prefs, tokens }] of userPrefsMap) {
       result.processed++;
 
       try {
-        // Check if user has active push tokens
-        const tokensResult = await db.prepare(`
-          SELECT * FROM push_tokens
-          WHERE user_id = ? AND is_active = 1
-        `).bind(prefs.user_id).all<PushToken>();
-
-        const tokens = tokensResult.results || [];
+        // Tokens already fetched via JOIN - no extra query needed
         if (tokens.length === 0) {
           result.skipped++;
           continue;

@@ -75,7 +75,7 @@ interface AppState {
   setLastScreen: (screen: string) => void;
   setChatDraft: (draft: string) => void;
   setLastConversationId: (id: string | null) => void;
-  setChatMessages: (messages: ChatMessage[]) => void;
+  setChatMessages: (messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
   addChatMessage: (message: ChatMessage) => void;
   clearChatMessages: () => void;
   setHasSeenOnboarding: (seen: boolean) => void;
@@ -153,11 +153,26 @@ export const useAppStore = create<AppState>()(
       setLastConversationId: (id) =>
         set({ lastConversationId: id }),
 
-      setChatMessages: (messages) =>
-        set({ chatMessages: messages }),
+      setChatMessages: (messagesOrUpdater) => {
+        // Support both direct array and functional updates
+        if (typeof messagesOrUpdater === 'function') {
+          set((state) => {
+            const currentMessages = Array.isArray(state.chatMessages) ? state.chatMessages : [];
+            const newMessages = messagesOrUpdater(currentMessages);
+            return { chatMessages: Array.isArray(newMessages) ? newMessages.filter(Boolean) : [] };
+          });
+        } else {
+          const validMessages = Array.isArray(messagesOrUpdater) ? messagesOrUpdater.filter(Boolean) : [];
+          set({ chatMessages: validMessages });
+        }
+      },
 
       addChatMessage: (message) =>
-        set((state) => ({ chatMessages: [...state.chatMessages, message] })),
+        set((state) => {
+          const existingMessages = Array.isArray(state.chatMessages) ? state.chatMessages : [];
+          if (!message) return { chatMessages: existingMessages.filter(Boolean) };
+          return { chatMessages: [...existingMessages.filter(Boolean), message] };
+        }),
 
       clearChatMessages: () =>
         set({ chatMessages: [], lastConversationId: null }),
@@ -196,7 +211,7 @@ export const useAppStore = create<AppState>()(
         lastScreen: state.lastScreen,
         chatDraft: state.chatDraft,
         lastConversationId: state.lastConversationId,
-        chatMessages: state.chatMessages,
+        chatMessages: Array.isArray(state.chatMessages) ? state.chatMessages.filter(Boolean) : [],
         hasSeenOnboarding: state.hasSeenOnboarding,
         themeMode: state.themeMode,
         notificationSettings: state.notificationSettings,

@@ -67,7 +67,8 @@ export interface AuthLinkResponse {
   linkToken: string;
   redirectUrl: string;
   expiresAt: string;
-  connectedAccountId?: string;
+  connectedAccountId?: string; // UUID format for v2 API tool execution
+  v3Id?: string; // New ca_* format for v3 API
 }
 
 export interface ToolExecutionResult<T = any> {
@@ -199,10 +200,17 @@ export class ComposioClient {
       throw new Error(`No redirectUrl in Composio response: ${JSON.stringify(response)}`);
     }
 
+    // Extract both the v3 ID (ca_*) and the deprecated UUID (for v2 API compatibility)
+    const v3Id = response.id || response.connectionId || '';
+    const deprecatedUuid = response.deprecated?.uuid || '';
+
     return {
-      linkToken: response.id || response.connectionId || '',
+      linkToken: v3Id,
       redirectUrl,
       expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      // Include both IDs - v2 API tool execution needs the UUID format
+      connectedAccountId: deprecatedUuid || v3Id, // Prefer UUID for tool execution
+      v3Id, // Store v3 ID for reference
     };
   }
 

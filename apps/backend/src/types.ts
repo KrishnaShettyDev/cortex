@@ -28,6 +28,9 @@ export interface Bindings {
   APNS_TEAM_ID?: string;
   APNS_BUNDLE_ID?: string;
   APNS_KEY_BASE64?: string; // Base64-encoded .p8 key
+  // Feature flags
+  MULTI_AGENT_ENABLED?: string; // 'true' to enable multi-agent orchestration
+  PROACTIVE_ENABLED?: string; // 'true' to enable proactive monitoring
 }
 
 export interface ErrorResponse {

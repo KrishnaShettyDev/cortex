@@ -33,6 +33,11 @@ import {
   TimeSlotData,
   PlaceData,
 } from './RichContentCards';
+import {
+  ProactiveEmailList,
+  ProactiveEmailData,
+  ProactiveEmailAction,
+} from './ProactiveEmailCard';
 
 // ============ PHOTO MEMORY CARD ============
 function PhotoMemoryCard({ photoUrl }: { photoUrl: string }) {
@@ -167,38 +172,59 @@ function ActionCard({ action, colors }: { action: ActionTaken; colors: any }) {
 }
 
 // ============ RICH CONTENT FROM ACTION RESULTS ============
-function RichContentFromAction({ action }: { action: ActionTaken }) {
-  const result = action.result;
+function RichContentFromAction({ action, onEmailAction }: { action: ActionTaken; onEmailAction?: (emailAction: ProactiveEmailAction, email: ProactiveEmailData) => Promise<void> }) {
+  const result = action.result as any;
+  // Handle nested result structure: result.data contains the actual tool result
+  const data = (result.data || result) as any;
 
-  // Email search results
-  if (action.tool === 'search_emails' && result.emails && result.emails.length > 0) {
-    const emails: EmailData[] = (result.emails as RawEmailResponse[]).map((e) => ({
-      id: e.id,
-      thread_id: e.thread_id || '',
-      subject: e.subject || '',
+  // Check for toolResults (from multi-agent system) first
+  const toolResults = data.toolResults || {};
+  const emailToolResult = toolResults['search_emails'] || toolResults['gmail_search'];
+  const calendarToolResult = toolResults['get_calendar_events'] || toolResults['calendar_get_events'];
+  const freeTimeToolResult = toolResults['find_free_time'] || toolResults['calendar_find_free_time'];
+
+  const toolName = emailToolResult?._tool || calendarToolResult?._tool || freeTimeToolResult?._tool || data._tool || action.tool;
+
+  // Email search results - use ProactiveEmailList for rich, interactive cards
+  const emailsArray = emailToolResult?.emails || data.emails || result.emails;
+  if (emailsArray && emailsArray.length > 0) {
+    const emails: ProactiveEmailData[] = (emailsArray as RawEmailResponse[]).map((e) => ({
+      id: e.id || e.thread_id || '',
+      threadId: e.thread_id || '',
+      subject: e.subject || '(no subject)',
       from: e.from || '',
-      date: e.date || '',
+      date: e.date || new Date().toISOString(),
       snippet: e.snippet || '',
-      is_unread: e.is_unread,
+      body: e.body,
+      isUnread: e.is_unread,
+      isStarred: e.is_starred,
+      isImportant: e.is_important,
+      labels: e.labels,
+      attachmentCount: e.attachment_count,
     }));
-    return <EmailList emails={emails} />;
+    return <ProactiveEmailList emails={emails} onAction={onEmailAction} />;
   }
 
-  // Email thread
-  if (action.tool === 'get_email_thread' && result.messages && result.messages.length > 0) {
-    const emails: EmailData[] = (result.messages as RawEmailResponse[]).map((m) => ({
-      id: m.id,
-      subject: m.subject || '',
+  // Email thread - also use ProactiveEmailList
+  const messagesArray = data.messages || result.messages;
+  if ((toolName === 'get_email_thread' || toolName === 'gmail_get_thread') && messagesArray && messagesArray.length > 0) {
+    const emails: ProactiveEmailData[] = (messagesArray as RawEmailResponse[]).map((m) => ({
+      id: m.id || '',
+      threadId: m.thread_id || '',
+      subject: m.subject || '(no subject)',
       from: m.from || '',
-      date: m.date || '',
+      date: m.date || new Date().toISOString(),
       snippet: m.snippet || m.body?.substring(0, 150) || '',
+      body: m.body,
+      isUnread: m.is_unread,
     }));
-    return <EmailList emails={emails} />;
+    return <ProactiveEmailList emails={emails} onAction={onEmailAction} showHeader={false} />;
   }
 
   // Calendar events search
-  if ((action.tool === 'get_calendar_events' || action.tool === 'search_calendar') && result.events && result.events.length > 0) {
-    const events: CalendarEventData[] = (result.events as RawCalendarEventResponse[]).map((e) => ({
+  const eventsArray = calendarToolResult?.events || data.events || result.events;
+  if (eventsArray && eventsArray.length > 0) {
+    const events: CalendarEventData[] = (eventsArray as RawCalendarEventResponse[]).map((e) => ({
       id: e.id,
       title: e.title || e.summary || '',
       start_time: e.start_time || e.start || '',
@@ -211,8 +237,9 @@ function RichContentFromAction({ action }: { action: ActionTaken }) {
   }
 
   // Free time slots
-  if (action.tool === 'find_free_time' && result.free_slots && result.free_slots.length > 0) {
-    const slots: TimeSlotData[] = (result.free_slots as RawTimeSlotResponse[]).map((s) => ({
+  const slotsArray = freeTimeToolResult?.free_slots || data.free_slots || result.free_slots;
+  if (slotsArray && slotsArray.length > 0) {
+    const slots: TimeSlotData[] = (slotsArray as RawTimeSlotResponse[]).map((s) => ({
       start: s.start || s.start_time || '',
       end: s.end || s.end_time || '',
       duration_minutes: s.duration_minutes || 0,
@@ -221,8 +248,9 @@ function RichContentFromAction({ action }: { action: ActionTaken }) {
   }
 
   // Places search
-  if (action.tool === 'search_places' && result.places && result.places.length > 0) {
-    const places: PlaceData[] = (result.places as RawPlaceResponse[]).map((p) => ({
+  const placesArray = data.places || result.places;
+  if ((toolName === 'search_places' || toolName === 'places_search') && placesArray && placesArray.length > 0) {
+    const places: PlaceData[] = (placesArray as RawPlaceResponse[]).map((p) => ({
       name: p.name,
       address: p.address || p.formatted_address,
       rating: p.rating,
@@ -413,9 +441,10 @@ interface ChatBubbleProps {
   message: ChatMessage;
   onReviewAction?: (action: PendingAction) => void;
   onFeedback?: (outcomeId: string, signal: 'positive' | 'negative') => void;
+  onEmailAction?: (action: ProactiveEmailAction, email: ProactiveEmailData) => Promise<void>;
 }
 
-export function ChatBubble({ message, onReviewAction, onFeedback }: ChatBubbleProps) {
+export function ChatBubble({ message, onReviewAction, onFeedback, onEmailAction }: ChatBubbleProps) {
   const { colors: themeColors, isDark } = useTheme();
   const isUser = message.role === 'user';
   const hasActions = message.actionsTaken && message.actionsTaken.length > 0;
@@ -427,13 +456,28 @@ export function ChatBubble({ message, onReviewAction, onFeedback }: ChatBubblePr
 
   // Check if there's rich content from actions
   const hasRichContent = hasActions && message.actionsTaken!.some(action => {
-    const result = action.result;
+    const result = action.result as any;
+    // Handle nested result structure: result.data contains the actual tool result
+    const data = (result.data || result) as any;
+
+    // Check for toolResults (from multi-agent system)
+    const toolResults = data.toolResults || {};
+    const emailToolResult = toolResults['search_emails'] || toolResults['gmail_search'];
+    const calendarToolResult = toolResults['get_calendar_events'] || toolResults['calendar_get_events'];
+    const freeTimeToolResult = toolResults['find_free_time'] || toolResults['calendar_find_free_time'];
+
+    const emails = emailToolResult?.emails || data.emails || result.emails;
+    const messages = data.messages || result.messages;
+    const events = calendarToolResult?.events || data.events || result.events;
+    const freeSlots = freeTimeToolResult?.free_slots || data.free_slots || result.free_slots;
+    const places = data.places || result.places;
+
     return (
-      (action.tool === 'search_emails' && (result.emails?.length ?? 0) > 0) ||
-      (action.tool === 'get_email_thread' && (result.messages?.length ?? 0) > 0) ||
-      ((action.tool === 'get_calendar_events' || action.tool === 'search_calendar') && (result.events?.length ?? 0) > 0) ||
-      (action.tool === 'find_free_time' && (result.free_slots?.length ?? 0) > 0) ||
-      (action.tool === 'search_places' && (result.places?.length ?? 0) > 0)
+      (emails?.length ?? 0) > 0 ||
+      (messages?.length ?? 0) > 0 ||
+      (events?.length ?? 0) > 0 ||
+      (freeSlots?.length ?? 0) > 0 ||
+      (places?.length ?? 0) > 0
     );
   });
 
@@ -489,7 +533,7 @@ export function ChatBubble({ message, onReviewAction, onFeedback }: ChatBubblePr
       {hasRichContent && (
         <View style={styles.richContentSection}>
           {message.actionsTaken!.map((action, index) => (
-            <RichContentFromAction key={index} action={action} />
+            <RichContentFromAction key={index} action={action} onEmailAction={onEmailAction} />
           ))}
         </View>
       )}

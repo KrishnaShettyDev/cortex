@@ -207,10 +207,60 @@ export class ActionExecutor {
   }
 
   /**
+   * Normalize parameters to handle AI parser variations
+   * The parser might use alternative field names that we need to map
+   */
+  private normalizeParameters(action: string, params: Record<string, any>): Record<string, any> {
+    const normalized = { ...params };
+
+    if (action === 'send_email' || action === 'create_draft') {
+      // If 'to' is missing but 'to_name' contains an email, use it
+      if (!normalized.to && normalized.to_name) {
+        // Check if to_name looks like an email
+        if (normalized.to_name.includes('@')) {
+          normalized.to = normalized.to_name;
+        }
+      }
+      // If 'to' is missing but 'recipient' exists, use it
+      if (!normalized.to && normalized.recipient) {
+        normalized.to = normalized.recipient;
+      }
+      // If 'body' is missing but 'message' or 'content' exists, use it
+      if (!normalized.body && normalized.message) {
+        normalized.body = normalized.message;
+      }
+      if (!normalized.body && normalized.content) {
+        normalized.body = normalized.content;
+      }
+    }
+
+    if (action === 'create_calendar_event') {
+      // Map 'summary' to 'title' if needed
+      if (!normalized.title && normalized.summary) {
+        normalized.title = normalized.summary;
+      }
+      // Map 'name' to 'title' if needed
+      if (!normalized.title && normalized.name) {
+        normalized.title = normalized.name;
+      }
+    }
+
+    return normalized;
+  }
+
+  /**
    * Execute an action
    */
   async executeAction(request: ActionRequest): Promise<ActionResult> {
-    const { action, parameters, confirmed } = request;
+    const { action, confirmed } = request;
+    // Normalize parameters to handle AI parser variations
+    const parameters = this.normalizeParameters(action, request.parameters);
+
+    console.log(`[ActionExecutor] Executing ${action}:`, {
+      originalParams: request.parameters,
+      normalizedParams: parameters,
+      confirmed,
+    });
 
     // Find action definition
     const actionDef = AVAILABLE_ACTIONS.find((a) => a.name === action);
@@ -237,11 +287,35 @@ export class ActionExecutor {
     // Validate required parameters
     for (const param of actionDef.parameters) {
       if (param.required && !(param.name in parameters)) {
+        // Generate more human-readable error messages
+        let message: string;
+        switch (param.name) {
+          case 'to':
+            message = 'I need an email address to send the email to.';
+            break;
+          case 'subject':
+            message = 'I need a subject for the email.';
+            break;
+          case 'body':
+            message = 'I need the message content for the email.';
+            break;
+          case 'title':
+            message = 'I need a title for the calendar event.';
+            break;
+          case 'start_time':
+            message = 'I need to know when the event should start.';
+            break;
+          case 'end_time':
+            message = 'I need to know when the event should end.';
+            break;
+          default:
+            message = `I need the ${param.description.toLowerCase()} to proceed.`;
+        }
         return {
           success: false,
           action,
           error: `Missing required parameter: ${param.name}`,
-          message: `I need the ${param.name} to ${actionDef.description.toLowerCase()}`,
+          message,
         };
       }
     }
@@ -302,8 +376,11 @@ export class ActionExecutor {
   /**
    * Get connected account ID for a provider
    * Google Super is preferred over individual Gmail/Calendar providers
+   * Returns null if not connected or if the connection ID is invalid
    */
   private async getConnectedAccountId(provider: string): Promise<string | null> {
+    let accessToken: string | null = null;
+
     // For email/calendar, try Google Super first
     if (provider === 'gmail' || provider === 'googlecalendar') {
       const googleSuper = await this.db.prepare(`
@@ -313,36 +390,73 @@ export class ActionExecutor {
       `).bind(this.userId).first<{ access_token: string }>();
 
       if (googleSuper?.access_token) {
-        return googleSuper.access_token;
+        accessToken = googleSuper.access_token;
       }
     }
 
-    // Fall back to specific provider
-    const integration = await this.db.prepare(`
-      SELECT access_token
-      FROM integrations
-      WHERE user_id = ? AND provider = ? AND connected = 1
-    `).bind(this.userId, provider).first<{ access_token: string }>();
+    // Fall back to specific provider if Google Super not found
+    if (!accessToken) {
+      const integration = await this.db.prepare(`
+        SELECT access_token
+        FROM integrations
+        WHERE user_id = ? AND provider = ? AND connected = 1
+      `).bind(this.userId, provider).first<{ access_token: string }>();
 
-    return integration?.access_token || null;
+      accessToken = integration?.access_token || null;
+    }
+
+    // Validate the token is a valid Composio connection ID
+    // Composio uses format like "ca_XXXXXXXXX" (not UUIDs)
+    if (accessToken) {
+      const composioIdRegex = /^ca_[A-Za-z0-9_-]+$/;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      if (!composioIdRegex.test(accessToken) && !uuidRegex.test(accessToken)) {
+        console.error(`[ActionExecutor] Invalid Composio connection ID for ${provider}:`, accessToken);
+        // Return null to trigger "not connected" flow - user needs to reconnect
+        return null;
+      }
+    }
+
+    return accessToken;
   }
 
   /**
    * Send email via Gmail
    */
   private async sendEmail(params: {
-    to: string;
+    to?: string;
+    to_name?: string;
     subject: string;
     body: string;
     cc?: string[];
   }): Promise<ActionResult> {
+    // Handle missing 'to' - might have 'to_name' from parser needing contact lookup
+    const recipientEmail = params.to;
+    if (!recipientEmail) {
+      if (params.to_name) {
+        return {
+          success: false,
+          action: 'send_email',
+          error: 'Missing email address',
+          message: `I need an email address for ${params.to_name}. Can you provide their email?`,
+        };
+      }
+      return {
+        success: false,
+        action: 'send_email',
+        error: 'Missing recipient',
+        message: 'I need an email address to send the email to.',
+      };
+    }
+
     const connectedAccountId = await this.getConnectedAccountId('gmail');
     if (!connectedAccountId) {
       return {
         success: false,
         action: 'send_email',
         error: 'Gmail not connected',
-        message: 'Please connect your Gmail account first.',
+        message: 'Please connect your Gmail account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -352,7 +466,7 @@ export class ActionExecutor {
       toolSlug: 'GMAIL_SEND_EMAIL',
       connectedAccountId,
       arguments: {
-        to: params.to,
+        recipient_email: recipientEmail, // Composio expects 'recipient_email' not 'to'
         subject: params.subject,
         body: params.body,
         cc: params.cc?.join(','),
@@ -383,17 +497,36 @@ export class ActionExecutor {
    * Create email draft
    */
   private async createDraft(params: {
-    to: string;
+    to?: string;
+    to_name?: string;
     subject: string;
     body: string;
   }): Promise<ActionResult> {
+    const recipientEmail = params.to;
+    if (!recipientEmail) {
+      if (params.to_name) {
+        return {
+          success: false,
+          action: 'create_draft',
+          error: 'Missing email address',
+          message: `I need an email address for ${params.to_name}. Can you provide their email?`,
+        };
+      }
+      return {
+        success: false,
+        action: 'create_draft',
+        error: 'Missing recipient',
+        message: 'I need an email address for the draft.',
+      };
+    }
+
     const connectedAccountId = await this.getConnectedAccountId('gmail');
     if (!connectedAccountId) {
       return {
         success: false,
         action: 'create_draft',
         error: 'Gmail not connected',
-        message: 'Please connect your Gmail account first.',
+        message: 'Please connect your Gmail account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -403,7 +536,7 @@ export class ActionExecutor {
       toolSlug: 'GMAIL_CREATE_DRAFT',
       connectedAccountId,
       arguments: {
-        to: params.to,
+        recipient_email: recipientEmail, // Composio expects 'recipient_email' not 'to'
         subject: params.subject,
         body: params.body,
       },
@@ -414,7 +547,7 @@ export class ActionExecutor {
         success: true,
         action: 'create_draft',
         result: result.data,
-        message: `Draft created for ${params.to}`,
+        message: `Draft created for ${recipientEmail}`,
       };
     }
 
@@ -439,7 +572,7 @@ export class ActionExecutor {
         success: false,
         action: 'reply_to_email',
         error: 'Gmail not connected',
-        message: 'Please connect your Gmail account first.',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -490,7 +623,7 @@ export class ActionExecutor {
         success: false,
         action: 'create_calendar_event',
         error: 'Calendar not connected',
-        message: 'Please connect your Google Calendar first.',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -544,7 +677,7 @@ export class ActionExecutor {
         success: false,
         action: 'update_calendar_event',
         error: 'Calendar not connected',
-        message: 'Please connect your Google Calendar first.',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -593,7 +726,7 @@ export class ActionExecutor {
         success: false,
         action: 'delete_calendar_event',
         error: 'Calendar not connected',
-        message: 'Please connect your Google Calendar first.',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -637,7 +770,7 @@ export class ActionExecutor {
         success: false,
         action: 'search_emails',
         error: 'Gmail not connected',
-        message: 'Please connect your Gmail account first.',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -650,11 +783,31 @@ export class ActionExecutor {
     });
 
     if (result.successful) {
+      // Transform emails for rich card display on frontend
+      const rawEmails = result.data || [];
+      const transformedEmails = rawEmails.map((email: any) => ({
+        id: email.id || email.messageId || '',
+        thread_id: email.threadId || email.thread_id || '',
+        subject: email.subject || '(no subject)',
+        from: email.from || email.sender || '',
+        date: email.date || email.internalDate || new Date().toISOString(),
+        snippet: email.snippet || email.bodyPreview || '',
+        is_unread: email.labelIds?.includes('UNREAD') || !email.isRead,
+        is_starred: email.labelIds?.includes('STARRED') || email.isStarred,
+        is_important: email.labelIds?.includes('IMPORTANT'),
+        labels: email.labelIds || [],
+        attachment_count: email.attachments?.length || 0,
+      }));
+
       return {
         success: true,
         action: 'search_emails',
-        result: result.data,
-        message: `Found ${result.data?.length || 0} emails matching "${params.query}"`,
+        result: {
+          emails: transformedEmails,
+          count: transformedEmails.length,
+          _tool: 'search_emails', // Marker for rich content detection
+        },
+        message: `Found ${transformedEmails.length} emails matching "${params.query}"`,
       };
     }
 
@@ -678,7 +831,7 @@ export class ActionExecutor {
         success: false,
         action: 'search_contacts',
         error: 'Gmail not connected',
-        message: 'Please connect your Gmail account first.',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
       };
     }
 
@@ -719,7 +872,7 @@ export class ActionExecutor {
         success: false,
         action: 'get_calendar_events',
         error: 'Calendar not connected',
-        message: 'Please connect your Google Calendar first.',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
       };
     }
 

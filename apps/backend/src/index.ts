@@ -30,10 +30,11 @@ import webhooksRouter from './handlers/webhooks';
 import mcpRouter from './handlers/mcp';
 import proactiveRouter from './handlers/proactive';
 import triggersRouter from './handlers/triggers';
+import * as agentHandlers from './handlers/agents';
 import { cleanup as runProactiveCleanup } from './lib/proactive';
 import { processDueTriggers } from './lib/triggers/executor';
 import { flushDueBatches, cleanupStaleBatches, resetDailyCounters } from './lib/proactive/batcher';
-import { runIncrementalSync, cleanupSeenEvents, cleanupClassificationCache } from './lib/proactive/sync';
+import { cleanupSeenEvents, cleanupClassificationCache } from './lib/proactive/sync';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 // DELETED: handleSleepComputeCron - cognitive layer purged
 import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
@@ -667,6 +668,57 @@ app.use('/v3/triggers', authenticateWithJwt);
 app.use('/v3/triggers/*', authenticateWithJwt);
 app.route('/v3/triggers', triggersRouter);
 
+// Multi-agent orchestration endpoints
+app.get('/v3/agents/status', agentHandlers.getAgentStatusHandler);
+app.get('/v3/agents/stats', agentHandlers.getAgentStatsHandler);
+app.get('/v3/agents/executions', agentHandlers.getAgentExecutionsHandler);
+app.get('/v3/agents/executions/:requestId/trace', agentHandlers.getExecutionTraceHandler);
+app.get('/v3/agents/configs', agentHandlers.getAgentConfigsHandler);
+app.get('/v3/agents/configs/:agentType', agentHandlers.getAgentConfigHandler);
+app.patch('/v3/agents/configs/:agentType', agentHandlers.updateAgentConfigHandler);
+app.delete('/v3/agents/configs/:agentType', agentHandlers.deleteAgentConfigHandler);
+
+// Admin reindex endpoint - re-embeds all manual memories into Vectorize
+// SECURITY: Protected with JWT auth - only authenticated users can trigger reindex
+app.use('/admin/*', authenticateWithJwt);
+app.get('/admin/reindex', async (c) => {
+  // Only allow reindexing the current user's memories for security
+  const userId = c.get('jwtPayload').sub;
+
+  const memories = await c.env.DB.prepare(`
+    SELECT id, user_id, content, container_tag FROM memories
+    WHERE user_id = ? AND source = 'manual' AND length(content) > 3
+  `).bind(userId).all<{ id: string; user_id: string; content: string; container_tag: string }>();
+
+  let success = 0;
+  const errors: string[] = [];
+
+  for (const m of memories.results || []) {
+    try {
+      const emb = await c.env.AI.run('@cf/baai/bge-base-en-v1.5', { text: m.content });
+      if (emb?.data?.[0]) {
+        await c.env.VECTORIZE.upsert([{
+          id: m.id,
+          values: emb.data[0],
+          metadata: { user_id: m.user_id, container_tag: m.container_tag || 'default' },
+        }]);
+        success++;
+      } else {
+        errors.push(`No embedding for ${m.id}`);
+      }
+    } catch (e: any) {
+      errors.push(`${m.id}: ${e.message}`);
+    }
+  }
+  return c.json({ total: memories.results?.length, success, errors: errors.length > 0 ? errors : undefined });
+});
+
+// SECURITY: Test endpoints removed - they bypassed authentication and allowed
+// access to any user's data. Use authenticated /api/chat/actions endpoint instead.
+
+// SECURITY: /test/openai and /test/recall endpoints removed
+// These endpoints bypassed authentication and exposed user data
+
 export default {
   fetch: app.fetch,
 
@@ -726,18 +778,9 @@ export default {
             console.error('[Scheduled] Trigger processing failed:', error);
           }
 
-          // 3. Run incremental sync for active users (fallback for missed webhooks)
-          try {
-            if (env.COMPOSIO_API_KEY && env.OPENAI_API_KEY) {
-              const syncResults = await runIncrementalSync(env.DB, env.COMPOSIO_API_KEY, env.OPENAI_API_KEY);
-              const totalNewEvents = syncResults.reduce((sum, r) => sum + r.newEvents, 0);
-              if (totalNewEvents > 0) {
-                console.log(`[Scheduled] Incremental sync: ${totalNewEvents} new events from ${syncResults.length} users`);
-              }
-            }
-          } catch (error) {
-            console.error('[Scheduled] Incremental sync failed:', error);
-          }
+          // NOTE: No incremental sync here - pure event-driven via Composio webhooks
+          // Polling is the wrong pattern. Webhooks fire when emails arrive.
+          // If a webhook is missed, user can pull-to-refresh for one-time fetch.
         }
       }
 
@@ -814,6 +857,38 @@ export default {
           const classificationDeleted = await cleanupClassificationCache(env.DB);
           if (classificationDeleted > 0) {
             console.log(`[Scheduled] Cleaned up ${classificationDeleted} classification cache entries`);
+          }
+
+          // SCALE FIX: Clean up unbounded growth tables (audit finding)
+          // These tables have no TTL and would grow forever without cleanup
+          const cleanupQueries = [
+            // 30-day retention for action logs
+            `DELETE FROM action_log WHERE created_at < datetime('now', '-30 days')`,
+            // 14-day retention for agent executions (high volume)
+            `DELETE FROM agent_executions WHERE created_at < datetime('now', '-14 days')`,
+            // 7-day retention for MCP execution logs
+            `DELETE FROM mcp_execution_log WHERE created_at < datetime('now', '-7 days')`,
+            // 30-day retention for trigger execution logs
+            `DELETE FROM trigger_execution_log WHERE created_at < datetime('now', '-30 days')`,
+            // 14-day retention for notification logs
+            `DELETE FROM notification_log WHERE created_at < datetime('now', '-14 days')`,
+            // 30-day retention for sync logs
+            `DELETE FROM sync_logs WHERE started_at < datetime('now', '-30 days')`,
+            // Clean up expired pending actions
+            `DELETE FROM pending_actions WHERE expires_at < datetime('now')`,
+          ];
+
+          let totalCleaned = 0;
+          for (const query of cleanupQueries) {
+            try {
+              const result = await env.DB.prepare(query).run();
+              totalCleaned += result.meta?.changes || 0;
+            } catch {
+              // Table may not exist yet - that's fine
+            }
+          }
+          if (totalCleaned > 0) {
+            console.log(`[Scheduled] Cleaned up ${totalCleaned} old log/execution records`);
           }
         } catch (error) {
           console.error('[Scheduled] Proactive cleanup failed:', error);

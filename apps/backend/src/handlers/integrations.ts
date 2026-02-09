@@ -83,16 +83,19 @@ async function connectProvider(
   });
 
   // Store pending connection for callback lookup
-  // The linkToken is the connection ID from Composio
-  if (authLink.linkToken) {
-    console.log(`[${config.name}] Storing pending connection: ${authLink.linkToken} for user ${userId}`);
+  // Use the UUID (connectedAccountId) for v2 API tool execution compatibility
+  // Fall back to linkToken (v3 ID) if UUID not available
+  const connectionIdForStorage = authLink.connectedAccountId || authLink.linkToken;
+
+  if (connectionIdForStorage) {
+    console.log(`[${config.name}] Storing pending connection: UUID=${authLink.connectedAccountId}, v3Id=${authLink.linkToken} for user ${userId}`);
     await c.env.DB.prepare(`
       INSERT INTO pending_connections (id, user_id, provider, created_at)
       VALUES (?, ?, ?, datetime('now'))
       ON CONFLICT(user_id, provider) DO UPDATE SET
         id = excluded.id,
         created_at = datetime('now')
-    `).bind(authLink.linkToken, userId, provider).run();
+    `).bind(connectionIdForStorage, userId, provider).run();
   }
 
   return c.json({
@@ -143,12 +146,16 @@ async function handleCallback(
     `).bind(provider).first<{ id: string; user_id: string }>();
 
     if (pending) {
-      // Use Composio's connectedAccountId if provided, otherwise use our stored one
-      if (!connectedAccountId) {
-        connectedAccountId = pending.id;
-      }
+      // ALWAYS use our stored ID (which is the UUID for v2 API compatibility)
+      // The URL parameter might have the v3 ca_* format which doesn't work for tool execution
+      const urlConnectedAccountId = connectedAccountId; // Save for logging
+      connectedAccountId = pending.id; // Use our stored UUID
       userId = pending.user_id;
-      console.log(`[${config.name} Callback] Found pending connection:`, { connectedAccountId, userId });
+      console.log(`[${config.name} Callback] Found pending connection:`, {
+        storedUuid: connectedAccountId,
+        urlConnectedAccountId,
+        userId
+      });
 
       // Verify connection is active with Composio
       try {

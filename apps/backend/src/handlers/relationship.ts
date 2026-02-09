@@ -169,30 +169,39 @@ app.get('/:entityId/health', async (c) => {
 
 /**
  * GET /v3/nudges
- * Get proactive nudges (generates fresh nudges)
+ * Get cached nudges (lightweight - no AI generation on every call)
+ * Use POST /v3/nudges/generate to force fresh generation
  */
 app.get('/', async (c) => {
   const userId = c.get('jwtPayload').sub;
-  const tenantScope = c.get('tenantScope') || { containerTag: 'default' };
-  const containerTag = tenantScope.containerTag;
 
   try {
-    const generator = new ProactiveNudgeGenerator(c.env.DB, c.env.AI, userId, containerTag);
-    const result = await generator.generateNudges();
+    // Return cached/stored nudges instead of generating fresh ones each time
+    // This prevents resource exhaustion from AI calls on every request
+    const cached = await c.env.DB
+      .prepare(`
+        SELECT id, nudge_type, title, message, entity_id, priority, suggested_action, created_at
+        FROM proactive_nudges
+        WHERE user_id = ? AND dismissed = 0 AND acted = 0
+        ORDER BY priority DESC, created_at DESC
+        LIMIT 10
+      `)
+      .bind(userId)
+      .all();
 
     return c.json({
-      nudges: result.nudges,
-      metadata: result.generation_metadata,
+      nudges: cached.results || [],
+      cached: true,
+      message: 'Use POST /v3/nudges/generate to generate fresh nudges',
     });
   } catch (error: any) {
-    console.error('[Nudges] Generation failed:', error);
-    return c.json(
-      {
-        error: 'Failed to generate nudges',
-        message: error.message,
-      },
-      500
-    );
+    console.error('[Nudges] Fetch failed:', error);
+    // Return empty array instead of error to prevent client-side crashes
+    return c.json({
+      nudges: [],
+      cached: true,
+      error: error.message,
+    });
   }
 });
 

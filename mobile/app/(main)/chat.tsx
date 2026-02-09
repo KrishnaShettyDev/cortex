@@ -277,7 +277,14 @@ export default function ChatScreen() {
       let fullContent = '';
       let convId = conversationId || '';
 
-      await chatService.chatStream(messageText, conversationId, {
+      // Build history from previous messages for context
+      const history = (chatMessages || []).map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+      }));
+
+      // Use chatStreamWithActions for email/calendar action support
+      await chatService.chatStreamWithActions(messageText, conversationId, {
         onSearchingMemories: () => {
           // Legacy callback - now handled by onStatus
         },
@@ -364,7 +371,7 @@ export default function ChatScreen() {
           };
           addChatMessage(errorMessage);
         },
-      });
+      }, history);
     } catch (error: any) {
       clearTimeout(safetyTimeout);
       logger.error('sendMessage error:', error);
@@ -448,7 +455,7 @@ export default function ChatScreen() {
   };
 
   useEffect(() => {
-    if (chatMessages.length > 0) {
+    if ((chatMessages || []).length > 0) {
       setTimeout(() => {
         flashListRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -545,6 +552,23 @@ export default function ChatScreen() {
   const handleConfirmAction = async (editedAction: ActionData) => {
     if (!currentPendingAction) return;
     setIsActionLoading(true);
+
+    // Helper to clear pending action from messages to prevent re-clicks
+    const clearPendingActionFromMessages = (actionId: string) => {
+      setChatMessages(prevMessages =>
+        prevMessages.map(msg => {
+          if (!msg) return msg; // Safety check for undefined messages
+          if (msg.pendingActions?.some(pa => pa.action_id === actionId)) {
+            return {
+              ...msg,
+              pendingActions: msg.pendingActions.filter(pa => pa.action_id !== actionId),
+            };
+          }
+          return msg;
+        }).filter(Boolean) as ChatMessage[] // Filter out any undefined values
+      );
+    };
+
     try {
       // Update the pending action arguments with edited values
       const updatedArgs = editedAction.type === 'email'
@@ -567,6 +591,9 @@ export default function ChatScreen() {
         updatedArgs
       );
 
+      // Always clear from messages to prevent re-clicks (whether success or already processed)
+      clearPendingActionFromMessages(currentPendingAction.action_id);
+
       if (result.success) {
         // Track action approved
         posthog?.capture(ANALYTICS_EVENTS.ACTION_APPROVED, {
@@ -586,9 +613,16 @@ export default function ChatScreen() {
         setActionToReview(null);
         setCurrentPendingAction(null);
       } else {
+        // Clear UI state but show error
+        setActionToReview(null);
+        setCurrentPendingAction(null);
         Alert.alert('Error', result.message || 'Action failed');
       }
     } catch (error: any) {
+      // Also clear on error to prevent stuck UI
+      clearPendingActionFromMessages(currentPendingAction.action_id);
+      setActionToReview(null);
+      setCurrentPendingAction(null);
       Alert.alert('Error', error.message || 'Failed to execute action');
     } finally {
       setIsActionLoading(false);
@@ -597,11 +631,30 @@ export default function ChatScreen() {
 
   // Handle cancel action from inline review
   const handleCancelAction = () => {
+    // Capture action_id before any state changes to avoid closure issues
+    const actionIdToRemove = currentPendingAction?.action_id;
+
     // Track action rejected
     posthog?.capture(ANALYTICS_EVENTS.ACTION_REJECTED, {
       action_type: actionToReview?.type || 'unknown',
       tool: currentPendingAction?.tool || 'unknown',
     });
+
+    // Clear pending action from messages to prevent re-clicks
+    if (actionIdToRemove) {
+      setChatMessages(prevMessages =>
+        prevMessages.map(msg => {
+          if (!msg) return msg; // Safety check for undefined messages
+          if (msg.pendingActions?.some(pa => pa.action_id === actionIdToRemove)) {
+            return {
+              ...msg,
+              pendingActions: msg.pendingActions.filter(pa => pa.action_id !== actionIdToRemove),
+            };
+          }
+          return msg;
+        }).filter(Boolean) as ChatMessage[] // Filter out any undefined values
+      );
+    }
 
     setActionToReview(null);
     setCurrentPendingAction(null);
@@ -621,11 +674,11 @@ export default function ChatScreen() {
       await chatService.submitFeedback(outcomeId, signal, 'explicit_feedback');
 
       // Update the message to show feedback was given
-      const updatedMessages = chatMessages.map(msg =>
-        msg.outcomeId === outcomeId
+      const updatedMessages = (chatMessages || []).map(msg =>
+        msg?.outcomeId === outcomeId
           ? { ...msg, feedbackGiven: signal }
           : msg
-      );
+      ).filter(Boolean);
       setChatMessages(updatedMessages);
 
       // Track feedback
@@ -638,11 +691,71 @@ export default function ChatScreen() {
     }
   }, [chatMessages, setChatMessages, posthog]);
 
+  // Handle email actions (reply, archive, star, etc.)
+  const handleEmailAction = useCallback(async (action: any, email: any) => {
+    try {
+      logger.log('Email action:', action.type, 'for email:', email.subject);
+
+      // Track the action
+      posthog?.capture('email_action', {
+        action: action.type,
+        email_id: email.id,
+      });
+
+      // Handle different action types
+      switch (action.type) {
+        case 'reply':
+          // Populate the input with a reply prompt
+          setInputText(`Reply to ${email.from.split('<')[0].trim()}: `);
+          break;
+
+        case 'archive':
+          // Send a message to archive the email
+          await sendMessage(`Archive the email "${email.subject}" from ${email.from}`);
+          break;
+
+        case 'star':
+          // Toggle star status
+          await sendMessage(`${email.isStarred ? 'Unstar' : 'Star'} the email "${email.subject}"`);
+          break;
+
+        case 'markRead':
+          // Mark as read
+          await sendMessage(`Mark the email "${email.subject}" as read`);
+          break;
+
+        case 'delete':
+          // Delete email
+          await sendMessage(`Delete the email "${email.subject}"`);
+          break;
+
+        case 'forward':
+          // Forward email
+          setInputText(`Forward "${email.subject}" to `);
+          break;
+
+        case 'open':
+          // Open email details
+          await sendMessage(`Show me the full content of the email "${email.subject}" from ${email.from}`);
+          break;
+
+        default:
+          logger.warn('Unknown email action:', action.type);
+      }
+    } catch (error) {
+      logger.error('Email action failed:', error);
+    }
+  }, [sendMessage, posthog]);
+
   const renderMessage = ({ item, index }: { item: ChatMessage; index: number }) => {
+    // Safety check for undefined items
+    if (!item) return null;
+
     const isUser = item.role === 'user';
+    const prevMessage = chatMessages?.[index - 1];
     const showTimestamp = index === 0 ||
-      (chatMessages[index - 1] &&
-       new Date(item.timestamp).getTime() - new Date(chatMessages[index - 1].timestamp).getTime() > 300000);
+      (prevMessage &&
+       new Date(item.timestamp).getTime() - new Date(prevMessage.timestamp).getTime() > 300000);
 
     return (
       <View style={styles.messageContainer}>
@@ -659,6 +772,7 @@ export default function ChatScreen() {
           message={item}
           onReviewAction={handleReviewAction}
           onFeedback={handleFeedback}
+          onEmailAction={handleEmailAction}
         />
       </View>
     );
@@ -686,8 +800,8 @@ export default function ChatScreen() {
 
           <TouchableOpacity
             onPress={clearConversation}
-            disabled={chatMessages.length === 0}
-            style={[styles.headerButton, { opacity: chatMessages.length === 0 ? 0.3 : 1 }]}
+            disabled={(chatMessages || []).length === 0}
+            style={[styles.headerButton, { opacity: (chatMessages || []).length === 0 ? 0.3 : 1 }]}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             activeOpacity={0.7}
           >
@@ -699,13 +813,13 @@ export default function ChatScreen() {
         {/* @ts-ignore - FlashList types issue with estimatedItemSize prop */}
         <FlashList<ChatMessage>
           ref={flashListRef}
-          data={chatMessages}
+          data={(chatMessages || []).filter(Boolean)}
           renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item, index) => item?.id || `msg-${index}`}
           contentContainerStyle={styles.messagesList}
           ListEmptyComponent={renderEmptyState}
           ListHeaderComponent={
-            chatMessages.length > 0 ? (
+            (chatMessages || []).length > 0 ? (
               <View style={styles.briefingPillContainer}>
                 <DailyBriefing
                   onActionPress={handleBriefingAction}

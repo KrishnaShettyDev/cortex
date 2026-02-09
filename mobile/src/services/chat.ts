@@ -131,7 +131,8 @@ class ChatService {
   async chatStream(
     message: string,
     conversationId: string | undefined,
-    callbacks: ChatStreamCallbacks
+    callbacks: ChatStreamCallbacks,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>
   ): Promise<void> {
     try {
       const response = await api.request<{
@@ -142,6 +143,7 @@ class ChatService {
         method: 'POST',
         body: {
           message,
+          history: history?.slice(-10), // Send last 10 messages for context
           model: 'gpt-4o-mini',
           contextLimit: 5,
         },
@@ -255,27 +257,29 @@ class ChatService {
       }
     }
 
-    // Fallback: try the old endpoint (will likely fail)
-    const body: ExecuteActionRequest = {
-      action_id: actionId,
-      tool,
-      arguments: args,
-    };
-
-    if (modifiedArgs) {
-      body.modified_arguments = modifiedArgs;
-    }
-
+    // Use the confirm endpoint for pending actions (email, calendar, etc.)
     try {
-      return await api.request<ExecuteActionResponse>('/chat/execute-action', {
+      const response = await api.request<{
+        success: boolean;
+        action: string;
+        message: string;
+        result?: any;
+        error?: string;
+      }>(`/api/actions/${actionId}/confirm`, {
         method: 'POST',
-        body,
+        body: modifiedArgs ? { modifiedArgs } : undefined,
       });
+
+      return {
+        success: response.success,
+        message: response.message || (response.success ? 'Action completed' : 'Action failed'),
+        result: response.result || {},
+      };
     } catch (error) {
-      logger.warn('ChatService: execute-action endpoint not implemented');
+      logger.error('ChatService: action confirm failed', error);
       return {
         success: false,
-        message: 'Action execution not available',
+        message: error instanceof Error ? error.message : 'Action execution failed',
         result: {},
       };
     }
@@ -342,13 +346,14 @@ class ChatService {
   async chatStreamWithActions(
     message: string,
     conversationId: string | undefined,
-    callbacks: ChatStreamCallbacks
+    callbacks: ChatStreamCallbacks,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>
   ): Promise<void> {
     try {
       callbacks.onSearchingMemories?.();
       callbacks.onStatus?.({ step: 'searching', message: 'Understanding your request...' });
 
-      const response = await this.chatWithActions(message);
+      const response = await this.chatWithActions(message, history?.slice(-10));
 
       callbacks.onMemoriesFound?.([]);
 

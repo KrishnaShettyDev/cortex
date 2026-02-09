@@ -60,6 +60,12 @@ crons = [
 # Environment variables
 [vars]
 ENVIRONMENT = "production"
+# Base URL for webhooks and callbacks (change per environment)
+WEBHOOK_BASE_URL = "https://askcortex.plutas.in"
+# Multi-agent orchestration (set to "true" to enable)
+# When enabled, chat uses Interaction Agent (personality) + Execution Agent (actions)
+# Now optimized: Forces gpt-4o-mini for faster execution on Cloudflare Workers
+MULTI_AGENT_ENABLED = "true"
 # Proactive system configuration
 PROACTIVE_ENABLED = "true"
 PROACTIVE_LLM_MODEL = "gpt-4o-mini"

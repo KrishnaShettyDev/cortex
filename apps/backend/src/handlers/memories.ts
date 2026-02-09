@@ -13,6 +13,7 @@ import {
   searchMemories,
 } from '../memory';
 import { chat, chatWithHistory, chatWithActions, confirmAction, cancelAction } from '../chat';
+import { createRouter, type AgentContext } from '../agents';
 import { handleError } from '../utils/errors';
 
 function getUserId(c: Context): string {
@@ -140,6 +141,11 @@ export async function chatWithMemories(c: Context<{ Bindings: Bindings }>) {
       return c.json({ error: 'Message is required' }, 400);
     }
 
+    // Fetch user info for personalized responses
+    const user = await c.env.DB.prepare(
+      'SELECT name, email FROM users WHERE id = ?'
+    ).bind(userId).first<{ name: string | null; email: string }>();
+
     const result = history
       ? await chatWithHistory(
           c.env.DB,
@@ -152,6 +158,8 @@ export async function chatWithMemories(c: Context<{ Bindings: Bindings }>) {
           {
             model: model || 'gpt-4o-mini',
             contextLimit: contextLimit || 5,
+            userName: user?.name || undefined,
+            userEmail: user?.email,
           }
         )
       : await chat(
@@ -174,6 +182,10 @@ export async function chatWithMemories(c: Context<{ Bindings: Bindings }>) {
 /**
  * Chat with action support (Iris/Poke-style)
  * Parses natural language for calendar/email actions
+ *
+ * When MULTI_AGENT_ENABLED=true, uses the new multi-agent orchestration system:
+ * - Interaction Agent: Handles conversation, personality, memory context
+ * - Execution Agent: Executes actions via Composio (email, calendar, etc.)
  */
 export async function chatWithActionsHandler(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
@@ -184,6 +196,64 @@ export async function chatWithActionsHandler(c: Context<{ Bindings: Bindings }>)
       return c.json({ error: 'Message is required' }, 400);
     }
 
+    // Fetch user info for personalized responses
+    const user = await c.env.DB.prepare(
+      'SELECT name, email FROM users WHERE id = ?'
+    ).bind(userId).first<{ name: string | null; email: string }>();
+
+    // Check if multi-agent system is enabled
+    const multiAgentEnabled = c.env.MULTI_AGENT_ENABLED === 'true';
+
+    if (multiAgentEnabled) {
+      // Use new multi-agent orchestration system
+      const requestId = crypto.randomUUID();
+
+      const agentContext: AgentContext = {
+        userId,
+        userName: user?.name || undefined,
+        userEmail: user?.email,
+        timezone: 'UTC', // TODO: Add timezone column to users table
+        requestId,
+      };
+
+      try {
+        const router = createRouter(c.env, agentContext);
+        const result = await router.chat({
+          message,
+          history,
+        });
+
+        // Transform result to match existing response format
+        return c.json({
+          response: result.response,
+          memories_used: result.memoriesUsed,
+          model: 'gpt-4o', // Interaction agent uses gpt-4o
+          actions: result.executionResult
+            ? {
+                pending: [],
+                executed: [
+                  {
+                    action: result.delegatedGoal || 'execution',
+                    success: result.executionResult.success,
+                    result: result.executionResult.data,
+                    error: result.executionResult.error,
+                    message: result.executionResult.success
+                      ? 'Action completed successfully'
+                      : result.executionResult.error || 'Action failed',
+                  },
+                ],
+              }
+            : undefined,
+          _multiAgent: true, // Flag to indicate multi-agent system was used
+          _requestId: requestId,
+        });
+      } catch (error) {
+        console.error('[MultiAgent] Chat failed, falling back to legacy:', error);
+        // Fall through to legacy system on error
+      }
+    }
+
+    // Legacy single-agent system
     const result = await chatWithActions(
       c.env.DB,
       c.env.VECTORIZE,
@@ -197,6 +267,8 @@ export async function chatWithActionsHandler(c: Context<{ Bindings: Bindings }>)
         contextLimit: contextLimit || 5,
         autoExecuteQueries: autoExecuteQueries ?? true,
         history,
+        userName: user?.name || undefined,
+        userEmail: user?.email,
       }
     );
 

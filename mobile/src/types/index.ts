@@ -213,10 +213,15 @@ export interface RawEmailResponse {
   thread_id?: string;
   subject?: string;
   from?: string;
+  to?: string[];
   date?: string;
   snippet?: string;
   body?: string;
   is_unread?: boolean;
+  is_starred?: boolean;
+  is_important?: boolean;
+  labels?: string[];
+  attachment_count?: number;
   content?: string;
 }
 

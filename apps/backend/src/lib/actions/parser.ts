@@ -140,6 +140,7 @@ export async function parseActionsFromMessage(
     userTimezone?: string;
     recentEmails?: any[];
     todayEvents?: any[];
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>;
   }
 ): Promise<ParseResult> {
   const currentDate = context?.currentDate || new Date().toISOString().split('T')[0];
@@ -147,7 +148,24 @@ export async function parseActionsFromMessage(
 
   const prompt = ACTION_PARSING_PROMPT
     .replace('{current_date}', currentDate)
-    + `\n\nUser's timezone: ${timezone}\nCurrent datetime: ${new Date().toISOString()}`;
+    + `\n\nUser's timezone: ${timezone}\nCurrent datetime: ${new Date().toISOString()}`
+    + `\n\nIMPORTANT: Consider the conversation history to understand references like "send that", "do it", "yes", etc. Previous messages may contain email drafts, event details, or other context that the current message refers to.`;
+
+  // Build messages array with history for context
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+    { role: 'system', content: prompt },
+  ];
+
+  // Add conversation history (last 6 messages for context)
+  if (context?.history && context.history.length > 0) {
+    const recentHistory = context.history.slice(-6);
+    for (const msg of recentHistory) {
+      messages.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  // Add current message
+  messages.push({ role: 'user', content: message });
 
   try {
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -158,10 +176,7 @@ export async function parseActionsFromMessage(
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: message },
-        ],
+        messages,
         temperature: 0.3,
         max_tokens: 1000,
         response_format: { type: 'json_object' },

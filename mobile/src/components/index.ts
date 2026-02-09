@@ -17,6 +17,7 @@ export * from './LocationPermissionModal';
 export * from './ReasoningSteps';
 export * from './InsightCards';
 export * from './RichContentCards';
+export * from './ProactiveEmailCard';
 export * from './ThinkingIndicator';
 export * from './FindTimeSheet';
 export * from './DailyBriefing';
