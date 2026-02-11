@@ -171,8 +171,14 @@ export async function handleWebhook(
   signature: string,
   secret: string
 ): Promise<{ success: boolean; eventId?: string; error?: string }> {
-  // Verify signature
-  if (signature && secret) {
+  // SECURITY: Signature verification is REQUIRED - no fallthrough
+  // Only skip if both signature AND secret are missing (for local testing)
+  if (secret) {
+    if (!signature) {
+      console.error('[Proactive] Missing webhook signature');
+      return { success: false, error: 'missing_signature' };
+    }
+
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey(
       'raw',
@@ -187,16 +193,27 @@ export async function handleWebhook(
       .join('');
 
     if (signature !== expected && signature !== `sha256=${expected}`) {
+      console.error('[Proactive] Invalid webhook signature');
       return { success: false, error: 'invalid_signature' };
     }
   }
 
-  // Parse
+  // Parse JSON
   let payload: any;
   try {
     payload = JSON.parse(rawBody);
   } catch {
     return { success: false, error: 'invalid_json' };
+  }
+
+  // REPLAY PROTECTION: Check if we've seen this webhook before
+  const webhookId = payload.webhookId || payload.webhook_id || payload.id || crypto.randomUUID();
+  const seen = await db.prepare(
+    'SELECT 1 FROM seen_events WHERE event_id = ?'
+  ).bind(webhookId).first();
+
+  if (seen) {
+    return { success: true, eventId: webhookId }; // Already processed, ACK but don't re-process
   }
 
   // Get user from connection (Composio sends connectedAccountId as connectionId)
@@ -241,6 +258,23 @@ export async function handleWebhook(
     return { success: false, error: 'unknown_connection' };
   }
 
+  // RATE LIMIT: Check BEFORE storing event (max 100 webhooks/user/hour)
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const webhookCount = await db.prepare(`
+    SELECT COUNT(*) as count FROM proactive_events
+    WHERE user_id = ? AND created_at > ?
+  `).bind(userId, hourAgo).first<{ count: number }>();
+
+  if ((webhookCount?.count || 0) >= 100) {
+    console.warn('[Proactive] Webhook rate limit exceeded for user:', userId);
+    return { success: false, error: 'rate_limited' };
+  }
+
+  // Record seen webhook (for replay protection)
+  await db.prepare(
+    'INSERT INTO seen_events (event_id, created_at) VALUES (?, datetime("now"))'
+  ).bind(webhookId).run();
+
   // Check if user has proactive enabled
   const prefs = await db.prepare(`
     SELECT enabled, min_urgency FROM proactive_settings WHERE user_id = ?
@@ -264,6 +298,18 @@ export async function handleWebhook(
   const body = parsed.body ? sanitizeForPrompt(parsed.body, 2000) : undefined;
   const sender = parsed.sender ? sanitizeForPrompt(parsed.sender, 200) : undefined;
 
+  // Check VIP / blocked BEFORE classification (blocked senders never stored)
+  if (sender) {
+    const senderLower = sender.toLowerCase();
+    const vip = await db.prepare(`
+      SELECT type FROM proactive_vip WHERE user_id = ? AND email = ?
+    `).bind(userId, senderLower).first<{ type: string }>();
+
+    if (vip?.type === 'blocked') {
+      return { success: true }; // blocked sender - don't even store
+    }
+  }
+
   // Classify
   const urgency = classify(title, body, sender);
 
@@ -275,28 +321,13 @@ export async function handleWebhook(
     return { success: true }; // below threshold
   }
 
-  // Check rate limit (max 10/hour)
-  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const recentCount = await db.prepare(`
+  // Check notification rate limit (max 10 notified/hour - separate from webhook rate limit)
+  const notifiedCount = await db.prepare(`
     SELECT COUNT(*) as count FROM proactive_events
     WHERE user_id = ? AND created_at > ? AND notified = 1
   `).bind(userId, hourAgo).first<{ count: number }>();
 
-  if ((recentCount?.count || 0) >= 10) {
-    return { success: true }; // rate limited
-  }
-
-  // Check VIP / blocked
-  if (sender) {
-    const senderLower = sender.toLowerCase();
-    const vip = await db.prepare(`
-      SELECT type FROM proactive_vip WHERE user_id = ? AND email = ?
-    `).bind(userId, senderLower).first<{ type: string }>();
-
-    if (vip?.type === 'blocked') {
-      return { success: true }; // blocked sender
-    }
-  }
+  const shouldNotify = (notifiedCount?.count || 0) < 10;
 
   // Save event
   const eventId = nanoid();
@@ -307,15 +338,17 @@ export async function handleWebhook(
     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
   `).bind(eventId, userId, source, title || null, body?.slice(0, 500) || null, sender || null, urgency, now).run();
 
-  // Send notification
-  const notified = await sendNotification(db, userId, {
-    title: formatTitle(source, title, sender, urgency),
-    body: body?.slice(0, 200) || 'New notification',
-    data: { eventId, source, urgency },
-  });
+  // Send notification (only if under rate limit)
+  if (shouldNotify) {
+    const notified = await sendNotification(db, userId, {
+      title: formatTitle(source, title, sender, urgency),
+      body: body?.slice(0, 200) || 'New notification',
+      data: { eventId, source, urgency },
+    });
 
-  if (notified) {
-    await db.prepare(`UPDATE proactive_events SET notified = 1 WHERE id = ?`).bind(eventId).run();
+    if (notified) {
+      await db.prepare(`UPDATE proactive_events SET notified = 1 WHERE id = ?`).bind(eventId).run();
+    }
   }
 
   return { success: true, eventId };

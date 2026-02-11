@@ -206,6 +206,52 @@ proactiveRouter.post('/messages/:id/read', async (c) => {
   return c.json({ success: true });
 });
 
+// Alias for poll endpoint (same as /messages with since param)
+proactiveRouter.get('/messages/poll', async (c) => {
+  const userId = c.get('jwtPayload')?.sub;
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(c.req.url);
+  const since = url.searchParams.get('since');
+  const limit = parseInt(url.searchParams.get('limit') || '10');
+
+  try {
+    // Get messages since timestamp
+    let query = `
+      SELECT
+        id,
+        'notification' as message_type,
+        COALESCE(title, 'New notification') as content,
+        '[]' as suggested_actions,
+        CASE WHEN notified = 1 THEN 1 ELSE 0 END as is_read,
+        created_at,
+        NULL as event_id,
+        NULL as trigger_id
+      FROM proactive_events
+      WHERE user_id = ?
+    `;
+    const params: any[] = [userId];
+
+    if (since) {
+      query += ` AND created_at > ?`;
+      params.push(since);
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit);
+
+    const result = await c.env.DB.prepare(query).bind(...params).all();
+
+    return c.json({
+      success: true,
+      messages: result.results || [],
+    });
+  } catch (error: any) {
+    console.error('[Proactive] Poll error:', error);
+    return c.json({ success: false, messages: [], error: error.message }, 500);
+  }
+});
+
 proactiveRouter.get('/messages/unread-count', async (c) => {
   const userId = c.get('jwtPayload')?.sub;
   if (!userId) return c.json({ error: 'Unauthorized' }, 401);
