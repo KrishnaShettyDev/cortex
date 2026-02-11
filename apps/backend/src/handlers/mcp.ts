@@ -311,9 +311,22 @@ app.post('/integrations', async (c) => {
       authConfig: body.authConfig,
     });
 
+    // Auto-discover capabilities after registration (non-blocking on failure)
+    let discoveredCapabilities = null;
+    try {
+      discoveredCapabilities = await discoverCapabilities(c.env.DB, userId, integration.id);
+      console.log(`[MCP] Auto-discovered ${discoveredCapabilities.tools?.length || 0} tools for ${body.name}`);
+    } catch (discoverError) {
+      console.warn(`[MCP] Auto-discovery failed for ${body.name}:`, discoverError);
+      // Don't fail registration if discovery fails - server might be temporarily unavailable
+    }
+
     return c.json({
       success: true,
-      integration: formatIntegrationResponse(integration),
+      integration: formatIntegrationResponse({
+        ...integration,
+        capabilities: discoveredCapabilities || integration.capabilities,
+      }),
     });
   } catch (error) {
     console.error('[MCP API] Register error:', error);

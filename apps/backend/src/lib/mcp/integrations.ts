@@ -11,6 +11,13 @@
 
 import type { D1Database } from '@cloudflare/workers-types';
 import { nanoid } from 'nanoid';
+import {
+  discoverMCPTools,
+  callMCPTool,
+  readMCPResource,
+  checkMCPHealth,
+  type MCPTool as MCPToolFromClient,
+} from './client';
 
 // =============================================================================
 // TYPES
@@ -279,7 +286,7 @@ export async function deleteMCPIntegration(
 // =============================================================================
 
 /**
- * Discover capabilities of an MCP server
+ * Discover capabilities of an MCP server using JSON-RPC 2.0 protocol
  */
 export async function discoverCapabilities(
   db: D1Database,
@@ -291,72 +298,41 @@ export async function discoverCapabilities(
     throw new Error('Integration not found');
   }
 
-  const capabilities: MCPCapabilities = {
-    tools: [],
-    resources: [],
-    prompts: [],
-  };
-
   try {
-    // Build headers for authentication
-    const headers = buildAuthHeaders(integration);
+    // Build auth headers
+    const authHeaders = buildAuthHeaders(integration);
 
-    // Discover tools
-    const toolsResponse = await fetchWithTimeout(
-      `${integration.serverUrl}/tools/list`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers,
-        },
-        body: JSON.stringify({}),
-      },
-      MCP_EXECUTION_TIMEOUT_MS
-    );
+    // Use the new JSON-RPC client for discovery
+    const discovered = await discoverMCPTools(integration.serverUrl, authHeaders);
 
-    if (toolsResponse.ok) {
-      const toolsData = await toolsResponse.json() as { tools?: MCPTool[] };
-      capabilities.tools = toolsData.tools || [];
-    }
+    // Enhance tool descriptions with format hints based on server URL
+    const enhancedTools = discovered.tools.map(t => {
+      let description = t.description || t.name;
 
-    // Discover resources
-    const resourcesResponse = await fetchWithTimeout(
-      `${integration.serverUrl}/resources/list`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers,
-        },
-        body: JSON.stringify({}),
-      },
-      MCP_EXECUTION_TIMEOUT_MS
-    );
+      // Add format hints for known MCP servers
+      if (integration.serverUrl.includes('crypto.com')) {
+        if (t.name.includes('ticker') || t.name.includes('price') || t.name.includes('instrument')) {
+          description += '. IMPORTANT: Use format like BTCUSD, ETHUSD, BTCUSDT (no slashes or underscores between symbols).';
+        }
+      }
 
-    if (resourcesResponse.ok) {
-      const resourcesData = await resourcesResponse.json() as { resources?: MCPResource[] };
-      capabilities.resources = resourcesData.resources || [];
-    }
+      return {
+        name: t.name,
+        description,
+        inputSchema: t.inputSchema || {},
+      };
+    });
 
-    // Discover prompts
-    const promptsResponse = await fetchWithTimeout(
-      `${integration.serverUrl}/prompts/list`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers,
-        },
-        body: JSON.stringify({}),
-      },
-      MCP_EXECUTION_TIMEOUT_MS
-    );
-
-    if (promptsResponse.ok) {
-      const promptsData = await promptsResponse.json() as { prompts?: MCPPrompt[] };
-      capabilities.prompts = promptsData.prompts || [];
-    }
+    const capabilities: MCPCapabilities = {
+      tools: enhancedTools,
+      resources: discovered.resources.map(r => ({
+        uri: r.uri,
+        name: r.name,
+        description: r.description,
+        mimeType: r.mimeType,
+      })),
+      prompts: [], // MCP prompts are less common, skip for now
+    };
 
     // Update integration with discovered capabilities
     const now = new Date().toISOString();
@@ -377,10 +353,12 @@ export async function discoverCapabilities(
       userId
     ).run();
 
+    console.log(`[MCP] Discovered ${capabilities.tools.length} tools for ${integration.name}`);
     return capabilities;
   } catch (error) {
     // Update integration with error
     const now = new Date().toISOString();
+    const errorMsg = error instanceof Error ? error.message : String(error);
     await db.prepare(`
       UPDATE mcp_integrations
       SET last_health_check = ?,
@@ -389,8 +367,9 @@ export async function discoverCapabilities(
           last_error = ?,
           updated_at = ?
       WHERE id = ? AND user_id = ?
-    `).bind(now, String(error), now, integrationId, userId).run();
+    `).bind(now, errorMsg, now, integrationId, userId).run();
 
+    console.error(`[MCP] Discovery failed for ${integration.name}:`, errorMsg);
     throw error;
   }
 }
@@ -400,7 +379,7 @@ export async function discoverCapabilities(
 // =============================================================================
 
 /**
- * Execute an MCP tool
+ * Execute an MCP tool using JSON-RPC 2.0 protocol
  */
 export async function executeTool(
   db: D1Database,
@@ -439,39 +418,17 @@ export async function executeTool(
   }
 
   try {
-    const headers = buildAuthHeaders(integration);
+    const authHeaders = buildAuthHeaders(integration);
 
-    const response = await fetchWithTimeout(
-      `${integration.serverUrl}/tools/call`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers,
-        },
-        body: JSON.stringify({
-          name: toolName,
-          arguments: inputParams,
-        }),
-      },
-      MCP_EXECUTION_TIMEOUT_MS
+    // Use the new JSON-RPC client
+    const responseData = await callMCPTool(
+      integration.serverUrl,
+      toolName,
+      inputParams,
+      authHeaders
     );
 
     const executionTimeMs = Date.now() - startTime;
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      const result: MCPExecutionResult = {
-        success: false,
-        error: `HTTP ${response.status}: ${errorText}`,
-        executionTimeMs,
-      };
-
-      await logExecution(db, userId, integrationId, toolName, inputParams, result);
-      return result;
-    }
-
-    const responseData = await response.json();
 
     const result: MCPExecutionResult = {
       success: true,
@@ -491,6 +448,7 @@ export async function executeTool(
       WHERE id = ?
     `).bind(integrationId).run();
 
+    console.log(`[MCP] Tool ${toolName} executed in ${executionTimeMs}ms`);
     return result;
   } catch (error) {
     const executionTimeMs = Date.now() - startTime;
@@ -517,12 +475,13 @@ export async function executeTool(
       WHERE id = ?
     `).bind(errorMessage, integrationId).run();
 
+    console.error(`[MCP] Tool ${toolName} failed:`, errorMessage);
     return result;
   }
 }
 
 /**
- * Read an MCP resource
+ * Read an MCP resource using JSON-RPC 2.0 protocol
  */
 export async function readResource(
   db: D1Database,
@@ -542,32 +501,16 @@ export async function readResource(
   }
 
   try {
-    const headers = buildAuthHeaders(integration);
+    const authHeaders = buildAuthHeaders(integration);
 
-    const response = await fetchWithTimeout(
-      `${integration.serverUrl}/resources/read`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers,
-        },
-        body: JSON.stringify({ uri }),
-      },
-      MCP_EXECUTION_TIMEOUT_MS
+    // Use the new JSON-RPC client
+    const responseData = await readMCPResource(
+      integration.serverUrl,
+      uri,
+      authHeaders
     );
 
     const executionTimeMs = Date.now() - startTime;
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: `HTTP ${response.status}`,
-        executionTimeMs,
-      };
-    }
-
-    const responseData = await response.json();
 
     return {
       success: true,
@@ -577,7 +520,7 @@ export async function readResource(
   } catch (error) {
     return {
       success: false,
-      error: String(error),
+      error: error instanceof Error ? error.message : String(error),
       executionTimeMs: Date.now() - startTime,
     };
   }
@@ -588,7 +531,7 @@ export async function readResource(
 // =============================================================================
 
 /**
- * Perform health check on all active integrations
+ * Perform health check on all active integrations using JSON-RPC initialize
  */
 export async function healthCheckIntegrations(db: D1Database): Promise<void> {
   const integrations = await db.prepare(`
@@ -611,18 +554,11 @@ export async function healthCheckIntegrations(db: D1Database): Promise<void> {
         authConfig: row.auth_config ? JSON.parse(row.auth_config) : null,
       };
 
-      const headers = buildAuthHeaders(integration as MCPIntegration);
+      const authHeaders = buildAuthHeaders(integration as MCPIntegration);
 
-      const response = await fetchWithTimeout(
-        `${row.server_url}/health`,
-        {
-          method: 'GET',
-          headers,
-        },
-        5000 // 5 second timeout for health checks
-      );
-
-      const status = response.ok ? 'healthy' : 'degraded';
+      // Use the new JSON-RPC client for health check
+      const isHealthy = await checkMCPHealth(row.server_url, authHeaders);
+      const status = isHealthy ? 'healthy' : 'unhealthy';
 
       await db.prepare(`
         UPDATE mcp_integrations
