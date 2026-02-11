@@ -22,6 +22,15 @@ import {
 import { sanitizeForPrompt, detectInjectionAttempt } from '../lib/sanitize';
 import { parseTriggerInput } from '../lib/triggers/parser';
 import { createTrigger, getUserTriggers, deleteTrigger } from '../lib/triggers/executor';
+import {
+  getUserMCPIntegrations,
+  registerMCPIntegration,
+  deleteMCPIntegration,
+  discoverCapabilities,
+  executeTool as mcpExecuteTool,
+  type MCPIntegration,
+  type MCPTool,
+} from '../lib/mcp/integrations';
 
 export interface RouterOptions {
   env: Bindings;
@@ -74,6 +83,8 @@ export class AgentRouter {
   // Cache for connected account ID (per request)
   private cachedConnectionId: string | null = null;
   private connectionCacheChecked = false;
+  // Cache for MCP integrations (per request)
+  private cachedMCPIntegrations: MCPIntegration[] | null = null;
 
   constructor(options: RouterOptions) {
     this.env = options.env;
@@ -99,6 +110,43 @@ export class AgentRouter {
     this.cachedConnectionId = integration?.access_token || null;
     this.connectionCacheChecked = true;
     return this.cachedConnectionId;
+  }
+
+  /**
+   * Get cached MCP integrations for the user
+   */
+  private async getMCPIntegrations(): Promise<MCPIntegration[]> {
+    if (this.cachedMCPIntegrations !== null) {
+      return this.cachedMCPIntegrations;
+    }
+
+    try {
+      this.cachedMCPIntegrations = await getUserMCPIntegrations(this.env.DB, this.context.userId);
+      return this.cachedMCPIntegrations;
+    } catch (error) {
+      console.error('[Router] Failed to load MCP integrations:', error);
+      this.cachedMCPIntegrations = [];
+      return [];
+    }
+  }
+
+  /**
+   * Get active MCP tools from user's integrations
+   */
+  private async getActiveMCPTools(): Promise<Array<{ integration: MCPIntegration; tool: MCPTool }>> {
+    const integrations = await this.getMCPIntegrations();
+    const activeTools: Array<{ integration: MCPIntegration; tool: MCPTool }> = [];
+
+    for (const integration of integrations) {
+      if (!integration.isActive) continue;
+      if (!integration.capabilities?.tools) continue;
+
+      for (const tool of integration.capabilities.tools) {
+        activeTools.push({ integration, tool });
+      }
+    }
+
+    return activeTools;
   }
 
   /**
@@ -143,6 +191,11 @@ export class AgentRouter {
     if (!this.interactionConfig || !this.executionConfig) {
       throw new Error('Failed to load agent configs');
     }
+
+    // PERFORMANCE: Force gpt-4o-mini for both agents (faster, cheaper)
+    // gpt-4o is overkill for most tasks and adds 1-2s per call
+    this.interactionConfig.model = 'gpt-4o-mini';
+    this.executionConfig.model = 'gpt-4o-mini';
   }
 
   /**
@@ -212,6 +265,84 @@ export class AgentRouter {
   }
 
   /**
+   * Direct execution - skips interaction agent for speed
+   * Used for known MCP tool patterns (crypto prices, etc.)
+   */
+  async directExecute(input: { goal: string; message: string }): Promise<InteractionResult> {
+    if (!this.executionConfig) {
+      await this.initialize();
+    }
+
+    console.log(`[Router] Direct execute: ${input.goal}`);
+
+    // Modify the goal to explicitly request natural language formatting
+    const goalWithFormatting = `${input.goal}
+
+IMPORTANT: After getting the data, respond with a natural, conversational answer.
+Do NOT return raw JSON. Format the result as a friendly message the user can read.
+Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`;
+
+    const executionResult = await this.runExecutionAgent({
+      goal: goalWithFormatting,
+      context: { originalMessage: input.message },
+    });
+
+    // Use the execution agent's formatted message if available
+    let response: string;
+    if (executionResult.success && executionResult.data) {
+      // The execution agent should return a formatted message
+      if (executionResult.data.message && typeof executionResult.data.message === 'string') {
+        response = executionResult.data.message;
+      } else if (executionResult.data.summary) {
+        response = executionResult.data.summary;
+      } else {
+        // Fallback: try to format from tool results
+        const toolResults = executionResult.data.toolResults || executionResult.data;
+        response = this.formatToolResultsAsResponse(toolResults, input.message);
+      }
+    } else {
+      response = executionResult.error || 'Unable to get the information right now.';
+    }
+
+    return {
+      response,
+      memoriesUsed: 0,
+      delegatedGoal: input.goal,
+      executionResult,
+    };
+  }
+
+  /**
+   * Format raw tool results into a human-readable response
+   */
+  private formatToolResultsAsResponse(toolResults: any, originalMessage: string): string {
+    // Check for crypto price data
+    if (toolResults) {
+      // Handle mcp_crypto_get_index_price result
+      const priceData = toolResults.mcp_crypto_get_index_price ||
+                        toolResults.mcp_crypto_get_ticker ||
+                        toolResults;
+
+      if (priceData?.structuredContent?.price) {
+        const price = parseFloat(priceData.structuredContent.price);
+        const instrument = priceData.structuredContent.instrument_name || 'BTC';
+        const symbol = instrument.replace(/USD.*/, '');
+        return `${symbol} is currently trading at $${price.toLocaleString()}.`;
+      }
+
+      if (priceData?.structuredContent?.last) {
+        const price = parseFloat(priceData.structuredContent.last);
+        const instrument = priceData.structuredContent.instrument_name || 'BTC';
+        const symbol = instrument.replace(/USD.*/, '');
+        return `${symbol} is currently at $${price.toLocaleString()}.`;
+      }
+    }
+
+    // Generic fallback - shouldn't reach here if agent formats properly
+    return `Here's what I found: ${JSON.stringify(toolResults).slice(0, 300)}...`;
+  }
+
+  /**
    * Run the Interaction agent with tool use support
    */
   private async runInteractionAgent(
@@ -276,7 +407,7 @@ export class AgentRouter {
         type: 'function' as const,
         function: {
           name: 'delegate_to_execution',
-          description: 'REQUIRED for any task involving emails, calendar, or external actions. You CANNOT access Gmail, Google Calendar, or external services directly - you MUST delegate using this tool. Use for: reading emails, sending emails, searching emails, checking calendar, creating events, updating events, deleting events, searching contacts. Always delegate these tasks - never say "I don\'t have access".',
+          description: 'REQUIRED for any task involving emails, calendar, integrations, triggers, or external actions. You CANNOT access Gmail, Google Calendar, MCP integrations, or external services directly - you MUST delegate using this tool. Use for: reading emails, sending emails, searching emails, checking calendar, creating events, updating events, deleting events, managing integrations (list/add/remove MCP servers), creating reminders/triggers, listing scheduled tasks. Always delegate these tasks - never say "I don\'t have access".',
           parameters: {
             type: 'object',
             properties: {
@@ -488,7 +619,7 @@ export class AgentRouter {
     params: DelegateToExecutionParams,
     config: AgentConfig
   ): Promise<ExecutionResult & { usage?: { inputTokens: number; outputTokens: number } }> {
-    const tools = this.getExecutionTools();
+    const tools = await this.getExecutionTools();
     const toolCallsMade: string[] = [];
     const toolResults: Record<string, any> = {}; // Store tool results for rich content rendering
     let totalInputTokens = 0;
@@ -513,7 +644,9 @@ export class AgentRouter {
       },
     ];
 
-    const maxIterations = 10;
+    // Reduced from 10 to 5 - prevents long retry loops
+    // With format hints in tool descriptions, fewer retries needed
+    const maxIterations = 5;
     let iteration = 0;
 
     while (iteration < maxIterations) {
@@ -677,7 +810,7 @@ export class AgentRouter {
 
     switch (toolName) {
       case 'gmail_send_email':
-        return this.composioExecute('GMAIL_SEND_EMAIL', connectedAccountId, {
+        return this.composioExecute('GMAIL_SEND_EMAIL', connectedAccountId!, {
           recipient_email: args.recipient_email,
           subject: args.subject,
           body: args.body,
@@ -685,7 +818,7 @@ export class AgentRouter {
         });
 
       case 'gmail_create_draft':
-        return this.composioExecute('GMAIL_CREATE_EMAIL_DRAFT', connectedAccountId, {
+        return this.composioExecute('GMAIL_CREATE_EMAIL_DRAFT', connectedAccountId!, {
           recipient_email: args.recipient_email,
           subject: args.subject,
           body: args.body,
@@ -693,7 +826,7 @@ export class AgentRouter {
 
       case 'gmail_search': {
         // Limit results to prevent context overflow - emails can be very large
-        const emailsResult = await this.composioExecute('GMAIL_FETCH_EMAILS', connectedAccountId, {
+        const emailsResult = await this.composioExecute('GMAIL_FETCH_EMAILS', connectedAccountId!, {
           query: args.query,
           max_results: Math.min(args.max_results || 5, 10), // Default 5, max 10
         });
@@ -737,7 +870,7 @@ export class AgentRouter {
       }
 
       case 'calendar_create_event':
-        return this.composioExecute('GOOGLECALENDAR_CREATE_EVENT', connectedAccountId, {
+        return this.composioExecute('GOOGLECALENDAR_CREATE_EVENT', connectedAccountId!, {
           summary: args.summary,
           start_datetime: args.start_time,
           end_datetime: args.end_time,
@@ -747,14 +880,14 @@ export class AgentRouter {
         });
 
       case 'calendar_list_events':
-        return this.composioExecute('GOOGLECALENDAR_LIST_EVENTS', connectedAccountId, {
+        return this.composioExecute('GOOGLECALENDAR_LIST_EVENTS', connectedAccountId!, {
           time_min: args.time_min || new Date().toISOString(),
           time_max: args.time_max,
           max_results: args.max_results || 10,
         });
 
       case 'calendar_update_event':
-        return this.composioExecute('GOOGLECALENDAR_UPDATE_EVENT', connectedAccountId, {
+        return this.composioExecute('GOOGLECALENDAR_UPDATE_EVENT', connectedAccountId!, {
           event_id: args.event_id,
           summary: args.summary,
           start_datetime: args.start_time,
@@ -763,7 +896,7 @@ export class AgentRouter {
         });
 
       case 'calendar_delete_event':
-        return this.composioExecute('GOOGLECALENDAR_DELETE_EVENT', connectedAccountId, {
+        return this.composioExecute('GOOGLECALENDAR_DELETE_EVENT', connectedAccountId!, {
           event_id: args.event_id,
         });
 
@@ -816,8 +949,7 @@ export class AgentRouter {
 
         // Create the trigger in the database
         const triggerName = args.action.slice(0, 50); // Use action as name, truncated
-        const trigger = await createTrigger(this.env.DB, {
-          userId: this.context.userId,
+        const trigger = await createTrigger(this.env.DB, this.context.userId, {
           name: triggerName,
           originalInput: `${args.schedule_description}: ${args.action}`,
           cronExpression,
@@ -845,7 +977,7 @@ export class AgentRouter {
 
         const activeTriggers = args.include_inactive
           ? triggers
-          : triggers.filter((t: any) => t.is_active);
+          : triggers.filter((t: any) => t.isActive); // Note: camelCase from getUserTriggers
 
         if (activeTriggers.length === 0) {
           return JSON.stringify({
@@ -860,10 +992,10 @@ export class AgentRouter {
           triggers: activeTriggers.map((t: any) => ({
             id: t.id,
             name: t.name,
-            schedule: t.actionPayload?.humanReadable || t.original_input,
-            next_run: t.next_trigger_at,
-            is_active: t.is_active,
-            action_type: t.action_type,
+            schedule: t.actionPayload?.humanReadable || t.originalInput,
+            next_run: t.nextTriggerAt,
+            is_active: t.isActive,
+            action_type: t.actionType,
           })),
           count: activeTriggers.length,
         });
@@ -920,8 +1052,243 @@ export class AgentRouter {
         });
       }
 
-      default:
+      // MCP Integration management tools
+      case 'add_mcp_server': {
+        try {
+          // Build auth config based on auth_type
+          let authConfig: Record<string, any> | undefined;
+          const authType = args.auth_type || 'none';
+
+          if (authType === 'api_key' && args.auth_token) {
+            authConfig = { apiKey: args.auth_token };
+          } else if (authType === 'bearer' && args.auth_token) {
+            authConfig = { token: args.auth_token };
+          }
+
+          const integration = await registerMCPIntegration(
+            this.env.DB,
+            this.context.userId,
+            {
+              name: args.name,
+              serverUrl: args.server_url,
+              authType: authType as 'none' | 'api_key' | 'bearer',
+              authConfig,
+            }
+          );
+
+          // Try to discover capabilities
+          let discoveryResult: any = null;
+          try {
+            const capabilities = await discoverCapabilities(
+              this.env.DB,
+              this.context.userId,
+              integration.id
+            );
+            discoveryResult = {
+              tools_count: capabilities.tools?.length || 0,
+              tool_names: (capabilities.tools || []).map((t: MCPTool) => t.name),
+            };
+          } catch (discoverError) {
+            console.warn('[Router] MCP discovery failed:', discoverError);
+            discoveryResult = { error: 'Discovery failed, server may be offline' };
+          }
+
+          // Clear cache to include new integration
+          this.cachedMCPIntegrations = null;
+
+          return JSON.stringify({
+            success: true,
+            integration_id: integration.id,
+            name: integration.name,
+            status: integration.healthStatus,
+            discovery: discoveryResult,
+            message: discoveryResult?.tools_count
+              ? `Connected ${args.name} with ${discoveryResult.tools_count} tools available.`
+              : `Connected ${args.name}. Discovery pending - tools will be available after server responds.`,
+          });
+        } catch (error) {
+          return JSON.stringify({
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to add MCP server',
+          });
+        }
+      }
+
+      case 'list_mcp_servers': {
+        const integrations = await this.getMCPIntegrations();
+        const filtered = args.include_inactive
+          ? integrations
+          : integrations.filter(i => i.isActive);
+
+        if (filtered.length === 0) {
+          return JSON.stringify({
+            success: true,
+            integrations: [],
+            message: 'You don\'t have any connected integrations. You can connect MCP servers like Spotify, Linear, or Notion.',
+          });
+        }
+
+        return JSON.stringify({
+          success: true,
+          integrations: filtered.map(i => ({
+            id: i.id,
+            name: i.name,
+            status: i.healthStatus,
+            is_active: i.isActive,
+            tools_count: i.capabilities?.tools?.length || 0,
+            tool_names: (i.capabilities?.tools || []).slice(0, 5).map((t: MCPTool) => t.name),
+            last_check: i.lastHealthCheck,
+          })),
+          count: filtered.length,
+        });
+      }
+
+      case 'remove_mcp_server': {
+        // If integration_id is provided, delete directly
+        if (args.integration_id) {
+          const success = await deleteMCPIntegration(
+            this.env.DB,
+            this.context.userId,
+            args.integration_id
+          );
+
+          if (!success) {
+            return JSON.stringify({
+              success: false,
+              error: 'Integration not found.',
+            });
+          }
+
+          this.cachedMCPIntegrations = null;
+          return JSON.stringify({
+            success: true,
+            message: 'Integration removed successfully.',
+          });
+        }
+
+        // Otherwise, search by name pattern
+        if (args.name_pattern) {
+          const integrations = await this.getMCPIntegrations();
+          const pattern = args.name_pattern.toLowerCase();
+          const matching = integrations.filter(i =>
+            i.name.toLowerCase().includes(pattern)
+          );
+
+          if (matching.length === 0) {
+            return JSON.stringify({
+              success: false,
+              error: `No integrations found matching "${args.name_pattern}".`,
+            });
+          }
+
+          if (matching.length === 1) {
+            await deleteMCPIntegration(this.env.DB, this.context.userId, matching[0].id);
+            this.cachedMCPIntegrations = null;
+            return JSON.stringify({
+              success: true,
+              message: `Removed integration: ${matching[0].name}`,
+            });
+          }
+
+          return JSON.stringify({
+            success: false,
+            multiple_matches: matching.map(i => ({ id: i.id, name: i.name })),
+            message: `Found ${matching.length} matching integrations. Please specify which one to remove.`,
+          });
+        }
+
+        return JSON.stringify({
+          success: false,
+          error: 'Please specify either an integration_id or name_pattern to remove.',
+        });
+      }
+
+      default: {
+        // Check if this is a dynamic MCP tool (prefixed with mcp_)
+        if (toolName.startsWith('mcp_')) {
+          return this.executeMCPTool(toolName, args);
+        }
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
+      }
+    }
+  }
+
+  /**
+   * Execute a dynamic MCP tool
+   */
+  private async executeMCPTool(toolName: string, args: Record<string, any>): Promise<string> {
+    console.log(`[MCP Tool] Executing: ${toolName}`, { args });
+
+    // Parse tool name: mcp_{integration_name}_{tool_name}
+    const parts = toolName.split('_');
+    if (parts.length < 3) {
+      console.error(`[MCP Tool] Invalid tool name format: ${toolName}`);
+      return JSON.stringify({ error: 'Invalid MCP tool name format' });
+    }
+
+    // Remove 'mcp' prefix and extract integration name and tool name
+    parts.shift(); // Remove 'mcp'
+
+    // Find the integration by matching the prefix
+    const integrations = await this.getMCPIntegrations();
+    console.log(`[MCP Tool] Found ${integrations.length} integrations for user`);
+
+    let matchedIntegration: MCPIntegration | null = null;
+    let actualToolName: string = '';
+
+    for (const integration of integrations) {
+      const normalizedName = integration.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      console.log(`[MCP Tool] Checking integration: ${integration.name} (normalized: ${normalizedName})`);
+      if (toolName.startsWith(`mcp_${normalizedName}_`)) {
+        matchedIntegration = integration;
+        actualToolName = toolName.replace(`mcp_${normalizedName}_`, '');
+        console.log(`[MCP Tool] Matched! Actual tool name: ${actualToolName}`);
+        break;
+      }
+    }
+
+    if (!matchedIntegration) {
+      console.error(`[MCP Tool] No matching integration found for: ${toolName}`);
+      return JSON.stringify({ error: `MCP integration not found for tool: ${toolName}` });
+    }
+
+    if (!matchedIntegration.isActive) {
+      console.error(`[MCP Tool] Integration "${matchedIntegration.name}" is disabled`);
+      return JSON.stringify({ error: `Integration "${matchedIntegration.name}" is disabled` });
+    }
+
+    // Execute the tool via MCP
+    try {
+      console.log(`[MCP Tool] Calling MCP server: ${matchedIntegration.serverUrl}`);
+      const result = await mcpExecuteTool(
+        this.env.DB,
+        this.context.userId,
+        matchedIntegration.id,
+        actualToolName,
+        args
+      );
+
+      console.log(`[MCP Tool] Result:`, { success: result.success, executionTimeMs: result.executionTimeMs });
+
+      if (!result.success) {
+        console.error(`[MCP Tool] Execution failed:`, result.error);
+        return JSON.stringify({
+          success: false,
+          error: result.error || 'MCP tool execution failed',
+        });
+      }
+
+      return JSON.stringify({
+        success: true,
+        result: result.result,
+        execution_time_ms: result.executionTimeMs,
+      });
+    } catch (error) {
+      console.error(`[MCP Tool] Exception:`, error);
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'MCP tool execution failed',
+      });
     }
   }
 
@@ -973,10 +1340,11 @@ export class AgentRouter {
   }
 
   /**
-   * Get execution tools definition
+   * Get execution tools definition (including dynamic MCP tools)
    */
-  private getExecutionTools() {
-    return [
+  private async getExecutionTools() {
+    // Static tools (Gmail, Calendar, Memory, Triggers)
+    const staticTools = [
       {
         type: 'function' as const,
         function: {
@@ -1153,7 +1521,125 @@ export class AgentRouter {
           },
         },
       },
+      // MCP Integration management tools
+      {
+        type: 'function' as const,
+        function: {
+          name: 'add_mcp_server',
+          description: 'Connect a new MCP (Model Context Protocol) server integration. Use when user says "connect my Spotify", "add Notion integration", "link my Linear".',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Display name for the integration (e.g., "Spotify", "Linear", "Notion")' },
+              server_url: { type: 'string', description: 'The MCP server URL (e.g., "https://mcp.spotify.com/sse")' },
+              auth_type: { type: 'string', enum: ['none', 'api_key', 'bearer'], description: 'Authentication type (default: none)' },
+              auth_token: { type: 'string', description: 'API key or bearer token if auth_type requires it' },
+            },
+            required: ['name', 'server_url'],
+          },
+        },
+      },
+      {
+        type: 'function' as const,
+        function: {
+          name: 'list_mcp_servers',
+          description: 'List connected MCP integrations. Use when user asks "what integrations do I have", "show my connected apps", "what services are connected".',
+          parameters: {
+            type: 'object',
+            properties: {
+              include_inactive: { type: 'boolean', description: 'Include disabled integrations (default: false)' },
+            },
+            required: [],
+          },
+        },
+      },
+      {
+        type: 'function' as const,
+        function: {
+          name: 'remove_mcp_server',
+          description: 'Disconnect an MCP integration. Use when user says "remove Spotify", "disconnect Linear", "unlink Notion".',
+          parameters: {
+            type: 'object',
+            properties: {
+              integration_id: { type: 'string', description: 'The integration ID to remove (if known)' },
+              name_pattern: { type: 'string', description: 'Pattern to match integration name if ID not known' },
+            },
+            required: [],
+          },
+        },
+      },
     ];
+
+    // Load dynamic MCP tools from user's active integrations
+    const mcpTools: typeof staticTools = [];
+    try {
+      const activeMCPTools = await this.getActiveMCPTools();
+      for (const { integration, tool } of activeMCPTools) {
+        // Create tool definition with prefixed name to avoid conflicts
+        const prefixedName = `mcp_${integration.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${tool.name}`;
+
+        // Sanitize input schema - OpenAI requires 'properties' when type is 'object'
+        const sanitizedSchema = this.sanitizeToolSchema(tool.inputSchema);
+
+        mcpTools.push({
+          type: 'function' as const,
+          function: {
+            name: prefixedName,
+            description: `[${integration.name}] ${tool.description || tool.name}`,
+            parameters: sanitizedSchema,
+          },
+        });
+      }
+    } catch (error) {
+      console.error('[Router] Failed to load MCP tools:', error);
+    }
+
+    return [...staticTools, ...mcpTools];
+  }
+
+  /**
+   * Sanitize MCP tool schema for OpenAI compatibility
+   * OpenAI requires 'properties' field when type is 'object'
+   */
+  private sanitizeToolSchema(schema: Record<string, any> | undefined): Record<string, any> {
+    // Default schema if none provided
+    if (!schema || Object.keys(schema).length === 0) {
+      return {
+        type: 'object',
+        properties: {},
+        required: [],
+      };
+    }
+
+    // Deep clone to avoid mutating original
+    const sanitized = JSON.parse(JSON.stringify(schema));
+
+    // Recursively ensure all object types have properties
+    const ensureProperties = (obj: Record<string, any>): void => {
+      if (obj.type === 'object' && !obj.properties) {
+        obj.properties = {};
+      }
+
+      // Recurse into properties
+      if (obj.properties) {
+        for (const key of Object.keys(obj.properties)) {
+          ensureProperties(obj.properties[key]);
+        }
+      }
+
+      // Recurse into items (for arrays)
+      if (obj.items && typeof obj.items === 'object') {
+        ensureProperties(obj.items);
+      }
+
+      // Recurse into additionalProperties
+      if (obj.additionalProperties && typeof obj.additionalProperties === 'object') {
+        ensureProperties(obj.additionalProperties);
+      }
+    };
+
+    ensureProperties(sanitized);
+    return sanitized;
   }
 
   /**

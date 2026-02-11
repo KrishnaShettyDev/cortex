@@ -424,6 +424,39 @@ class ChatService {
   }
 
   /**
+   * Fallback streaming chat when actions chat fails.
+   */
+  private async chatStreamFallback(
+    message: string,
+    conversationId: string | undefined,
+    callbacks: ChatStreamCallbacks
+  ): Promise<void> {
+    try {
+      const response = await this.chat(message, conversationId);
+
+      callbacks.onMemoriesFound?.([]);
+
+      const fullContent = response.response;
+      const chunkSize = 20;
+      for (let i = 0; i < fullContent.length; i += chunkSize) {
+        const chunk = fullContent.slice(i, i + chunkSize);
+        callbacks.onContent?.(chunk, fullContent.slice(0, i + chunkSize));
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+
+      callbacks.onComplete?.({
+        response: fullContent,
+        conversation_id: conversationId || '',
+        memories_used: [],
+        pending_actions: [],
+        actions_taken: [],
+      });
+    } catch (error) {
+      callbacks.onError?.(error instanceof Error ? error.message : 'Chat failed');
+    }
+  }
+
+  /**
    * Get smart contextual suggestions (nudges from the relationship layer).
    * Uses v3/nudges endpoint instead of the stub.
    */

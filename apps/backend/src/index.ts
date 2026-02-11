@@ -31,23 +31,16 @@ import mcpRouter from './handlers/mcp';
 import proactiveRouter from './handlers/proactive';
 import triggersRouter from './handlers/triggers';
 import * as agentHandlers from './handlers/agents';
-import { cleanup as runProactiveCleanup } from './lib/proactive';
-import { processDueTriggers } from './lib/triggers/executor';
-import { flushDueBatches, cleanupStaleBatches, resetDailyCounters } from './lib/proactive/batcher';
-import { cleanupSeenEvents, cleanupClassificationCache } from './lib/proactive/sync';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 // DELETED: handleSleepComputeCron - cognitive layer purged
-import { ConsolidationPipeline } from './lib/consolidation/consolidation-pipeline';
-import { runActionGeneration } from './lib/actions/generator';
 import { notificationHandlers } from './handlers/notifications';
-import { processScheduledNotifications, processProactiveNotificationQueue } from './lib/notifications/scheduler';
 import { tenantScopeMiddleware, tenantAuditMiddleware, tenantRateLimitMiddleware } from './lib/multi-tenancy/middleware';
 import { PerformanceTimer, logPerformance, trackPerformanceMetrics } from './lib/monitoring/performance';
 import { handleUncaughtError } from './lib/monitoring/errors';
 import { handleQueueBatch, type QueueEnv } from './lib/queue/consumer';
 import type { QueueMessage } from './lib/queue/producer';
-import { ComposioClient } from './lib/composio';
-import { reconcileTriggers } from './lib/triggers';
+import { handleScheduledEvent } from './lib/cron';
+import { allCronTasks } from './lib/cron/tasks';
 import { validateBody } from './lib/validation/middleware';
 import {
   appleAuthSchema,
@@ -665,6 +658,10 @@ app.use('/proactive/health', authenticateWithJwt);
 app.route('/proactive', proactiveRouter);
 
 // MCP Server (Model Context Protocol for AI clients)
+// /mcp/rpc and /mcp/sse use API key auth (for external AI clients)
+// /mcp/integrations/* uses JWT auth (for mobile app)
+app.use('/mcp/integrations', authenticateWithJwt);
+app.use('/mcp/integrations/*', authenticateWithJwt);
 app.route('/mcp', mcpRouter);
 
 // User-defined triggers (natural language scheduling)
@@ -746,222 +743,23 @@ export default {
 
   /**
    * Scheduled worker - runs on cron schedule
+   *
+   * Uses the new task runner with:
+   * - Per-task isolation (one failure doesn't kill others)
+   * - Per-task timeouts
+   * - LLM budget tracking via KV
+   * - Cron overlap protection via KV locks
+   * - Wall time awareness (25s limit)
    */
-  async scheduled(event: ScheduledEvent, env: any) {
-    console.log(`[Scheduled] Cron triggered: ${event.cron}`);
+  async scheduled(event: ScheduledEvent, env: any, ctx: ExecutionContext) {
+    const proactiveEnabled = env.PROACTIVE_ENABLED !== 'false';
 
-    try {
-      // =================================================================
-      // 1-MINUTE CRON: Proactive system heartbeat
-      // Handles: batch flushing, trigger execution, incremental sync
-      // =================================================================
-      if (event.cron === '* * * * *') {
-        const proactiveEnabled = env.PROACTIVE_ENABLED !== 'false';
-
-        if (proactiveEnabled) {
-          console.log('[Scheduled] Running 1-minute proactive cycle');
-
-          // 1. Flush due notification batches
-          try {
-            const batchResults = await flushDueBatches(env.DB);
-            if (batchResults.length > 0) {
-              console.log(`[Scheduled] Flushed ${batchResults.length} notification batches`);
-            }
-          } catch (error) {
-            console.error('[Scheduled] Batch flush failed:', error);
-          }
-
-          // 2. Process due user triggers
-          try {
-            const triggerResults = await processDueTriggers(env.DB);
-            if (triggerResults.length > 0) {
-              const successful = triggerResults.filter(r => r.status === 'success').length;
-              console.log(`[Scheduled] Processed ${triggerResults.length} triggers (${successful} successful)`);
-            }
-          } catch (error) {
-            console.error('[Scheduled] Trigger processing failed:', error);
-          }
-
-          // 3. Process proactive notification queue (webhook → push)
-          try {
-            const queueResults = await processProactiveNotificationQueue(env.DB);
-            if (queueResults.sent > 0 || queueResults.failed > 0) {
-              console.log(`[Scheduled] Notification queue: ${queueResults.sent} sent, ${queueResults.skipped} skipped, ${queueResults.failed} failed`);
-            }
-          } catch (error) {
-            console.error('[Scheduled] Notification queue processing failed:', error);
-          }
-
-          // NOTE: No incremental sync here - pure event-driven via Composio webhooks
-          // Polling is the wrong pattern. Webhooks fire when emails arrive.
-          // If a webhook is missed, user can pull-to-refresh for one-time fetch.
-        }
-      }
-
-      // =================================================================
-      // 6-HOURLY CRON: Reconciliation and cleanup
-      // =================================================================
-      if (event.cron === '0 */6 * * *') {
-        console.log('[Scheduled] Running trigger reconciliation (6-hourly)');
-
-        // Reconcile Composio triggers
-        if (env.COMPOSIO_API_KEY) {
-          const client = new ComposioClient({ apiKey: env.COMPOSIO_API_KEY });
-          const triggerResults = await reconcileTriggers(client, env.DB, env.WEBHOOK_BASE_URL);
-          console.log(
-            `[Scheduled] Trigger reconciliation: ${triggerResults.checked} checked, ` +
-            `${triggerResults.created} created, ${triggerResults.removed} removed, ` +
-            `${triggerResults.errors.length} errors`
-          );
-        }
-
-        // Run scheduled notifications (briefings, nudges based on user timezones)
-        const notifResults = await processScheduledNotifications(env.DB, env.AI);
-        console.log(`[Scheduled] Notifications: ${notifResults.sent} sent, ${notifResults.skipped} skipped, ${notifResults.failed} failed`);
-      }
-
-      // Action generation (Poke/Iris) - runs on sleep compute crons (4x daily)
-      // 3am, 9am, 3pm, 9pm UTC - generates proactive action suggestions
-      const sleepComputeCrons = ['0 3 * * *', '0 9 * * *', '0 15 * * *', '0 21 * * *'];
-      if (sleepComputeCrons.includes(event.cron)) {
-        console.log('[Scheduled] Running action generation (Poke/Iris)');
-
-        try {
-          const actionResults = await runActionGeneration(env.DB, {
-            maxUsersPerRun: 100,
-            maxActionsPerUser: 5,
-          });
-
-          console.log(
-            `[Scheduled] Action generation: ${actionResults.usersProcessed} users, ` +
-            `${actionResults.totalGenerated} actions generated, ` +
-            `${actionResults.totalSkipped} skipped, ` +
-            `${actionResults.errors.length} errors`
-          );
-        } catch (error) {
-          console.error('[Scheduled] Action generation failed:', error);
-        }
-      }
-
-      // Proactive cleanup - runs with 6-hourly trigger reconciliation
-      // NO POLLING - webhooks are push-based, Composio handles the push
-      if (event.cron === '0 */6 * * *') {
-        try {
-          const cleanupResults = await runProactiveCleanup(env.DB);
-          if (cleanupResults.eventsDeleted > 0) {
-            console.log(
-              `[Scheduled] Proactive cleanup: ${cleanupResults.eventsDeleted} events, ` +
-              `${cleanupResults.cacheEntriesDeleted} cache entries deleted`
-            );
-          }
-
-          // Clean up stale notification batches
-          const staleBatches = await cleanupStaleBatches(env.DB);
-          if (staleBatches > 0) {
-            console.log(`[Scheduled] Cleaned up ${staleBatches} stale notification batches`);
-          }
-
-          // Clean up seen events cache (24h TTL)
-          const seenEventsDeleted = await cleanupSeenEvents(env.DB);
-          if (seenEventsDeleted > 0) {
-            console.log(`[Scheduled] Cleaned up ${seenEventsDeleted} seen events`);
-          }
-
-          // Clean up classification cache (1h TTL)
-          const classificationDeleted = await cleanupClassificationCache(env.DB);
-          if (classificationDeleted > 0) {
-            console.log(`[Scheduled] Cleaned up ${classificationDeleted} classification cache entries`);
-          }
-
-          // SCALE FIX: Clean up unbounded growth tables (audit finding)
-          // These tables have no TTL and would grow forever without cleanup
-          const cleanupQueries = [
-            // 30-day retention for action logs
-            `DELETE FROM action_log WHERE created_at < datetime('now', '-30 days')`,
-            // 14-day retention for agent executions (high volume)
-            `DELETE FROM agent_executions WHERE created_at < datetime('now', '-14 days')`,
-            // 7-day retention for MCP execution logs
-            `DELETE FROM mcp_execution_log WHERE created_at < datetime('now', '-7 days')`,
-            // 30-day retention for trigger execution logs
-            `DELETE FROM trigger_execution_log WHERE created_at < datetime('now', '-30 days')`,
-            // 14-day retention for notification logs
-            `DELETE FROM notification_log WHERE created_at < datetime('now', '-14 days')`,
-            // 30-day retention for sync logs
-            `DELETE FROM sync_logs WHERE started_at < datetime('now', '-30 days')`,
-            // Clean up expired pending actions
-            `DELETE FROM pending_actions WHERE expires_at < datetime('now')`,
-          ];
-
-          let totalCleaned = 0;
-          for (const query of cleanupQueries) {
-            try {
-              const result = await env.DB.prepare(query).run();
-              totalCleaned += result.meta?.changes || 0;
-            } catch {
-              // Table may not exist yet - that's fine
-            }
-          }
-          if (totalCleaned > 0) {
-            console.log(`[Scheduled] Cleaned up ${totalCleaned} old log/execution records`);
-          }
-        } catch (error) {
-          console.error('[Scheduled] Proactive cleanup failed:', error);
-        }
-      }
-
-      // Reset daily notification counters at midnight UTC
-      // This runs with one of the 6-hourly crons
-      if (event.cron === '0 */6 * * *') {
-        try {
-          await resetDailyCounters(env.DB);
-        } catch (error) {
-          console.error('[Scheduled] Daily counter reset failed:', error);
-        }
-      }
-
-      // Run weekly consolidation (Sunday 2am)
-      if (event.cron === '0 2 * * SUN') {
-        console.log('[Scheduled] Running weekly consolidation');
-
-        // Get active users
-        const usersResult = await env.DB.prepare(`
-          SELECT DISTINCT user_id FROM memories
-          WHERE created_at >= datetime('now', '-7 days')
-          LIMIT 100
-        `).all();
-
-        for (const user of usersResult.results as any[]) {
-          try {
-            const pipeline = new ConsolidationPipeline(
-              {
-                db: env.DB,
-                ai: env.AI,
-                vectorize: env.VECTORIZE,
-                userId: user.user_id,
-                containerTag: 'default',
-              },
-              {
-                userId: user.user_id,
-                containerTag: 'default',
-                strategy: 'hybrid',
-                importanceThreshold: 0.3,
-                minAgeDays: 30,
-                minClusterSize: 3,
-              }
-            );
-
-            const result = await pipeline.run();
-            console.log(
-              `[Scheduled] Consolidation for user ${user.user_id}: ` +
-              `${result.memories_consolidated} memories → ${result.semantic_facts_created} facts`
-            );
-          } catch (error) {
-            console.error(`[Scheduled] Consolidation failed for user ${user.user_id}:`, error);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[Scheduled] Cron job failed:', error);
+    if (!proactiveEnabled) {
+      console.log('[Scheduled] Proactive system disabled, skipping cron');
+      return;
     }
+
+    // Use the new task runner with all production-grade features
+    await handleScheduledEvent(event.cron, allCronTasks, env, ctx);
   },
 };

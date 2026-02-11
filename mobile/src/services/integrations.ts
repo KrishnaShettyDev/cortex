@@ -34,7 +34,7 @@ export interface ConnectResponse {
 
 // ============== Calendar Types ==============
 
-export type MeetingType = 'google_meet' | 'zoom' | 'teams' | 'webex' | 'offline';
+export type MeetingType = 'google_meet' | 'zoom' | 'teams' | 'webex' | 'offline' | 'video';
 
 export interface CalendarEventItem {
   id: string;
@@ -168,6 +168,31 @@ class IntegrationsService {
       duration: durationMinutes.toString(),
     });
     return api.request<{ slots: TimeSlot[] }>(`/integrations/google/calendar/available?${params}`);
+  }
+
+  /**
+   * Get calendar availability for a specific date with time range
+   */
+  async getCalendarAvailability(
+    date: string,
+    durationMinutes: number = 30,
+    startTime: string = '09:00',
+    endTime: string = '17:00'
+  ): Promise<{ success: boolean; free_slots?: TimeSlot[]; error?: string }> {
+    try {
+      const params = new URLSearchParams({
+        date,
+        duration: durationMinutes.toString(),
+        start_time: startTime,
+        end_time: endTime,
+      });
+      const response = await api.request<{ slots: TimeSlot[] }>(
+        `/integrations/google/calendar/available?${params}`
+      );
+      return { success: true, free_slots: response.slots };
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to get availability' };
+    }
   }
 }
 

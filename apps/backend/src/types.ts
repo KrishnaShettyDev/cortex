@@ -33,6 +33,9 @@ export interface Bindings {
   PROACTIVE_ENABLED?: string; // 'true' to enable proactive monitoring
   // Base URLs (from wrangler.toml)
   WEBHOOK_BASE_URL?: string; // e.g., 'https://askcortex.plutas.in'
+  // Encryption (set with: wrangler secret put ENCRYPTION_KEY)
+  // Generate with: openssl rand -hex 32
+  ENCRYPTION_KEY?: string;
 }
 
 export interface ErrorResponse {

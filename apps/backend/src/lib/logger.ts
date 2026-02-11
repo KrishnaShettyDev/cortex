@@ -78,7 +78,7 @@ export class Logger {
     this.minLevel = options.minLevel || 'info';
     this.context = options.context || {};
     // Default to JSON in Workers environment
-    this.useJson = options.json ?? (typeof globalThis.navigator === 'undefined');
+    this.useJson = options.json ?? (typeof (globalThis as any).navigator === 'undefined');
   }
 
   /**
@@ -254,4 +254,90 @@ export const log = {
   auth: createLogger('Auth'),
   db: createLogger('DB'),
   cache: createLogger('Cache'),
+  cron: createLogger('Cron'),
+  webhook: createLogger('Webhook'),
+  sync: createLogger('Sync'),
+  notification: createLogger('Notification'),
+  crypto: createLogger('Crypto'),
+  dlq: createLogger('DLQ'),
+  mcp: createLogger('MCP'),
+  agent: createLogger('Agent'),
 };
+
+/**
+ * Cron-specific logging with metrics
+ */
+export interface CronTaskResult {
+  name: string;
+  status: 'success' | 'error' | 'timeout' | 'skipped';
+  durationMs: number;
+  llmCalls?: number;
+  error?: string;
+}
+
+export interface CronResult {
+  interval: string;
+  tasks: CronTaskResult[];
+  totalDurationMs: number;
+  totalLLMCalls: number;
+  wallTimeExceeded: boolean;
+}
+
+export function logCronResult(result: CronResult): void {
+  const hasErrors = result.tasks.some(t => t.status === 'error');
+  const logger = log.cron;
+
+  if (hasErrors) {
+    logger.warn('cron_completed_with_errors', {
+      interval: result.interval,
+      taskCount: result.tasks.length,
+      successCount: result.tasks.filter(t => t.status === 'success').length,
+      errorCount: result.tasks.filter(t => t.status === 'error').length,
+      skippedCount: result.tasks.filter(t => t.status === 'skipped').length,
+      totalLLMCalls: result.totalLLMCalls,
+      totalDurationMs: result.totalDurationMs,
+      wallTimeExceeded: result.wallTimeExceeded,
+      tasks: result.tasks,
+    });
+  } else {
+    logger.info('cron_completed', {
+      interval: result.interval,
+      taskCount: result.tasks.length,
+      totalLLMCalls: result.totalLLMCalls,
+      totalDurationMs: result.totalDurationMs,
+      wallTimeExceeded: result.wallTimeExceeded,
+      tasks: result.tasks.map(t => ({
+        name: t.name,
+        status: t.status,
+        durationMs: t.durationMs,
+      })),
+    });
+  }
+}
+
+/**
+ * Timed operation helper - logs duration on completion
+ */
+export async function timed<T>(
+  logger: Logger,
+  operation: string,
+  fn: () => Promise<T>,
+  metadata?: Record<string, any>
+): Promise<T> {
+  const start = Date.now();
+  try {
+    const result = await fn();
+    logger.info(operation, {
+      ...metadata,
+      durationMs: Date.now() - start,
+      success: true,
+    });
+    return result;
+  } catch (error) {
+    logger.error(operation, error, {
+      ...metadata,
+      durationMs: Date.now() - start,
+    });
+    throw error;
+  }
+}

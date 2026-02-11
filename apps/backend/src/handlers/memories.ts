@@ -20,6 +20,33 @@ function getUserId(c: Context): string {
   return c.get('jwtPayload').sub;
 }
 
+/**
+ * Detect if a message is a direct MCP tool query that can skip the interaction agent
+ * Returns the query type and a pre-formatted goal for faster execution
+ */
+function detectDirectMCPQuery(message: string): { type: string; goal: string } | null {
+  const lowerMessage = message.toLowerCase();
+
+  // Crypto price queries
+  if (/\b(bitcoin|btc|eth|ethereum|crypto|sol|solana|xrp|doge)\b.*\b(price|trading|worth|cost|value)\b/i.test(message) ||
+      /\b(price|trading|worth|cost|value)\b.*\b(bitcoin|btc|eth|ethereum|crypto|sol|solana|xrp|doge)\b/i.test(message) ||
+      /what('s| is)?\s+(bitcoin|btc|eth|ethereum)\s*(at|price)?/i.test(message)) {
+    // Extract the crypto symbol
+    let symbol = 'BTC';
+    if (/\beth(ereum)?\b/i.test(message)) symbol = 'ETH';
+    else if (/\bsol(ana)?\b/i.test(message)) symbol = 'SOL';
+    else if (/\bxrp\b/i.test(message)) symbol = 'XRP';
+    else if (/\bdoge\b/i.test(message)) symbol = 'DOGE';
+
+    return {
+      type: 'crypto_price',
+      goal: `Get the current price of ${symbol} using the crypto MCP server. Use instrument format ${symbol}USD or ${symbol}USDT (no slashes).`,
+    };
+  }
+
+  return null;
+}
+
 export async function listMemories(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
     const userId = getUserId(c);
@@ -218,10 +245,25 @@ export async function chatWithActionsHandler(c: Context<{ Bindings: Bindings }>)
 
       try {
         const router = createRouter(c.env, agentContext);
-        const result = await router.chat({
-          message,
-          history,
-        });
+
+        // Check for direct MCP tool patterns (skip interaction agent for speed)
+        const directMCPPattern = detectDirectMCPQuery(message);
+
+        let result;
+        if (directMCPPattern) {
+          // Fast path: Skip interaction agent, go directly to execution
+          console.log(`[FastPath] Direct MCP query detected: ${directMCPPattern.type}`);
+          result = await router.directExecute({
+            goal: directMCPPattern.goal,
+            message,
+          });
+        } else {
+          // Normal path: Full multi-agent orchestration
+          result = await router.chat({
+            message,
+            history,
+          });
+        }
 
         // Transform result to match existing response format
         return c.json({
