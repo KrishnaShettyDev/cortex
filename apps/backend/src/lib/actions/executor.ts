@@ -114,8 +114,18 @@ export const AVAILABLE_ACTIONS: ActionDefinition[] = [
     category: 'calendar',
   },
   {
+    name: 'fetch_emails',
+    description: 'Fetch recent emails from inbox (use when user wants to check/see their emails)',
+    parameters: [
+      { name: 'max_results', type: 'number', description: 'Maximum results (default 10)', required: false },
+      { name: 'label', type: 'string', description: 'Label filter like INBOX, UNREAD, STARRED', required: false },
+    ],
+    requiresConfirmation: false,
+    category: 'email',
+  },
+  {
     name: 'search_emails',
-    description: 'Search through emails',
+    description: 'Search through emails with a specific query',
     parameters: [
       { name: 'query', type: 'string', description: 'Search query', required: true },
       { name: 'max_results', type: 'number', description: 'Maximum results', required: false },
@@ -355,6 +365,8 @@ export class ActionExecutor {
         return this.updateCalendarEvent(parameters);
       case 'delete_calendar_event':
         return this.deleteCalendarEvent(parameters);
+      case 'fetch_emails':
+        return this.fetchEmails(parameters);
       case 'search_emails':
         return this.searchEmails(parameters);
       case 'search_contacts':
@@ -754,6 +766,71 @@ export class ActionExecutor {
       action: 'delete_calendar_event',
       error: result.error || 'Unknown error',
       message: `Failed to delete event: ${result.error}`,
+    };
+  }
+
+  /**
+   * Fetch recent emails (no query required)
+   */
+  private async fetchEmails(params: {
+    max_results?: number;
+    label?: string;
+  }): Promise<ActionResult> {
+    const connectedAccountId = await this.getConnectedAccountId('gmail');
+    if (!connectedAccountId) {
+      return {
+        success: false,
+        action: 'fetch_emails',
+        error: 'Gmail not connected',
+        message: 'Please connect your Google account in Settings first, or reconnect if already connected.',
+      };
+    }
+
+    const composio = createComposioServices(this.composioApiKey);
+
+    // Use label filter if provided, otherwise fetch from INBOX
+    const query = params.label ? `label:${params.label}` : 'in:inbox';
+
+    const result = await composio.gmail.fetchEmails({
+      connectedAccountId,
+      query,
+      maxResults: params.max_results || 10,
+    });
+
+    if (result.successful) {
+      // Transform emails for rich card display on frontend
+      const rawEmails = result.data || [];
+      const transformedEmails = rawEmails.map((email: any) => ({
+        id: email.id || email.messageId || '',
+        thread_id: email.threadId || email.thread_id || '',
+        subject: email.subject || '(no subject)',
+        from: email.from || email.sender || '',
+        date: email.date || email.internalDate || new Date().toISOString(),
+        snippet: email.snippet || email.bodyPreview || '',
+        is_unread: email.labelIds?.includes('UNREAD') || !email.isRead,
+        is_starred: email.labelIds?.includes('STARRED') || email.isStarred,
+        is_important: email.labelIds?.includes('IMPORTANT'),
+        labels: email.labelIds || [],
+        attachment_count: email.attachments?.length || 0,
+      }));
+
+      return {
+        success: true,
+        action: 'fetch_emails',
+        result: {
+          emails: transformedEmails,
+          count: transformedEmails.length,
+          _tool: 'fetch_emails', // Marker for rich content detection
+        },
+        message: `Found ${transformedEmails.length} recent emails`,
+      };
+    }
+
+    return {
+      success: false,
+      action: 'fetch_emails',
+      error: result.error || 'Unknown error',
+      message: `Failed to fetch emails: ${result.error}`,
     };
   }
 

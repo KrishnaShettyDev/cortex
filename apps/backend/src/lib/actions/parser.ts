@@ -113,6 +113,35 @@ User: "What meetings do I have tomorrow?"
   "queryIntent": "User wants to see tomorrow's schedule"
 }
 
+User: "Check my emails" or "Show my mails" or "What emails do I have?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "fetch_emails",
+    "parameters": {
+      "max_results": 10
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Fetch recent emails"
+  }],
+  "queryIntent": "User wants to see their recent emails"
+}
+
+User: "Show me unread emails"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "fetch_emails",
+    "parameters": {
+      "max_results": 10,
+      "label": "UNREAD"
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Fetch unread emails"
+  }],
+  "queryIntent": "User wants to see unread emails"
+}
+
 User: "Move my 3pm meeting to 4pm"
 {
   "hasAction": true,

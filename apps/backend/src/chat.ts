@@ -304,7 +304,7 @@ export async function chatWithActions(
       const actionDef = requiresConfirmation(action.action);
 
       // For read-only queries, auto-execute
-      const isQuery = ['get_calendar_events', 'search_emails', 'search_contacts'].includes(action.action);
+      const isQuery = ['get_calendar_events', 'search_emails', 'search_contacts', 'fetch_emails'].includes(action.action);
 
       if (isQuery && autoExecuteQueries) {
         // Execute read-only actions immediately
@@ -538,8 +538,25 @@ ${events.map((e: any) => {
       } else {
         parts.push('CALENDAR: No events found for the requested time range.');
       }
+    } else if (queryResults?.emails && Array.isArray(queryResults.emails)) {
+      // Email fetch/search results (new format with emails array)
+      const emails = queryResults.emails.slice(0, 10);
+      if (emails.length > 0) {
+        parts.push(`YOUR EMAILS (${queryResults.count || emails.length} found):
+${emails.map((e: any) => {
+  const date = e.date ? new Date(e.date).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  }) : '';
+  const unread = e.is_unread ? '📩 ' : '';
+  const starred = e.is_starred ? '⭐ ' : '';
+  return `- ${unread}${starred}${e.from}: "${e.subject}" ${date ? `(${date})` : ''}`;
+}).join('\n')}`);
+      } else {
+        parts.push('EMAIL: No emails found.');
+      }
     } else if (Array.isArray(queryResults)) {
-      // Email search results
+      // Legacy email search results (plain array)
       const emails = queryResults.slice(0, 5);
       if (emails.length > 0) {
         parts.push(`EMAIL SEARCH RESULTS:
