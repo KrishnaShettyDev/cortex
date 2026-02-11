@@ -359,6 +359,7 @@ app.post('/integrations/calendar/connect', integrationHandlers.connectCalendar);
 // Calendar events API
 app.get('/integrations/google/calendar/events', integrationHandlers.getCalendarEvents);
 app.post('/integrations/google/calendar/events', integrationHandlers.createCalendarEvent);
+app.get('/integrations/google/calendar/available', integrationHandlers.getCalendarAvailability);
 
 // Legacy autonomous actions endpoints (required by web app)
 // GET /autonomous-actions - List pending actions in frontend format

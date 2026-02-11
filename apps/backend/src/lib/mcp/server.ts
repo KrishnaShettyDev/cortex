@@ -35,7 +35,10 @@ import { createActionExecutor } from '../actions';
 export interface MCPServerConfig {
   db: D1Database;
   composioApiKey: string;
+  openaiKey: string;
+  serperApiKey?: string;
   userId: string;
+  userName?: string;
   vectorize?: Vectorize;
   ai?: any;
 }
@@ -641,8 +644,11 @@ export class CortexMCPServer {
   private async sendEmail(args: { to: string; subject: string; body: string }) {
     const executor = createActionExecutor({
       composioApiKey: this.config.composioApiKey,
+      openaiKey: this.config.openaiKey,
+      serperApiKey: this.config.serperApiKey,
       db: this.config.db,
       userId: this.config.userId,
+      userName: this.config.userName,
     });
 
     return await executor.executeAction({
@@ -661,8 +667,11 @@ export class CortexMCPServer {
   }) {
     const executor = createActionExecutor({
       composioApiKey: this.config.composioApiKey,
+      openaiKey: this.config.openaiKey,
+      serperApiKey: this.config.serperApiKey,
       db: this.config.db,
       userId: this.config.userId,
+      userName: this.config.userName,
     });
 
     return await executor.executeAction({
@@ -675,8 +684,11 @@ export class CortexMCPServer {
   private async searchEmails(args: { query: string; max_results?: number }) {
     const executor = createActionExecutor({
       composioApiKey: this.config.composioApiKey,
+      openaiKey: this.config.openaiKey,
+      serperApiKey: this.config.serperApiKey,
       db: this.config.db,
       userId: this.config.userId,
+      userName: this.config.userName,
     });
 
     return await executor.executeAction({

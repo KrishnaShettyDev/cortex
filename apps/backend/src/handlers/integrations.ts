@@ -506,6 +506,113 @@ export async function createCalendarEvent(c: Context<{ Bindings: Bindings }>): P
 }
 
 /**
+ * Get available time slots for a date
+ */
+export async function getCalendarAvailability(c: Context<{ Bindings: Bindings }>): Promise<Response> {
+  const userId = c.get('jwtPayload').sub;
+
+  const dateParam = c.req.query('date');
+  const durationMinutes = parseInt(c.req.query('duration') || '30');
+  const startTime = c.req.query('start_time') || '09:00';
+  const endTime = c.req.query('end_time') || '17:00';
+
+  if (!dateParam) {
+    return c.json({ error: 'Missing date parameter' }, 400);
+  }
+
+  // Get connected Google account
+  const integration = await c.env.DB.prepare(`
+    SELECT access_token FROM integrations
+    WHERE user_id = ? AND provider = 'googlesuper' AND connected = 1
+  `).bind(userId).first<{ access_token: string }>();
+
+  if (!integration?.access_token) {
+    return c.json({ error: 'Google not connected', slots: [] }, 400);
+  }
+
+  try {
+    const composio = createComposioServices(c.env.COMPOSIO_API_KEY);
+
+    // Parse the date and create time range
+    const date = new Date(dateParam);
+    const [startHour, startMinute] = startTime.split(':').map(Number);
+    const [endHour, endMinute] = endTime.split(':').map(Number);
+
+    const dayStart = new Date(date);
+    dayStart.setHours(startHour, startMinute, 0, 0);
+
+    const dayEnd = new Date(date);
+    dayEnd.setHours(endHour, endMinute, 0, 0);
+
+    // Fetch existing events for the day
+    const result = await composio.calendar.listEvents({
+      connectedAccountId: integration.access_token,
+      timeMin: dayStart.toISOString(),
+      timeMax: dayEnd.toISOString(),
+      maxResults: 100,
+    });
+
+    // Get busy periods from existing events
+    const busyPeriods: { start: Date; end: Date }[] = [];
+    if (result.successful && result.data?.items) {
+      for (const event of result.data.items) {
+        if (event.start?.dateTime && event.end?.dateTime) {
+          busyPeriods.push({
+            start: new Date(event.start.dateTime),
+            end: new Date(event.end.dateTime),
+          });
+        }
+      }
+    }
+
+    // Sort busy periods by start time
+    busyPeriods.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+    // Find free slots
+    const slots: { start_time: string; end_time: string; duration_minutes: number }[] = [];
+    let currentTime = dayStart;
+
+    for (const busy of busyPeriods) {
+      // Check if there's a gap before this busy period
+      const gapMinutes = (busy.start.getTime() - currentTime.getTime()) / 60000;
+      if (gapMinutes >= durationMinutes) {
+        // Add slot(s) in this gap
+        let slotStart = new Date(currentTime);
+        while (slotStart.getTime() + durationMinutes * 60000 <= busy.start.getTime()) {
+          const slotEnd = new Date(slotStart.getTime() + durationMinutes * 60000);
+          slots.push({
+            start_time: slotStart.toISOString(),
+            end_time: slotEnd.toISOString(),
+            duration_minutes: durationMinutes,
+          });
+          slotStart = slotEnd; // Move to next potential slot
+        }
+      }
+      // Move current time to end of busy period
+      if (busy.end > currentTime) {
+        currentTime = busy.end;
+      }
+    }
+
+    // Check for remaining time after last busy period
+    while (currentTime.getTime() + durationMinutes * 60000 <= dayEnd.getTime()) {
+      const slotEnd = new Date(currentTime.getTime() + durationMinutes * 60000);
+      slots.push({
+        start_time: currentTime.toISOString(),
+        end_time: slotEnd.toISOString(),
+        duration_minutes: durationMinutes,
+      });
+      currentTime = slotEnd;
+    }
+
+    return c.json({ slots });
+  } catch (error: any) {
+    console.error('[Calendar] Error finding availability:', error);
+    return c.json({ error: error.message, slots: [] }, 500);
+  }
+}
+
+/**
  * Detect meeting link and type from calendar event
  */
 function detectMeetLink(event: any): { url: string; type: 'google_meet' | 'zoom' | 'teams' | 'webex' } | null {

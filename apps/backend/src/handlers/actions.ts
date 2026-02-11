@@ -26,6 +26,8 @@ app.get('/', async (c) => {
   try {
     const executor = createActionExecutor({
       composioApiKey: c.env.COMPOSIO_API_KEY,
+      openaiKey: c.env.OPENAI_API_KEY,
+      serperApiKey: c.env.SERPER_API_KEY,
       db: c.env.DB,
       userId,
     });
@@ -57,10 +59,18 @@ app.post('/execute', async (c) => {
       return c.json({ error: 'Missing action name' }, 400);
     }
 
+    // Get user info for personalized content
+    const user = await c.env.DB.prepare(
+      'SELECT name FROM users WHERE id = ?'
+    ).bind(userId).first<{ name: string | null }>();
+
     const executor = createActionExecutor({
       composioApiKey: c.env.COMPOSIO_API_KEY,
+      openaiKey: c.env.OPENAI_API_KEY,
+      serperApiKey: c.env.SERPER_API_KEY,
       db: c.env.DB,
       userId,
+      userName: user?.name || undefined,
     });
 
     const result = await executor.executeAction({
@@ -161,11 +171,19 @@ app.post('/confirm/:id', async (c) => {
       return c.json({ error: 'Action expired' }, 410);
     }
 
+    // Get user info for personalized content
+    const user = await c.env.DB.prepare(
+      'SELECT name FROM users WHERE id = ?'
+    ).bind(userId).first<{ name: string | null }>();
+
     // Execute the action with confirmation
     const executor = createActionExecutor({
       composioApiKey: c.env.COMPOSIO_API_KEY,
+      openaiKey: c.env.OPENAI_API_KEY,
+      serperApiKey: c.env.SERPER_API_KEY,
       db: c.env.DB,
       userId,
+      userName: user?.name || undefined,
     });
 
     const result = await executor.executeAction({

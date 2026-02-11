@@ -166,17 +166,26 @@ export const AVAILABLE_ACTIONS: ActionDefinition[] = [
 
 export class ActionExecutor {
   private composioApiKey: string;
+  private openaiKey: string;
+  private serperApiKey?: string;
   private db: D1Database;
   private userId: string;
+  private userName?: string;
 
   constructor(params: {
     composioApiKey: string;
+    openaiKey: string;
+    serperApiKey?: string;
     db: D1Database;
     userId: string;
+    userName?: string;
   }) {
     this.composioApiKey = params.composioApiKey;
+    this.openaiKey = params.openaiKey;
+    this.serperApiKey = params.serperApiKey;
     this.db = params.db;
     this.userId = params.userId;
+    this.userName = params.userName;
   }
 
   /**
@@ -259,12 +268,210 @@ export class ActionExecutor {
   }
 
   /**
+   * Look up a contact's email by name
+   * Searches entities table and Google contacts
+   */
+  private async lookupContactEmail(name: string): Promise<string | null> {
+    // First, search local entities for the person
+    const entity = await this.db.prepare(`
+      SELECT name, email, metadata
+      FROM entities
+      WHERE user_id = ? AND type = 'person'
+        AND (LOWER(name) LIKE ? OR LOWER(name) LIKE ?)
+      ORDER BY
+        CASE WHEN LOWER(name) = ? THEN 0 ELSE 1 END,
+        interaction_count DESC
+      LIMIT 1
+    `).bind(
+      this.userId,
+      `%${name.toLowerCase()}%`,
+      `${name.toLowerCase()}%`,
+      name.toLowerCase()
+    ).first<{ name: string; email: string | null; metadata: string | null }>();
+
+    if (entity?.email) {
+      console.log(`[ActionExecutor] Found contact ${name} -> ${entity.email} from entities`);
+      return entity.email;
+    }
+
+    // Try to extract email from metadata
+    if (entity?.metadata) {
+      try {
+        const meta = JSON.parse(entity.metadata);
+        if (meta.email) {
+          console.log(`[ActionExecutor] Found contact ${name} -> ${meta.email} from metadata`);
+          return meta.email;
+        }
+      } catch {}
+    }
+
+    // Search Google contacts via Composio
+    try {
+      const connectedAccountId = await this.getConnectedAccountId('gmail');
+      if (connectedAccountId) {
+        const composio = createComposioServices(this.composioApiKey);
+        const result = await composio.gmail.searchPeople({
+          connectedAccountId,
+          query: name,
+        });
+
+        if (result.successful && result.data?.length > 0) {
+          const contact = result.data[0];
+          const email = contact.emailAddresses?.[0]?.value || contact.email;
+          if (email) {
+            console.log(`[ActionExecutor] Found contact ${name} -> ${email} from Google`);
+            return email;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`[ActionExecutor] Google contact lookup failed:`, error);
+    }
+
+    console.log(`[ActionExecutor] No email found for contact: ${name}`);
+    return null;
+  }
+
+  /**
+   * Generate email content using AI
+   */
+  private async generateEmailContent(params: {
+    to: string;
+    toName?: string;
+    subject: string;
+    context?: string;
+    tone?: 'formal' | 'casual' | 'professional';
+  }): Promise<string> {
+    const { to, toName, subject, context, tone = 'professional' } = params;
+
+    const systemPrompt = `You are a helpful assistant that drafts emails. Write concise, ${tone} emails.
+The email should be ready to send - include a proper greeting and sign-off.
+Sign the email with "${this.userName || 'the sender'}" - never use placeholders like [Your Name].
+Keep emails brief and to the point unless the context requires more detail.`;
+
+    const userPrompt = `Draft an email:
+To: ${toName || to}
+Subject: ${subject}
+${context ? `Context/Notes: ${context}` : ''}
+
+Write the email body only (no subject line needed).`;
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.7,
+          max_tokens: 500,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status}`);
+      }
+
+      const data = await response.json() as {
+        choices: Array<{ message: { content: string } }>;
+      };
+
+      return data.choices[0].message.content.trim();
+    } catch (error) {
+      console.error('[ActionExecutor] Content generation failed:', error);
+      throw new Error('Failed to generate email content');
+    }
+  }
+
+  /**
+   * Pre-process action parameters to resolve lookups and generate content
+   */
+  private async preprocessActionParams(
+    action: string,
+    params: Record<string, any>
+  ): Promise<{ params: Record<string, any>; error?: string }> {
+    const processed = { ...params };
+
+    // Handle contact lookup for email actions
+    if ((action === 'send_email' || action === 'create_draft') && params.needs_contact_lookup) {
+      const name = params.to_name || params.attendees_names?.[0];
+      if (name && !params.to) {
+        const email = await this.lookupContactEmail(name);
+        if (email) {
+          processed.to = email;
+          processed._resolved_contact = { name, email };
+        } else {
+          return {
+            params: processed,
+            error: `I couldn't find an email address for "${name}". Can you provide their email?`,
+          };
+        }
+      }
+    }
+
+    // Handle contact lookup for calendar events
+    if (action === 'create_calendar_event' && params.needs_contact_lookup) {
+      const names = params.attendees_names || [];
+      const resolvedAttendees: string[] = [];
+      const unresolved: string[] = [];
+
+      for (const name of names) {
+        const email = await this.lookupContactEmail(name);
+        if (email) {
+          resolvedAttendees.push(email);
+        } else {
+          unresolved.push(name);
+        }
+      }
+
+      if (resolvedAttendees.length > 0) {
+        processed.attendees = resolvedAttendees;
+      }
+
+      if (unresolved.length > 0) {
+        console.warn(`[ActionExecutor] Could not resolve attendees: ${unresolved.join(', ')}`);
+        // Continue anyway, just log the warning
+      }
+    }
+
+    // Handle content generation for emails
+    if ((action === 'send_email' || action === 'create_draft') && params.needs_content_generation) {
+      if (!processed.body) {
+        try {
+          const body = await this.generateEmailContent({
+            to: processed.to,
+            toName: params.to_name,
+            subject: processed.subject,
+            context: params.context || params.topic,
+            tone: params.tone,
+          });
+          processed.body = body;
+          processed._generated_content = true;
+        } catch (error) {
+          return {
+            params: processed,
+            error: 'I could not generate the email content. Please provide the message you want to send.',
+          };
+        }
+      }
+    }
+
+    return { params: processed };
+  }
+
+  /**
    * Execute an action
    */
   async executeAction(request: ActionRequest): Promise<ActionResult> {
     const { action, confirmed } = request;
     // Normalize parameters to handle AI parser variations
-    const parameters = this.normalizeParameters(action, request.parameters);
+    let parameters = this.normalizeParameters(action, request.parameters);
 
     console.log(`[ActionExecutor] Executing ${action}:`, {
       originalParams: request.parameters,
@@ -282,6 +489,18 @@ export class ActionExecutor {
         message: `I don't know how to perform "${action}". Available actions: ${AVAILABLE_ACTIONS.map((a) => a.name).join(', ')}`,
       };
     }
+
+    // Pre-process: resolve contact lookups and generate content
+    const preprocessResult = await this.preprocessActionParams(action, parameters);
+    if (preprocessResult.error) {
+      return {
+        success: false,
+        action,
+        error: preprocessResult.error,
+        message: preprocessResult.error,
+      };
+    }
+    parameters = preprocessResult.params;
 
     // Check if confirmation is required but not provided
     if (actionDef.requiresConfirmation && !confirmed) {
@@ -352,29 +571,30 @@ export class ActionExecutor {
     action: string,
     parameters: Record<string, any>
   ): Promise<ActionResult> {
+    // Type assertions are safe here because we validate parameters in executeAction
     switch (action) {
       case 'send_email':
-        return this.sendEmail(parameters);
+        return this.sendEmail(parameters as any);
       case 'create_draft':
-        return this.createDraft(parameters);
+        return this.createDraft(parameters as any);
       case 'reply_to_email':
-        return this.replyToEmail(parameters);
+        return this.replyToEmail(parameters as any);
       case 'create_calendar_event':
-        return this.createCalendarEvent(parameters);
+        return this.createCalendarEvent(parameters as any);
       case 'update_calendar_event':
-        return this.updateCalendarEvent(parameters);
+        return this.updateCalendarEvent(parameters as any);
       case 'delete_calendar_event':
-        return this.deleteCalendarEvent(parameters);
+        return this.deleteCalendarEvent(parameters as any);
       case 'fetch_emails':
-        return this.fetchEmails(parameters);
+        return this.fetchEmails(parameters as any);
       case 'search_emails':
-        return this.searchEmails(parameters);
+        return this.searchEmails(parameters as any);
       case 'search_contacts':
-        return this.searchContacts(parameters);
+        return this.searchContacts(parameters as any);
       case 'get_calendar_events':
-        return this.getCalendarEvents(parameters);
+        return this.getCalendarEvents(parameters as any);
       case 'web_search':
-        return this.webSearch(parameters);
+        return this.webSearch(parameters as any);
       default:
         return {
           success: false,
@@ -985,14 +1205,87 @@ export class ActionExecutor {
     query: string;
     num_results?: number;
   }): Promise<ActionResult> {
-    // This would use the search service from world-context
-    // For now, return a placeholder
-    return {
-      success: false,
-      action: 'web_search',
-      error: 'Web search requires Serper API key',
-      message: 'Web search is not configured. Please add SERPER_API_KEY to enable.',
-    };
+    if (!this.serperApiKey) {
+      return {
+        success: false,
+        action: 'web_search',
+        error: 'Web search not configured',
+        message: 'Web search is not available. Please add SERPER_API_KEY to enable.',
+      };
+    }
+
+    try {
+      const response = await fetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': this.serperApiKey,
+        },
+        body: JSON.stringify({
+          q: params.query,
+          num: params.num_results || 5,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Serper API error: ${response.status}`);
+      }
+
+      const data = await response.json() as {
+        organic?: Array<{
+          title: string;
+          link: string;
+          snippet: string;
+          position: number;
+        }>;
+        answerBox?: {
+          title?: string;
+          answer?: string;
+          snippet?: string;
+        };
+        knowledgeGraph?: {
+          title?: string;
+          type?: string;
+          description?: string;
+        };
+      };
+
+      // Format results for display
+      const results = {
+        query: params.query,
+        answerBox: data.answerBox,
+        knowledgeGraph: data.knowledgeGraph,
+        organic: (data.organic || []).slice(0, params.num_results || 5).map(r => ({
+          title: r.title,
+          url: r.link,
+          snippet: r.snippet,
+        })),
+        _tool: 'web_search',
+      };
+
+      // Build a summary message
+      let message = `Found ${results.organic.length} results for "${params.query}"`;
+      if (data.answerBox?.answer) {
+        message = data.answerBox.answer;
+      } else if (data.knowledgeGraph?.description) {
+        message = data.knowledgeGraph.description;
+      }
+
+      return {
+        success: true,
+        action: 'web_search',
+        result: results,
+        message,
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Web search failed:', error);
+      return {
+        success: false,
+        action: 'web_search',
+        error: error.message,
+        message: `Failed to search the web: ${error.message}`,
+      };
+    }
   }
 
   /**
@@ -1049,8 +1342,11 @@ export class ActionExecutor {
  */
 export function createActionExecutor(params: {
   composioApiKey: string;
+  openaiKey: string;
+  serperApiKey?: string;
   db: D1Database;
   userId: string;
+  userName?: string;
 }): ActionExecutor {
   return new ActionExecutor(params);
 }

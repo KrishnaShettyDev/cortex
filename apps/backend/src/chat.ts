@@ -266,6 +266,7 @@ export async function chatWithActions(
     history?: Array<{ role: 'user' | 'assistant'; content: string }>;
     userName?: string;
     userEmail?: string;
+    serperApiKey?: string; // For web search
   } = {}
 ): Promise<ActionChatResponse> {
   const model = options.model || 'gpt-4o-mini';
@@ -296,8 +297,11 @@ export async function chatWithActions(
   if (parseResult.hasAction && parseResult.actions.length > 0) {
     const executor = new ActionExecutor({
       composioApiKey,
+      openaiKey,
+      serperApiKey: options.serperApiKey,
       db,
       userId,
+      userName: options.userName,
     });
 
     for (const action of parseResult.actions) {
@@ -419,7 +423,12 @@ export async function confirmAction(
   db: D1Database,
   userId: string,
   actionId: string,
-  composioApiKey: string
+  composioApiKey: string,
+  openaiKey: string,
+  options?: {
+    serperApiKey?: string;
+    userName?: string;
+  }
 ): Promise<ActionResult> {
   // Get pending action
   const pending = await db.prepare(`
@@ -443,8 +452,11 @@ export async function confirmAction(
   // Execute the action
   const executor = new ActionExecutor({
     composioApiKey,
+    openaiKey,
+    serperApiKey: options?.serperApiKey,
     db,
     userId,
+    userName: options?.userName,
   });
 
   const result = await executor.executeAction({

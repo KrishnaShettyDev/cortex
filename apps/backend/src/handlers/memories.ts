@@ -311,6 +311,7 @@ export async function chatWithActionsHandler(c: Context<{ Bindings: Bindings }>)
         history,
         userName: user?.name || undefined,
         userEmail: user?.email,
+        serperApiKey: c.env.SERPER_API_KEY,
       }
     );
 
@@ -330,11 +331,21 @@ export async function confirmActionHandler(c: Context<{ Bindings: Bindings }>) {
       return c.json({ error: 'Action ID is required' }, 400);
     }
 
+    // Get user info for personalized content generation
+    const user = await c.env.DB.prepare(
+      'SELECT name FROM users WHERE id = ?'
+    ).bind(userId).first<{ name: string | null }>();
+
     const result = await confirmAction(
       c.env.DB,
       userId,
       actionId,
-      c.env.COMPOSIO_API_KEY
+      c.env.COMPOSIO_API_KEY,
+      c.env.OPENAI_API_KEY,
+      {
+        serperApiKey: c.env.SERPER_API_KEY,
+        userName: user?.name || undefined,
+      }
     );
 
     return c.json(result);

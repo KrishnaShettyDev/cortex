@@ -126,11 +126,19 @@ app.post('/rpc', async (c) => {
       });
     }
 
+    // Get user info for personalized actions
+    const user = await c.env.DB.prepare(
+      'SELECT name FROM users WHERE id = ?'
+    ).bind(auth.userId).first<{ name: string | null }>();
+
     // Create MCP server for this user
     const server = createMCPServer({
       db: c.env.DB,
       composioApiKey: c.env.COMPOSIO_API_KEY,
+      openaiKey: c.env.OPENAI_API_KEY,
+      serperApiKey: c.env.SERPER_API_KEY,
       userId: auth.userId,
+      userName: user?.name || undefined,
       vectorize: c.env.VECTORIZE,
       ai: c.env.AI,
     });
@@ -168,11 +176,19 @@ app.get('/sse', async (c) => {
   c.header('Cache-Control', 'no-cache');
   c.header('Connection', 'keep-alive');
 
+  // Get user info for personalized actions
+  const user = await c.env.DB.prepare(
+    'SELECT name FROM users WHERE id = ?'
+  ).bind(auth.userId).first<{ name: string | null }>();
+
   // Create MCP server
   const server = createMCPServer({
     db: c.env.DB,
     composioApiKey: c.env.COMPOSIO_API_KEY,
+    openaiKey: c.env.OPENAI_API_KEY,
+    serperApiKey: c.env.SERPER_API_KEY,
     userId: auth.userId,
+    userName: user?.name || undefined,
     vectorize: c.env.VECTORIZE,
     ai: c.env.AI,
   });
@@ -232,11 +248,19 @@ app.post('/batch', async (c) => {
       }, 400);
     }
 
+    // Get user info for personalized actions
+    const user = await c.env.DB.prepare(
+      'SELECT name FROM users WHERE id = ?'
+    ).bind(auth.userId).first<{ name: string | null }>();
+
     // Create MCP server
     const server = createMCPServer({
       db: c.env.DB,
       composioApiKey: c.env.COMPOSIO_API_KEY,
+      openaiKey: c.env.OPENAI_API_KEY,
+      serperApiKey: c.env.SERPER_API_KEY,
       userId: auth.userId,
+      userName: user?.name || undefined,
       vectorize: c.env.VECTORIZE,
       ai: c.env.AI,
     });
