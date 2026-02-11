@@ -19,6 +19,10 @@ import {
   ActivityIndicator,
   Image,
   Linking,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,7 +31,7 @@ import * as WebBrowser from 'expo-web-browser';
 import * as ExpoLinking from 'expo-linking';
 
 import { useAuth } from '../../src/context/AuthContext';
-import { integrationsService, authService } from '../../src/services';
+import { integrationsService, authService, mcpService, MCPIntegration } from '../../src/services';
 import { spacing, borderRadius, useTheme } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { usePostHog } from 'posthog-react-native';
@@ -77,6 +81,14 @@ export default function SettingsScreen() {
   const [connectingProvider, setConnectingProvider] = useState<Provider | null>(null);
   const [isLoadingStatus, setIsLoadingStatus] = useState(!cachedIntegrationStatus);
 
+  // MCP Integrations state
+  const [mcpIntegrations, setMcpIntegrations] = useState<MCPIntegration[]>([]);
+  const [isLoadingMcp, setIsLoadingMcp] = useState(true);
+  const [showAddMcpModal, setShowAddMcpModal] = useState(false);
+  const [newMcpName, setNewMcpName] = useState('');
+  const [newMcpUrl, setNewMcpUrl] = useState('');
+  const [isAddingMcp, setIsAddingMcp] = useState(false);
+
   const loadIntegrationStatus = useCallback(async () => {
     try {
       const status = await integrationsService.getStatus();
@@ -87,6 +99,60 @@ export default function SettingsScreen() {
       setIsLoadingStatus(false);
     }
   }, [setIntegrationStatus]);
+
+  const loadMcpIntegrations = useCallback(async () => {
+    try {
+      const integrations = await mcpService.listIntegrations();
+      setMcpIntegrations(integrations);
+    } catch (error) {
+      logger.error('Failed to load MCP integrations:', error);
+    } finally {
+      setIsLoadingMcp(false);
+    }
+  }, []);
+
+  const handleAddMcpServer = async () => {
+    if (!newMcpName.trim() || !newMcpUrl.trim()) {
+      Alert.alert('Error', 'Please enter both name and URL');
+      return;
+    }
+    setIsAddingMcp(true);
+    try {
+      await mcpService.addServer({ name: newMcpName, server_url: newMcpUrl });
+      await loadMcpIntegrations();
+      setShowAddMcpModal(false);
+      setNewMcpName('');
+      setNewMcpUrl('');
+      posthog?.capture('mcp_server_added', { name: newMcpName });
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to add MCP server');
+    } finally {
+      setIsAddingMcp(false);
+    }
+  };
+
+  const handleDeleteMcpServer = (integration: MCPIntegration) => {
+    Alert.alert(
+      `Remove ${integration.name}`,
+      `Are you sure you want to remove this MCP server?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await mcpService.deleteIntegration(integration.id);
+              await loadMcpIntegrations();
+              posthog?.capture('mcp_server_removed');
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to remove MCP server');
+            }
+          },
+        },
+      ]
+    );
+  };
 
   useEffect(() => {
     const handleDeepLink = (event: { url: string }) => {
@@ -104,6 +170,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     posthog?.capture(ANALYTICS_EVENTS.SETTINGS_OPENED);
     loadIntegrationStatus();
+    loadMcpIntegrations();
   }, []);
 
   const handleConnect = async (provider: Provider) => {
@@ -279,6 +346,48 @@ export default function SettingsScreen() {
           )}
         </View>
 
+        {/* MCP Servers */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>MCP Servers</Text>
+          {isLoadingMcp ? (
+            <ActivityIndicator style={styles.loader} color={colors.textTertiary} />
+          ) : (
+            <>
+              {mcpIntegrations.map((mcp) => (
+                <TouchableOpacity
+                  key={mcp.id}
+                  style={styles.integrationRow}
+                  onPress={() => handleDeleteMcpServer(mcp)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.mcpIcon, { backgroundColor: colors.accent + '20' }]}>
+                    <Ionicons name="cube-outline" size={20} color={colors.accent} />
+                  </View>
+                  <View style={styles.integrationInfo}>
+                    <Text style={[styles.integrationName, { color: colors.textPrimary }]}>{mcp.name}</Text>
+                    <Text style={[styles.integrationDesc, { color: colors.textTertiary }]} numberOfLines={1}>
+                      {mcp.capabilities?.toolCount || 0} tools
+                    </Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: mcp.isActive ? colors.success + '20' : colors.textTertiary + '20' }]}>
+                    <Text style={[styles.statusText, { color: mcp.isActive ? colors.success : colors.textTertiary }]}>
+                      {mcp.isActive ? 'Active' : 'Inactive'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={styles.actionRow}
+                onPress={() => setShowAddMcpModal(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="add-circle-outline" size={20} color={colors.accent} />
+                <Text style={[styles.actionText, { color: colors.accent }]}>Add MCP Server</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+
         {/* Appearance */}
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>Appearance</Text>
@@ -340,6 +449,75 @@ export default function SettingsScreen() {
           <Text style={[styles.bottomText, { color: colors.textTertiary }]}>Delete Account</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Add MCP Server Modal */}
+      <Modal
+        visible={showAddMcpModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowAddMcpModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.bgPrimary }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.textPrimary }]}>Add MCP Server</Text>
+              <TouchableOpacity onPress={() => setShowAddMcpModal(false)}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Name</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: colors.fill, color: colors.textPrimary }]}
+                placeholder="My MCP Server"
+                placeholderTextColor={colors.textTertiary}
+                value={newMcpName}
+                onChangeText={setNewMcpName}
+                autoCapitalize="none"
+              />
+
+              <Text style={[styles.inputLabel, { color: colors.textSecondary, marginTop: spacing.md }]}>Server URL</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: colors.fill, color: colors.textPrimary }]}
+                placeholder="https://your-mcp-server.com/sse"
+                placeholderTextColor={colors.textTertiary}
+                value={newMcpUrl}
+                onChangeText={setNewMcpUrl}
+                autoCapitalize="none"
+                keyboardType="url"
+              />
+
+              <Text style={[styles.inputHint, { color: colors.textTertiary }]}>
+                MCP servers extend Cortex with custom tools. The server must implement the Model Context Protocol.
+              </Text>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.fill }]}
+                onPress={() => setShowAddMcpModal(false)}
+              >
+                <Text style={[styles.modalButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, { backgroundColor: colors.accent }]}
+                onPress={handleAddMcpServer}
+                disabled={isAddingMcp}
+              >
+                {isAddingMcp ? (
+                  <ActivityIndicator size="small" color={colors.bgPrimary} />
+                ) : (
+                  <Text style={[styles.modalButtonText, { color: colors.bgPrimary }]}>Add Server</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -407,4 +585,71 @@ const styles = StyleSheet.create({
   bottomActions: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, borderTopWidth: 1, paddingTop: spacing.md },
   bottomRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.md, gap: spacing.md },
   bottomText: { fontSize: 16 },
+
+  // MCP Icon
+  mcpIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    paddingBottom: spacing.xl,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  modalBody: {
+    padding: spacing.lg,
+  },
+  inputLabel: {
+    fontSize: 13,
+    marginBottom: spacing.xs,
+  },
+  modalInput: {
+    height: 44,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    fontSize: 16,
+  },
+  inputHint: {
+    fontSize: 12,
+    marginTop: spacing.md,
+    lineHeight: 18,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  modalButton: {
+    flex: 1,
+    height: 44,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
 });

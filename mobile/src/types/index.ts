@@ -194,16 +194,27 @@ export interface SmartSuggestion {
 }
 
 export interface SmartSuggestionsResponse {
-  suggestions: SmartSuggestion[];
-  gmail_connected: boolean;
-  calendar_connected: boolean;
-  connected_apps: ServiceIcon[];  // List of all connected app names
+  suggestions: SmartSuggestion[] | SimpleSuggestion[];
+  gmail_connected?: boolean;
+  calendar_connected?: boolean;
+  connected_apps?: ServiceIcon[];  // List of all connected app names
+}
+
+// Simple suggestion (from nudges endpoint)
+export interface SimpleSuggestion {
+  id: string;
+  text: string;
+  description: string;
+  action_prompt: string;
+  priority: string;
+  type: string;
 }
 
 // Greeting
 export interface GreetingResponse {
   greeting: string;
-  has_context: boolean;
+  has_context?: boolean;
+  contextual_message?: string | null;
 }
 
 // API Error
@@ -398,14 +409,20 @@ export interface EmotionalInsight {
 }
 
 export interface ProactiveInsightsResponse {
-  neglected_relationships: RelationshipInsight[];
-  upcoming_dates: ImportantDateInsight[];
-  pending_intentions: IntentionInsight[];
-  pending_promises: PromiseInsight[];
-  pattern_warnings: PatternInsight[];
-  emotional_state: EmotionalInsight | null;
+  neglected_relationships?: RelationshipInsight[];
+  upcoming_dates?: ImportantDateInsight[];
+  pending_intentions?: IntentionInsight[];
+  pending_promises?: PromiseInsight[];
+  pattern_warnings?: PatternInsight[];
+  emotional_state?: EmotionalInsight | null;
   total_attention_needed: number;
-  has_urgent: boolean;
+  has_urgent?: boolean;
+  // Simple fallback fields
+  urgent_emails?: number;
+  pending_commitments?: number;
+  important_dates?: number;
+  outcome_stats?: any;
+  learning_count?: number;
 }
 
 // ==================== DAILY BRIEFING ====================
@@ -429,6 +446,7 @@ export interface DailyBriefingResponse {
   total_count: number;
   has_urgent: boolean;
   generated_at: string;
+  summary?: string;
 }
 
 // ==================== AUTONOMOUS ACTIONS ====================
@@ -472,18 +490,21 @@ export type ActionPayload = EmailPayload | CalendarPayload | MeetingPrepPayload;
 
 export interface AutonomousAction {
   id: string;
-  action_type: AutonomousActionType;
+  action_type: AutonomousActionType | string;
   title: string;
   description: string | null;
-  action_payload: ActionPayload;
-  reason: string | null;
-  confidence_score: number;
-  priority_score: number;
-  source_type: string | null;
-  source_id: string | null;
+  // Support both field names for compatibility
+  action_payload?: ActionPayload;
+  payload?: Record<string, unknown>;
+  reason?: string | null;
+  confidence_score?: number;
+  priority_score?: number;
+  priority?: 'high' | 'medium' | 'low';
+  source_type?: string | null;
+  source_id?: string | null;
   status: 'pending' | 'approved' | 'dismissed' | 'expired' | 'executed' | 'failed';
   created_at: string;
-  expires_at: string | null;
+  expires_at?: string | null;
 }
 
 export interface AutonomousActionsResponse {

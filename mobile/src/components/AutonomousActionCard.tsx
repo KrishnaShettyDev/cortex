@@ -46,7 +46,7 @@ export function AutonomousActionCard({
   const { colors: themeColors, gradients: themeGradients, isDark } = useTheme();
   const [isEditing, setIsEditing] = useState(false);
   const [editedPayload, setEditedPayload] = useState<Record<string, unknown>>(
-    action.action_payload as Record<string, unknown>
+    action.action_payload as unknown as Record<string, unknown>
   );
 
   const handleApprove = () => {
@@ -105,7 +105,7 @@ export function AutonomousActionCard({
 
   // Render confidence indicator
   const renderConfidenceIndicator = () => {
-    const confidence = action.confidence_score;
+    const confidence = action.confidence_score ?? 0.5;
     const color =
       confidence >= 0.7
         ? themeColors.success

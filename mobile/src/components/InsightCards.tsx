@@ -315,19 +315,25 @@ export function InsightsSection({
   onPromisePress,
   onPatternPress,
 }: InsightsSectionProps) {
+  const neglected = insights.neglected_relationships || [];
+  const dates = insights.upcoming_dates || [];
+  const intentions = insights.pending_intentions || [];
+  const promises = insights.pending_promises || [];
+  const patterns = insights.pattern_warnings || [];
+
   const hasInsights =
-    insights.neglected_relationships.length > 0 ||
-    insights.upcoming_dates.length > 0 ||
-    insights.pending_intentions.length > 0 ||
-    insights.pending_promises.length > 0 ||
-    insights.pattern_warnings.length > 0;
+    neglected.length > 0 ||
+    dates.length > 0 ||
+    intentions.length > 0 ||
+    promises.length > 0 ||
+    patterns.length > 0;
 
   if (!hasInsights) return null;
 
   return (
     <View style={styles.section}>
       {/* Pattern Warnings (highest priority) */}
-      {insights.pattern_warnings.map((p) => (
+      {patterns.map((p) => (
         <PatternCard
           key={p.id}
           insight={p}
@@ -336,7 +342,7 @@ export function InsightsSection({
       ))}
 
       {/* Upcoming Dates */}
-      {insights.upcoming_dates.map((d) => (
+      {dates.map((d) => (
         <ImportantDateCard
           key={d.id}
           insight={d}
@@ -345,7 +351,7 @@ export function InsightsSection({
       ))}
 
       {/* Neglected Relationships */}
-      {insights.neglected_relationships.map((r) => (
+      {neglected.map((r) => (
         <RelationshipCard
           key={r.entity_id}
           insight={r}
@@ -354,7 +360,7 @@ export function InsightsSection({
       ))}
 
       {/* Pending Promises */}
-      {insights.pending_promises.filter(p => p.is_overdue || (p.days_until_due !== null && p.days_until_due <= 3)).map((p) => (
+      {promises.filter(p => p.is_overdue || (p.days_until_due !== null && p.days_until_due <= 3)).map((p) => (
         <PromiseCard
           key={p.id}
           insight={p}
@@ -363,7 +369,7 @@ export function InsightsSection({
       ))}
 
       {/* Pending Intentions */}
-      {insights.pending_intentions.filter(i => i.is_overdue).map((i) => (
+      {intentions.filter(i => i.is_overdue).map((i) => (
         <IntentionCard
           key={i.id}
           insight={i}
@@ -386,7 +392,7 @@ export function InsightsPillRow({ insights, onPress }: InsightsPillRowProps) {
   const pills: { icon: keyof typeof Ionicons.glyphMap; color: string; text: string; urgent: boolean }[] = [];
 
   // Add upcoming dates
-  insights.upcoming_dates.slice(0, 1).forEach((d) => {
+  (insights.upcoming_dates || []).slice(0, 1).forEach((d) => {
     pills.push({
       icon: 'gift-outline',
       color: themeColors.accentPeach,
@@ -396,7 +402,7 @@ export function InsightsPillRow({ insights, onPress }: InsightsPillRowProps) {
   });
 
   // Add neglected relationships
-  insights.neglected_relationships.slice(0, 1).forEach((r) => {
+  (insights.neglected_relationships || []).slice(0, 1).forEach((r) => {
     pills.push({
       icon: 'heart-outline',
       color: themeColors.warning,
@@ -406,7 +412,7 @@ export function InsightsPillRow({ insights, onPress }: InsightsPillRowProps) {
   });
 
   // Add pattern warnings
-  insights.pattern_warnings.slice(0, 1).forEach((p) => {
+  (insights.pattern_warnings || []).slice(0, 1).forEach((p) => {
     pills.push({
       icon: 'warning-outline',
       color: themeColors.error,

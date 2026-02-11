@@ -112,10 +112,7 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
         end_time: event.end_time,
         location: event.location,
         description: event.description,
-        attendees: event.attendees?.map((a) => ({
-          email: a.email,
-          name: a.name,
-        })),
+        attendees: event.attendees?.map((a) => a.email),
         send_notifications: true,
       };
 
@@ -129,7 +126,7 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
         onEventCreated();
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        logger.error('Failed to create event:', response.message);
+        logger.error('Failed to create event:', response.error);
       }
     } catch (error) {
       logger.error('Error creating event:', error);

@@ -69,14 +69,14 @@ export function useNotifications() {
         break;
 
       case 'meeting_prep':
-        // Navigate to person detail screen
+        // Navigate to chat with meeting prep context
         if (data.person_name) {
           router.push({
-            pathname: '/(main)/person/[name]',
-            params: { name: data.person_name },
+            pathname: '/(main)/chat',
+            params: { message: `Help me prepare for meeting with ${data.person_name}` },
           });
         } else {
-          router.push('/(main)/people');
+          router.push('/(main)/chat');
         }
         break;
 
@@ -125,14 +125,14 @@ export function useNotifications() {
         break;
 
       case 'reconnection_nudge':
-        // Navigate to person screen
+        // Navigate to chat with reconnection context
         if (data.person_name) {
           router.push({
-            pathname: '/(main)/person/[name]',
-            params: { name: data.person_name },
+            pathname: '/(main)/chat',
+            params: { message: `Help me reconnect with ${data.person_name}` },
           });
         } else {
-          router.push('/(main)/people');
+          router.push('/(main)/chat');
         }
         break;
 
@@ -145,8 +145,8 @@ export function useNotifications() {
           });
         } else if (data.person_name) {
           router.push({
-            pathname: '/(main)/person/[name]',
-            params: { name: data.person_name },
+            pathname: '/(main)/chat',
+            params: { message: `Tell me about important dates with ${data.person_name}` },
           });
         } else {
           router.push('/(main)/chat');

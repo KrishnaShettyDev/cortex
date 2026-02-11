@@ -51,7 +51,7 @@ export function ActionReviewModal({
   // Reset state when action changes
   React.useEffect(() => {
     if (action) {
-      setEditedPayload(action.action_payload as Record<string, unknown>);
+      setEditedPayload(action.action_payload as unknown as Record<string, unknown>);
       setIsEditing(false);
     }
   }, [action?.id]);

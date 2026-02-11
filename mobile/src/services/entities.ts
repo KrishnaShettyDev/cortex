@@ -13,6 +13,7 @@ export interface Entity {
   id: string;
   name: string;
   entity_type: string; // person, organization, place, concept, event
+  email?: string | null;
   mention_count: number;
   first_seen: string;
   last_seen: string;

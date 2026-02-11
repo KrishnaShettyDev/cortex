@@ -525,11 +525,11 @@ export default function ChatScreen() {
             <SuggestionPill
               key={index}
               text={suggestion.text}
-              services={suggestion.services}
+              services={'services' in suggestion ? suggestion.services : undefined}
               onPress={() => {
                 posthog?.capture(ANALYTICS_EVENTS.SUGGESTION_TAPPED, {
                   suggestion_text: suggestion.text,
-                  services: suggestion.services,
+                  services: 'services' in suggestion ? suggestion.services : null,
                 });
                 sendMessage(suggestion.text);
                 setShowSuggestions(false);

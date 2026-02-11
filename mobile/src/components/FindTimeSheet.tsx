@@ -110,8 +110,8 @@ export const FindTimeSheet: React.FC<FindTimeSheetProps> = ({
         const result = await integrationsService.getCalendarAvailability(
           dateStr,
           duration,
-          timeRange.start,
-          timeRange.end
+          `${timeRange.start.toString().padStart(2, '0')}:00`,
+          `${timeRange.end.toString().padStart(2, '0')}:00`
         );
 
         if (result.success && result.free_slots) {
