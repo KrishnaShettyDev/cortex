@@ -13,11 +13,13 @@ import { searchMemories } from './memory';
 import { parseActionsFromMessage, type ParseResult, type ParsedAction, requiresConfirmation, generateConfirmationMessage } from './lib/actions/parser';
 import { ActionExecutor, type ActionResult } from './lib/actions/executor';
 import { getUnresolvedContradictions } from './lib/contradiction/detector';
+import { getUserPersonality, learnFromConversation } from './lib/personality';
 import {
   MEMORY_TEMPLATES,
   CONTEXT_HEADERS,
   buildChatSystemPrompt,
   buildSimpleChatPrompt,
+  buildPersonalizedIdentity,
 } from './config/prompts';
 
 interface ChatMessage {
@@ -590,6 +592,9 @@ export async function chatWithActions(
   const contextLimit = Math.min(options.contextLimit || 5, 10);
   const autoExecuteQueries = options.autoExecuteQueries ?? true;
 
+  // Step 0: Load user personality (automatic personalization!)
+  const personality = await getUserPersonality(db, userId);
+
   // Step 1: Parse message for actions (include history for context)
   const parseResult = await parseActionsFromMessage(message, openaiKey, {
     currentDate: new Date().toISOString().split('T')[0],
@@ -705,23 +710,33 @@ export async function chatWithActions(
   // Step 6: Generate response with context
   const actionContext = buildActionContext(parseResult, pendingActions, executedActions, queryResults);
 
-  // Build user identity string
-  const userIdentity = options.userName
-    ? `You are assisting ${options.userName}${options.userEmail ? ` (${options.userEmail})` : ''}.`
+  // Build personalized identity using learned preferences
+  // If user has a preferred name from personality, use it; otherwise fall back to options
+  const effectiveUserName = personality.preferredName || options.userName;
+  const personalizedIdentity = buildPersonalizedIdentity({
+    ...personality,
+    preferredName: effectiveUserName,
+  });
+
+  // Add user email context if available
+  const userContext = effectiveUserName
+    ? `You are assisting ${effectiveUserName}${options.userEmail ? ` (${options.userEmail})` : ''}.`
     : options.userEmail
     ? `You are assisting the user with email ${options.userEmail}.`
     : '';
+
+  const fullIdentity = personalizedIdentity + (userContext ? `\n\n${userContext}` : '');
 
   // Build temporal context if time-filtered query
   const temporalContext = temporalQuery.isTemporalQuery && temporalQuery.label
     ? `\n${CONTEXT_HEADERS.TIME_FILTERED(temporalQuery.label)}\n`
     : '';
 
-  // Build system message using config prompts
+  // Build system message using config prompts with personalized identity
   const systemMessage: ChatMessage = {
     role: 'system',
     content: buildChatSystemPrompt({
-      userIdentity,
+      userIdentity: fullIdentity,
       memoriesContext: formatMemoriesContext(memories),
       entityContext,
       commitmentContext,
@@ -729,7 +744,7 @@ export async function chatWithActions(
       contradictionContext,
       temporalContext,
       actionContext,
-      userName: options.userName,
+      userName: effectiveUserName,
       includeActions: true,
     }),
   };
@@ -747,6 +762,19 @@ export async function chatWithActions(
   });
 
   const response = await callOpenAI(messages, openaiKey, model);
+
+  // Learning loop: Automatically learn user preferences from conversation
+  // This is the PRIMARY mechanism for personalization - runs after every chat
+  const allMessages = [
+    ...(options.history || []),
+    { role: 'user' as const, content: message },
+    { role: 'assistant' as const, content: response },
+  ];
+
+  // Fire-and-forget learning (don't block response)
+  learnFromConversation(db, userId, allMessages).catch((err) => {
+    console.error('[PersonalityLearning] Background learning failed:', err);
+  });
 
   return {
     response,

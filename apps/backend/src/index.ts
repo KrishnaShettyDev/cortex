@@ -30,6 +30,7 @@ import webhooksRouter from './handlers/webhooks';
 import mcpRouter from './handlers/mcp';
 import proactiveRouter from './handlers/proactive';
 import triggersRouter from './handlers/triggers';
+import personalityRouter from './handlers/personality';
 import * as agentHandlers from './handlers/agents';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 // DELETED: handleSleepComputeCron - cognitive layer purged
@@ -593,6 +594,9 @@ app.route('/v3/performance', performanceRouter);
 
 // Briefing endpoint (consolidated mobile home screen data)
 app.route('/v3/briefing', briefingRouter);
+
+// Personality endpoint (per-user AI personality customization)
+app.route('/v3/personality', personalityRouter);
 
 // Actions endpoint (action execution via Composio)
 app.route('/v3/actions', actionsRouter);

@@ -5,6 +5,8 @@
  * No hardcoding in business logic.
  */
 
+import { TONE_PRESETS, TonePreset } from './tone-presets';
+
 export const SYSTEM_PROMPTS = {
   // Base identity
   IDENTITY: `You are Cortex, an AI assistant with perfect memory. You remember everything the user tells you.`,
@@ -153,4 +155,79 @@ export function buildSimpleChatPrompt(options: {
   parts.push(SYSTEM_PROMPTS.CLOSING);
 
   return parts.filter(p => p !== undefined).join('\n');
+}
+
+/**
+ * Personality configuration for personalized prompts
+ */
+export interface PromptPersonalityConfig {
+  tonePreset: TonePreset;
+  verbosity: 'brief' | 'medium' | 'detailed';
+  emojiUsage: 'none' | 'minimal' | 'moderate' | 'frequent';
+  preferredName?: string;
+  assistantName: string;
+  proactiveSuggestions: boolean;
+  memoryAcknowledgment: boolean;
+  gentleReminders: boolean;
+  communicationNotes?: string;
+}
+
+/**
+ * Build a personalized identity prompt based on user preferences
+ *
+ * This is the key function that makes Cortex feel different for each user.
+ * The default "balanced" tone is warm and Poke-like, not corporate.
+ */
+export function buildPersonalizedIdentity(config: PromptPersonalityConfig): string {
+  const tone = TONE_PRESETS[config.tonePreset];
+
+  let identity = `You are ${config.assistantName}, a personal AI assistant with perfect memory.`;
+
+  // Add tone instructions
+  identity += `\n\nCOMMUNICATION STYLE:\n`;
+  identity += `- Tone: ${tone.style}\n`;
+  identity += `- Example phrases you should use: "${tone.examples.join('", "')}"\n`;
+  identity += `- Avoid: ${tone.avoid}\n`;
+
+  // Name handling
+  if (config.preferredName) {
+    identity += `- Address the user as "${config.preferredName}"\n`;
+  }
+
+  // Verbosity
+  const verbosityInstructions: Record<PromptPersonalityConfig['verbosity'], string> = {
+    brief: 'Keep responses short and to the point. Be concise.',
+    medium: 'Balance brevity with completeness.',
+    detailed: 'Provide thorough, comprehensive responses when helpful.',
+  };
+  identity += `- Response length: ${verbosityInstructions[config.verbosity]}\n`;
+
+  // Emoji handling
+  const emojiInstructions: Record<PromptPersonalityConfig['emojiUsage'], string> = {
+    none: 'Never use emojis.',
+    minimal: 'Use emojis sparingly, only when they add value.',
+    moderate: 'Use occasional emojis when appropriate to add warmth.',
+    frequent: 'Use emojis liberally to add warmth and personality.',
+  };
+  identity += `- Emojis: ${emojiInstructions[config.emojiUsage]}\n`;
+
+  // Behavior preferences
+  if (!config.proactiveSuggestions) {
+    identity += `- Only respond to what the user asks. Don't offer unsolicited suggestions.\n`;
+  }
+
+  if (!config.memoryAcknowledgment) {
+    identity += `- Use memories naturally without explicitly saying "I remember..."\n`;
+  }
+
+  if (!config.gentleReminders) {
+    identity += `- Don't remind the user about commitments or deadlines unless asked.\n`;
+  }
+
+  // Custom notes from learning or manual input
+  if (config.communicationNotes) {
+    identity += `\nADDITIONAL STYLE NOTES:\n${config.communicationNotes}\n`;
+  }
+
+  return identity;
 }
