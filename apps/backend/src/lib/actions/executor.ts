@@ -10,7 +10,13 @@
  * - Web search
  */
 
-import { createComposioServices, type ToolExecutionResult } from '../composio';
+import {
+  createComposioServices,
+  executeComposioSafely,
+  ComposioTokenExpiredError,
+  ComposioRateLimitError,
+  type ToolExecutionResult,
+} from '../composio';
 import type { D1Database } from '@cloudflare/workers-types';
 
 export interface ActionDefinition {
@@ -173,6 +179,35 @@ export const AVAILABLE_ACTIONS: ActionDefinition[] = [
     ],
     requiresConfirmation: false,
     category: 'memory',
+  },
+  {
+    name: 'create_reminder',
+    description: 'Set a reminder for a specific time (use when user says "remind me", "set a reminder", "alert me", etc.)',
+    parameters: [
+      { name: 'message', type: 'string', description: 'The reminder message', required: true },
+      { name: 'remind_at', type: 'string', description: 'When to remind (ISO format)', required: true },
+      { name: 'repeat', type: 'string', description: 'Repeat pattern: daily, weekly, monthly, or none', required: false },
+    ],
+    requiresConfirmation: false,
+    category: 'general',
+  },
+  {
+    name: 'get_reminders',
+    description: 'Get upcoming reminders',
+    parameters: [
+      { name: 'limit', type: 'number', description: 'Maximum number of reminders to return', required: false },
+    ],
+    requiresConfirmation: false,
+    category: 'general',
+  },
+  {
+    name: 'delete_reminder',
+    description: 'Delete a reminder',
+    parameters: [
+      { name: 'reminder_id', type: 'string', description: 'ID of the reminder to delete', required: true },
+    ],
+    requiresConfirmation: true,
+    category: 'general',
   },
 ];
 
@@ -613,6 +648,12 @@ Write the email body only (no subject line needed).`;
         };
       case 'create_memory':
         return this.createMemory(parameters as any);
+      case 'create_reminder':
+        return this.createReminder(parameters as any);
+      case 'get_reminders':
+        return this.getReminders(parameters as any);
+      case 'delete_reminder':
+        return this.deleteReminder(parameters as any);
       default:
         return {
           success: false,
@@ -621,6 +662,88 @@ Write the email body only (no subject line needed).`;
           message: `The action "${action}" is not yet implemented.`,
         };
     }
+  }
+
+  /**
+   * Mark a connection as needing reauthorization
+   * Called when we get a token expired error from Composio
+   */
+  private async markConnectionExpired(provider: string): Promise<void> {
+    try {
+      // Update the connection status to indicate it needs reauth
+      await this.db.prepare(`
+        UPDATE integrations
+        SET connected = 0, metadata = json_set(COALESCE(metadata, '{}'), '$.needs_reauth', true, '$.expired_at', ?)
+        WHERE user_id = ? AND (provider = ? OR provider = 'googlesuper')
+      `).bind(
+        new Date().toISOString(),
+        this.userId,
+        provider
+      ).run();
+      console.log(`[ActionExecutor] Marked ${provider} connection as expired for user ${this.userId}`);
+    } catch (error) {
+      console.error('[ActionExecutor] Failed to mark connection expired:', error);
+    }
+  }
+
+  /**
+   * Execute a Composio operation safely with error handling
+   * Automatically handles token expiration and rate limiting
+   */
+  private async executeComposioOperation<T>(
+    provider: string,
+    operation: () => Promise<ToolExecutionResult<T>>
+  ): Promise<ActionResult> {
+    const result = await executeComposioSafely(
+      operation,
+      {
+        onTokenExpired: async () => {
+          await this.markConnectionExpired(provider);
+        },
+      }
+    );
+
+    if (!result.success) {
+      if (result.errorType === 'token_expired') {
+        return {
+          success: false,
+          action: 'composio_operation',
+          error: 'Token expired',
+          message: `Your ${provider} connection has expired. Please reconnect in Settings to continue.`,
+        };
+      }
+      if (result.errorType === 'rate_limited') {
+        return {
+          success: false,
+          action: 'composio_operation',
+          error: 'Rate limited',
+          message: 'Too many requests. Please try again in a few moments.',
+        };
+      }
+      return {
+        success: false,
+        action: 'composio_operation',
+        error: result.error.message,
+        message: `Operation failed: ${result.error.message}`,
+      };
+    }
+
+    // Check if the Composio result itself indicates failure
+    if (!result.data.successful) {
+      return {
+        success: false,
+        action: 'composio_operation',
+        error: result.data.error || 'Unknown error',
+        message: result.data.error || 'The operation failed.',
+      };
+    }
+
+    return {
+      success: true,
+      action: 'composio_operation',
+      result: result.data.data,
+      message: 'Operation completed successfully',
+    };
   }
 
   /**
@@ -712,35 +835,55 @@ Write the email body only (no subject line needed).`;
 
     const composio = createComposioServices(this.composioApiKey);
 
-    const result = await composio.client.executeTool({
-      toolSlug: 'GMAIL_SEND_EMAIL',
-      connectedAccountId,
-      arguments: {
-        recipient_email: recipientEmail, // Composio expects 'recipient_email' not 'to'
+    try {
+      const result = await composio.gmail.sendEmail({
+        connectedAccountId,
+        to: recipientEmail,
         subject: params.subject,
         body: params.body,
         cc: params.cc?.join(','),
-      },
-    });
+      });
 
-    if (result.successful) {
-      // Log the action
-      await this.logAction('send_email', params, result);
+      if (result.successful) {
+        // Log the action
+        await this.logAction('send_email', params, result);
+
+        return {
+          success: true,
+          action: 'send_email',
+          result: result.data,
+          message: `Email sent to ${params.to} with subject "${params.subject}"`,
+        };
+      }
 
       return {
-        success: true,
+        success: false,
         action: 'send_email',
-        result: result.data,
-        message: `Email sent to ${params.to} with subject "${params.subject}"`,
+        error: result.error || 'Unknown error',
+        message: `Failed to send email: ${result.error}`,
       };
+    } catch (error: any) {
+      // Handle token expiration
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('gmail');
+        return {
+          success: false,
+          action: 'send_email',
+          error: 'Token expired',
+          message: 'Your Gmail connection has expired. Please reconnect in Settings to continue.',
+        };
+      }
+      // Handle rate limiting
+      if (error instanceof ComposioRateLimitError) {
+        return {
+          success: false,
+          action: 'send_email',
+          error: 'Rate limited',
+          message: 'Too many requests to Gmail. Please try again in a few moments.',
+        };
+      }
+      throw error;
     }
-
-    return {
-      success: false,
-      action: 'send_email',
-      error: result.error || 'Unknown error',
-      message: `Failed to send email: ${result.error}`,
-    };
   }
 
   /**
@@ -879,36 +1022,54 @@ Write the email body only (no subject line needed).`;
 
     const composio = createComposioServices(this.composioApiKey);
 
-    const result = await composio.client.executeTool({
-      toolSlug: 'GOOGLECALENDAR_CREATE_EVENT',
-      connectedAccountId,
-      arguments: {
+    try {
+      const result = await composio.calendar.createEvent({
+        connectedAccountId,
         summary: params.title,
-        start_time: params.start_time,
-        end_time: params.end_time,
         description: params.description,
+        start: { dateTime: params.start_time },
+        end: { dateTime: params.end_time },
         location: params.location,
         attendees: params.attendees?.map((email) => ({ email })),
-      },
-    });
+      });
 
-    if (result.successful) {
-      await this.logAction('create_calendar_event', params, result);
+      if (result.successful) {
+        await this.logAction('create_calendar_event', params, result);
+
+        return {
+          success: true,
+          action: 'create_calendar_event',
+          result: result.data,
+          message: `Event "${params.title}" created for ${new Date(params.start_time).toLocaleString()}`,
+        };
+      }
 
       return {
-        success: true,
+        success: false,
         action: 'create_calendar_event',
-        result: result.data,
-        message: `Event "${params.title}" created for ${new Date(params.start_time).toLocaleString()}`,
+        error: result.error || 'Unknown error',
+        message: `Failed to create event: ${result.error}`,
       };
+    } catch (error: any) {
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('googlecalendar');
+        return {
+          success: false,
+          action: 'create_calendar_event',
+          error: 'Token expired',
+          message: 'Your Google Calendar connection has expired. Please reconnect in Settings.',
+        };
+      }
+      if (error instanceof ComposioRateLimitError) {
+        return {
+          success: false,
+          action: 'create_calendar_event',
+          error: 'Rate limited',
+          message: 'Too many requests. Please try again in a moment.',
+        };
+      }
+      throw error;
     }
-
-    return {
-      success: false,
-      action: 'create_calendar_event',
-      error: result.error || 'Unknown error',
-      message: `Failed to create event: ${result.error}`,
-    };
   }
 
   /**
@@ -1029,47 +1190,68 @@ Write the email body only (no subject line needed).`;
     // Use label filter if provided, otherwise fetch from INBOX
     const query = params.label ? `label:${params.label}` : 'in:inbox';
 
-    const result = await composio.gmail.fetchEmails({
-      connectedAccountId,
-      query,
-      maxResults: params.max_results || 10,
-    });
+    try {
+      const result = await composio.gmail.fetchEmails({
+        connectedAccountId,
+        query,
+        maxResults: params.max_results || 10,
+      });
 
-    if (result.successful) {
-      // Transform emails for rich card display on frontend
-      const rawEmails = result.data || [];
-      const transformedEmails = rawEmails.map((email: any) => ({
-        id: email.id || email.messageId || '',
-        thread_id: email.threadId || email.thread_id || '',
-        subject: email.subject || '(no subject)',
-        from: email.from || email.sender || '',
-        date: email.date || email.internalDate || new Date().toISOString(),
-        snippet: email.snippet || email.bodyPreview || '',
-        is_unread: email.labelIds?.includes('UNREAD') || !email.isRead,
-        is_starred: email.labelIds?.includes('STARRED') || email.isStarred,
-        is_important: email.labelIds?.includes('IMPORTANT'),
-        labels: email.labelIds || [],
-        attachment_count: email.attachments?.length || 0,
-      }));
+      if (result.successful) {
+        // Transform emails for rich card display on frontend
+        const rawEmails = result.data || [];
+        const transformedEmails = rawEmails.map((email: any) => ({
+          id: email.id || email.messageId || '',
+          thread_id: email.threadId || email.thread_id || '',
+          subject: email.subject || '(no subject)',
+          from: email.from || email.sender || '',
+          date: email.date || email.internalDate || new Date().toISOString(),
+          snippet: email.snippet || email.bodyPreview || '',
+          is_unread: email.labelIds?.includes('UNREAD') || !email.isRead,
+          is_starred: email.labelIds?.includes('STARRED') || email.isStarred,
+          is_important: email.labelIds?.includes('IMPORTANT'),
+          labels: email.labelIds || [],
+          attachment_count: email.attachments?.length || 0,
+        }));
+
+        return {
+          success: true,
+          action: 'fetch_emails',
+          result: {
+            emails: transformedEmails,
+            count: transformedEmails.length,
+            _tool: 'fetch_emails', // Marker for rich content detection
+          },
+          message: `Found ${transformedEmails.length} recent emails`,
+        };
+      }
 
       return {
-        success: true,
+        success: false,
         action: 'fetch_emails',
-        result: {
-          emails: transformedEmails,
-          count: transformedEmails.length,
-          _tool: 'fetch_emails', // Marker for rich content detection
-        },
-        message: `Found ${transformedEmails.length} recent emails`,
+        error: result.error || 'Unknown error',
+        message: `Failed to fetch emails: ${result.error}`,
       };
+    } catch (error: any) {
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('gmail');
+        return {
+          success: false,
+          action: 'fetch_emails',
+          error: 'Token expired',
+          message: 'Your Gmail connection has expired. Please reconnect in Settings.',
+        };
+      }
+      if (error instanceof ComposioRateLimitError) {
+        return {
+          success: false,
+          action: 'fetch_emails',
+          error: 'Rate limited',
+          message: 'Too many requests. Please try again in a moment.',
+        };
+      }
+      throw error;
     }
-
-    return {
-      success: false,
-      action: 'fetch_emails',
-      error: result.error || 'Unknown error',
-      message: `Failed to fetch emails: ${result.error}`,
-    };
   }
 
   /**
@@ -1193,117 +1375,86 @@ Write the email body only (no subject line needed).`;
 
     const composio = createComposioServices(this.composioApiKey);
 
-    const result = await composio.calendar.listEvents({
-      connectedAccountId,
-      timeMin: params.start_time,
-      timeMax: params.end_time,
-    });
+    try {
+      const result = await composio.calendar.listEvents({
+        connectedAccountId,
+        timeMin: params.start_time,
+        timeMax: params.end_time,
+      });
 
-    if (result.successful) {
+      if (result.successful) {
+        // Transform events for rich card display on frontend
+        const rawEvents = result.data || [];
+        const transformedEvents = Array.isArray(rawEvents)
+          ? rawEvents.map((event: any) => ({
+              id: event.id || '',
+              title: event.summary || event.title || '(No title)',
+              start: event.start?.dateTime || event.start?.date || '',
+              end: event.end?.dateTime || event.end?.date || '',
+              location: event.location || '',
+              description: event.description || '',
+              attendees: event.attendees?.map((a: any) => a.email) || [],
+              is_all_day: !event.start?.dateTime,
+              status: event.status || 'confirmed',
+            }))
+          : [];
+
+        return {
+          success: true,
+          action: 'get_calendar_events',
+          result: {
+            events: transformedEvents,
+            count: transformedEvents.length,
+            _tool: 'get_calendar_events', // Marker for rich content detection
+          },
+          message: `Found ${transformedEvents.length} events`,
+        };
+      }
+
       return {
-        success: true,
+        success: false,
         action: 'get_calendar_events',
-        result: result.data,
-        message: `Found ${result.data?.length || 0} events`,
+        error: result.error || 'Unknown error',
+        message: `Failed to get calendar events: ${result.error}`,
       };
+    } catch (error: any) {
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('googlecalendar');
+        return {
+          success: false,
+          action: 'get_calendar_events',
+          error: 'Token expired',
+          message: 'Your Google Calendar connection has expired. Please reconnect in Settings.',
+        };
+      }
+      if (error instanceof ComposioRateLimitError) {
+        return {
+          success: false,
+          action: 'get_calendar_events',
+          error: 'Rate limited',
+          message: 'Too many requests. Please try again in a moment.',
+        };
+      }
+      throw error;
     }
-
-    return {
-      success: false,
-      action: 'get_calendar_events',
-      error: result.error || 'Unknown error',
-      message: `Failed to get calendar events: ${result.error}`,
-    };
   }
 
   /**
-   * Web search (uses Serper if available)
+   * Web search - DISABLED
+   * Web search feature is not enabled. Can be re-enabled by adding
+   * SERPER_API_KEY environment variable and uncommenting the action definition.
    */
-  private async webSearch(params: {
+  private async webSearch(_params: {
     query: string;
     num_results?: number;
   }): Promise<ActionResult> {
-    if (!this.serperApiKey) {
-      return {
-        success: false,
-        action: 'web_search',
-        error: 'Web search not configured',
-        message: 'Web search is not available. Please add SERPER_API_KEY to enable.',
-      };
-    }
-
-    try {
-      const response = await fetch('https://google.serper.dev/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-KEY': this.serperApiKey,
-        },
-        body: JSON.stringify({
-          q: params.query,
-          num: params.num_results || 5,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Serper API error: ${response.status}`);
-      }
-
-      const data = await response.json() as {
-        organic?: Array<{
-          title: string;
-          link: string;
-          snippet: string;
-          position: number;
-        }>;
-        answerBox?: {
-          title?: string;
-          answer?: string;
-          snippet?: string;
-        };
-        knowledgeGraph?: {
-          title?: string;
-          type?: string;
-          description?: string;
-        };
-      };
-
-      // Format results for display
-      const results = {
-        query: params.query,
-        answerBox: data.answerBox,
-        knowledgeGraph: data.knowledgeGraph,
-        organic: (data.organic || []).slice(0, params.num_results || 5).map(r => ({
-          title: r.title,
-          url: r.link,
-          snippet: r.snippet,
-        })),
-        _tool: 'web_search',
-      };
-
-      // Build a summary message
-      let message = `Found ${results.organic.length} results for "${params.query}"`;
-      if (data.answerBox?.answer) {
-        message = data.answerBox.answer;
-      } else if (data.knowledgeGraph?.description) {
-        message = data.knowledgeGraph.description;
-      }
-
-      return {
-        success: true,
-        action: 'web_search',
-        result: results,
-        message,
-      };
-    } catch (error: any) {
-      console.error('[ActionExecutor] Web search failed:', error);
-      return {
-        success: false,
-        action: 'web_search',
-        error: error.message,
-        message: `Failed to search the web: ${error.message}`,
-      };
-    }
+    // Web search is disabled - not a core feature
+    return {
+      success: false,
+      action: 'web_search',
+      error: 'Web search not available',
+      message: 'Web search is not enabled. I can help you with emails, calendar, and remembering things instead.',
+    };
   }
 
   /**
@@ -1369,6 +1520,187 @@ Write the email body only (no subject line needed).`;
         action: 'create_memory',
         error: error.message,
         message: `Failed to save memory: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * Create a reminder for a specific time
+   * Stores in proactive_events table for the cron to process
+   */
+  private async createReminder(params: {
+    message: string;
+    remind_at: string;
+    repeat?: string;
+  }): Promise<ActionResult> {
+    const reminderId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const remindAt = new Date(params.remind_at);
+
+    // Validate remind_at is in the future
+    if (remindAt <= new Date()) {
+      return {
+        success: false,
+        action: 'create_reminder',
+        error: 'Invalid time',
+        message: 'The reminder time must be in the future.',
+      };
+    }
+
+    try {
+      // Store the reminder in proactive_events table
+      // This will be picked up by the proactive system's cron job
+      await this.db.prepare(`
+        INSERT INTO proactive_events (
+          id, user_id, source, event_type, priority, title, summary,
+          raw_data, status, scheduled_at, created_at
+        )
+        VALUES (?, ?, 'reminder', 'reminder', 'high', ?, ?, ?, 'pending', ?, ?)
+      `).bind(
+        reminderId,
+        this.userId,
+        `Reminder: ${params.message.slice(0, 50)}`,
+        params.message,
+        JSON.stringify({
+          message: params.message,
+          repeat: params.repeat || 'none',
+          created_at: now,
+        }),
+        params.remind_at,
+        now
+      ).run();
+
+      // Log the action
+      await this.logAction('create_reminder', params, { reminderId });
+
+      // Format the time nicely for the response
+      const formattedTime = remindAt.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+
+      return {
+        success: true,
+        action: 'create_reminder',
+        result: { reminderId, remind_at: params.remind_at },
+        message: `Got it! I'll remind you "${params.message}" on ${formattedTime}.`,
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Create reminder failed:', error);
+      return {
+        success: false,
+        action: 'create_reminder',
+        error: error.message,
+        message: `Failed to create reminder: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * Get upcoming reminders for the user
+   */
+  private async getReminders(params: {
+    limit?: number;
+  }): Promise<ActionResult> {
+    try {
+      const limit = params.limit || 10;
+      const now = new Date().toISOString();
+
+      const result = await this.db.prepare(`
+        SELECT id, title, summary, scheduled_at, raw_data, status
+        FROM proactive_events
+        WHERE user_id = ? AND source = 'reminder' AND status = 'pending'
+          AND scheduled_at > ?
+        ORDER BY scheduled_at ASC
+        LIMIT ?
+      `).bind(this.userId, now, limit).all();
+
+      const reminders = (result.results as any[]).map((r) => {
+        let repeat = 'none';
+        try {
+          const rawData = JSON.parse(r.raw_data || '{}');
+          repeat = rawData.repeat || 'none';
+        } catch {}
+
+        return {
+          id: r.id,
+          message: r.summary || r.title,
+          remind_at: r.scheduled_at,
+          repeat,
+          status: r.status,
+        };
+      });
+
+      return {
+        success: true,
+        action: 'get_reminders',
+        result: {
+          reminders,
+          count: reminders.length,
+          _tool: 'get_reminders',
+        },
+        message: reminders.length > 0
+          ? `You have ${reminders.length} upcoming reminder${reminders.length > 1 ? 's' : ''}.`
+          : 'You have no upcoming reminders.',
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Get reminders failed:', error);
+      return {
+        success: false,
+        action: 'get_reminders',
+        error: error.message,
+        message: `Failed to get reminders: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * Delete a reminder
+   */
+  private async deleteReminder(params: {
+    reminder_id: string;
+  }): Promise<ActionResult> {
+    try {
+      // First verify the reminder belongs to this user
+      const existing = await this.db.prepare(`
+        SELECT id, summary FROM proactive_events
+        WHERE id = ? AND user_id = ? AND source = 'reminder'
+      `).bind(params.reminder_id, this.userId).first<{ id: string; summary: string }>();
+
+      if (!existing) {
+        return {
+          success: false,
+          action: 'delete_reminder',
+          error: 'Not found',
+          message: 'Reminder not found or already deleted.',
+        };
+      }
+
+      // Delete the reminder
+      await this.db.prepare(`
+        DELETE FROM proactive_events
+        WHERE id = ? AND user_id = ?
+      `).bind(params.reminder_id, this.userId).run();
+
+      // Log the action
+      await this.logAction('delete_reminder', params, { deleted: true });
+
+      return {
+        success: true,
+        action: 'delete_reminder',
+        result: { deleted: true },
+        message: `Reminder "${existing.summary?.slice(0, 50)}" has been deleted.`,
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Delete reminder failed:', error);
+      return {
+        success: false,
+        action: 'delete_reminder',
+        error: error.message,
+        message: `Failed to delete reminder: ${error.message}`,
       };
     }
   }

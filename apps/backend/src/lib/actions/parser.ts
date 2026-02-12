@@ -198,6 +198,61 @@ User: "Save this - meeting notes: decided to launch product in Q2"
     "confidence": 0.95,
     "confirmationMessage": "Save meeting notes"
   }]
+}
+
+User: "Remind me to call mom tomorrow at 5pm"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_reminder",
+    "parameters": {
+      "message": "Call mom",
+      "remind_at": "2024-01-16T17:00:00"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Remind you to call mom tomorrow at 5:00 PM"
+  }]
+}
+
+User: "Set a reminder for the meeting in 30 minutes"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_reminder",
+    "parameters": {
+      "message": "Meeting starting soon",
+      "remind_at": "2024-01-15T14:30:00"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Remind you about the meeting in 30 minutes"
+  }]
+}
+
+User: "Remind me every weekday at 9am to check emails"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_reminder",
+    "parameters": {
+      "message": "Check emails",
+      "remind_at": "2024-01-16T09:00:00",
+      "repeat": "daily"
+    },
+    "confidence": 0.90,
+    "confirmationMessage": "Set daily reminder to check emails at 9:00 AM"
+  }]
+}
+
+User: "What reminders do I have?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "get_reminders",
+    "parameters": {},
+    "confidence": 1.0,
+    "confirmationMessage": "Get your upcoming reminders"
+  }],
+  "queryIntent": "User wants to see their reminders"
 }`;
 
 /**

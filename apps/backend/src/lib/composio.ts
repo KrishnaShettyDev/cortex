@@ -445,6 +445,48 @@ export class GmailService {
     });
   }
 
+  /**
+   * Fetch email by ID
+   * Retrieves full email content including body
+   */
+  async fetchEmailById(params: {
+    connectedAccountId: string;
+    messageId: string;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_GET_MESSAGE',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        message_id: params.messageId,
+      },
+    });
+  }
+
+  /**
+   * Fetch email history (incremental sync)
+   * Uses Gmail's history API to get changes since last sync
+   * This is crucial for proactive monitoring
+   */
+  async fetchHistory(params: {
+    connectedAccountId: string;
+    startHistoryId: string;
+    labelIds?: string[];
+    maxResults?: number;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_LIST_HISTORY',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        start_history_id: params.startHistoryId,
+        label_id: params.labelIds?.[0], // Gmail API takes single labelId for history
+        max_results: params.maxResults || 100,
+      },
+    });
+  }
+
+  /**
+   * Get Gmail profile including historyId for sync
+   */
   async getProfile(connectedAccountId: string) {
     return this.client.executeTool({
       toolSlug: 'GMAIL_GET_PROFILE',
@@ -453,6 +495,9 @@ export class GmailService {
     });
   }
 
+  /**
+   * Search contacts via Google People API
+   */
   async searchPeople(params: {
     connectedAccountId: string;
     query: string;
@@ -462,6 +507,121 @@ export class GmailService {
       connectedAccountId: params.connectedAccountId,
       arguments: {
         query: params.query,
+      },
+    });
+  }
+
+  /**
+   * Send email
+   */
+  async sendEmail(params: {
+    connectedAccountId: string;
+    to: string;
+    subject: string;
+    body: string;
+    cc?: string;
+    bcc?: string;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_SEND_EMAIL',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        recipient_email: params.to,
+        subject: params.subject,
+        body: params.body,
+        cc: params.cc,
+        bcc: params.bcc,
+      },
+    });
+  }
+
+  /**
+   * Create email draft
+   */
+  async createDraft(params: {
+    connectedAccountId: string;
+    to: string;
+    subject: string;
+    body: string;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_CREATE_DRAFT',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        recipient_email: params.to,
+        subject: params.subject,
+        body: params.body,
+      },
+    });
+  }
+
+  /**
+   * Reply to email thread
+   */
+  async replyToThread(params: {
+    connectedAccountId: string;
+    threadId: string;
+    body: string;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_REPLY_TO_THREAD',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        thread_id: params.threadId,
+        body: params.body,
+      },
+    });
+  }
+
+  /**
+   * Mark email as read
+   */
+  async markAsRead(params: {
+    connectedAccountId: string;
+    messageId: string;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_MODIFY_MESSAGE',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        message_id: params.messageId,
+        remove_label_ids: ['UNREAD'],
+      },
+    });
+  }
+
+  /**
+   * Archive email (remove from inbox)
+   */
+  async archiveEmail(params: {
+    connectedAccountId: string;
+    messageId: string;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_MODIFY_MESSAGE',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        message_id: params.messageId,
+        remove_label_ids: ['INBOX'],
+      },
+    });
+  }
+
+  /**
+   * Star/unstar email
+   */
+  async toggleStar(params: {
+    connectedAccountId: string;
+    messageId: string;
+    starred: boolean;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_MODIFY_MESSAGE',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        message_id: params.messageId,
+        add_label_ids: params.starred ? ['STARRED'] : [],
+        remove_label_ids: params.starred ? [] : ['STARRED'],
       },
     });
   }
