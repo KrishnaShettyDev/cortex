@@ -156,6 +156,48 @@ User: "Move my 3pm meeting to 4pm"
     "confirmationMessage": "Move your 3pm meeting to 4pm?"
   }],
   "needsMoreInfo": ["Which specific meeting at 3pm?"]
+}
+
+User: "Remember that my favorite restaurant is Olive Garden"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_memory",
+    "parameters": {
+      "content": "My favorite restaurant is Olive Garden",
+      "context": "preferences"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Remember your favorite restaurant preference"
+  }]
+}
+
+User: "Note that John's birthday is March 15th"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_memory",
+    "parameters": {
+      "content": "John's birthday is March 15th",
+      "context": "personal"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Save note about John's birthday"
+  }]
+}
+
+User: "Save this - meeting notes: decided to launch product in Q2"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_memory",
+    "parameters": {
+      "content": "Meeting notes: decided to launch product in Q2",
+      "context": "work"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Save meeting notes"
+  }]
 }`;
 
 /**

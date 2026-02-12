@@ -152,22 +152,33 @@ export const AVAILABLE_ACTIONS: ActionDefinition[] = [
     requiresConfirmation: false,
     category: 'calendar',
   },
+  // Web search is optional - only available if SERPER_API_KEY is configured
+  // Can be enabled later if needed, but not core to personal assistant functionality
+  // {
+  //   name: 'web_search',
+  //   description: 'Search the web for information',
+  //   parameters: [
+  //     { name: 'query', type: 'string', description: 'Search query', required: true },
+  //     { name: 'num_results', type: 'number', description: 'Number of results', required: false },
+  //   ],
+  //   requiresConfirmation: false,
+  //   category: 'search',
+  // },
   {
-    name: 'web_search',
-    description: 'Search the web for information',
+    name: 'create_memory',
+    description: 'Save information to memory for future recall (use when user says "remember", "note that", "save this", etc.)',
     parameters: [
-      { name: 'query', type: 'string', description: 'Search query', required: true },
-      { name: 'num_results', type: 'number', description: 'Number of results', required: false },
+      { name: 'content', type: 'string', description: 'The information to remember', required: true },
+      { name: 'context', type: 'string', description: 'Additional context or category', required: false },
     ],
     requiresConfirmation: false,
-    category: 'search',
+    category: 'memory',
   },
 ];
 
 export class ActionExecutor {
   private composioApiKey: string;
   private openaiKey: string;
-  private serperApiKey?: string;
   private db: D1Database;
   private userId: string;
   private userName?: string;
@@ -175,14 +186,13 @@ export class ActionExecutor {
   constructor(params: {
     composioApiKey: string;
     openaiKey: string;
-    serperApiKey?: string;
+    serperApiKey?: string; // Deprecated - web search disabled
     db: D1Database;
     userId: string;
     userName?: string;
   }) {
     this.composioApiKey = params.composioApiKey;
     this.openaiKey = params.openaiKey;
-    this.serperApiKey = params.serperApiKey;
     this.db = params.db;
     this.userId = params.userId;
     this.userName = params.userName;
@@ -594,7 +604,15 @@ Write the email body only (no subject line needed).`;
       case 'get_calendar_events':
         return this.getCalendarEvents(parameters as any);
       case 'web_search':
-        return this.webSearch(parameters as any);
+        // Web search is disabled - not a core feature
+        return {
+          success: false,
+          action: 'web_search',
+          error: 'Web search not available',
+          message: 'Web search is not enabled. I can help you with emails, calendar, and remembering things instead.',
+        };
+      case 'create_memory':
+        return this.createMemory(parameters as any);
       default:
         return {
           success: false,
@@ -1312,6 +1330,50 @@ Write the email body only (no subject line needed).`;
   }
 
   /**
+   * Create a memory (save information for future recall)
+   */
+  private async createMemory(params: {
+    content: string;
+    context?: string;
+  }): Promise<ActionResult> {
+    const memoryId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    try {
+      // Store the memory in the database
+      await this.db.prepare(`
+        INSERT INTO memories (id, user_id, content, context, importance_score, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 0.7, ?, ?)
+      `).bind(
+        memoryId,
+        this.userId,
+        params.content,
+        params.context || 'chat',
+        now,
+        now
+      ).run();
+
+      // Log the action
+      await this.logAction('create_memory', params, { memoryId });
+
+      return {
+        success: true,
+        action: 'create_memory',
+        result: { memoryId },
+        message: `Got it! I'll remember: "${params.content.slice(0, 100)}${params.content.length > 100 ? '...' : ''}"`,
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Create memory failed:', error);
+      return {
+        success: false,
+        action: 'create_memory',
+        error: error.message,
+        message: `Failed to save memory: ${error.message}`,
+      };
+    }
+  }
+
+  /**
    * Log action for audit trail
    */
   private async logAction(
@@ -1343,7 +1405,7 @@ Write the email body only (no subject line needed).`;
 export function createActionExecutor(params: {
   composioApiKey: string;
   openaiKey: string;
-  serperApiKey?: string;
+  serperApiKey?: string; // Deprecated - web search disabled
   db: D1Database;
   userId: string;
   userName?: string;
