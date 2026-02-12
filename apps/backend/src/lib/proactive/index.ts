@@ -207,13 +207,19 @@ export async function handleWebhook(
   }
 
   // REPLAY PROTECTION: Check if we've seen this webhook before
+  // Uses webhook_dedup table (simple: webhook_id + created_at) since we don't know user yet
   const webhookId = payload.webhookId || payload.webhook_id || payload.id || crypto.randomUUID();
-  const seen = await db.prepare(
-    'SELECT 1 FROM seen_events WHERE event_id = ?'
-  ).bind(webhookId).first();
+  try {
+    const seen = await db.prepare(
+      'SELECT 1 FROM webhook_dedup WHERE webhook_id = ?'
+    ).bind(webhookId).first();
 
-  if (seen) {
-    return { success: true, eventId: webhookId }; // Already processed, ACK but don't re-process
+    if (seen) {
+      return { success: true, eventId: webhookId }; // Already processed, ACK but don't re-process
+    }
+  } catch (err) {
+    // Table might not exist yet (pre-migration) - continue processing
+    console.warn('[Proactive] webhook_dedup check failed:', err);
   }
 
   // Get user from connection (Composio sends connectedAccountId as connectionId)
@@ -271,9 +277,14 @@ export async function handleWebhook(
   }
 
   // Record seen webhook (for replay protection)
-  await db.prepare(
-    'INSERT INTO seen_events (event_id, created_at) VALUES (?, datetime("now"))'
-  ).bind(webhookId).run();
+  try {
+    await db.prepare(
+      'INSERT OR IGNORE INTO webhook_dedup (webhook_id, created_at) VALUES (?, datetime("now"))'
+    ).bind(webhookId).run();
+  } catch (err) {
+    // Table might not exist yet - continue processing
+    console.warn('[Proactive] webhook_dedup insert failed:', err);
+  }
 
   // Check if user has proactive enabled
   const prefs = await db.prepare(`
@@ -333,10 +344,28 @@ export async function handleWebhook(
   const eventId = nanoid();
   const now = new Date().toISOString();
 
-  await db.prepare(`
-    INSERT INTO proactive_events (id, user_id, source, title, body, sender, urgency, notified, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
-  `).bind(eventId, userId, source, title || null, body?.slice(0, 500) || null, sender || null, urgency, now).run();
+  // Map sources to valid values for legacy CHECK constraint
+  // Original constraint: CHECK (source IN ('email', 'calendar'))
+  // Newer migration adds 'drive', 'docs', 'slack', 'notion' but may not be applied yet
+  const sourceMapping: Record<string, string> = {
+    email: 'email',
+    calendar: 'calendar',
+    drive: 'email',     // Map to email as fallback
+    docs: 'email',      // Map to email as fallback
+    slack: 'email',     // Map to email as fallback
+    notion: 'email',    // Map to email as fallback
+  };
+  const dbSource = sourceMapping[source] || 'email';
+
+  try {
+    await db.prepare(`
+      INSERT INTO proactive_events (id, user_id, source, title, body, sender, urgency, notified, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+    `).bind(eventId, userId, dbSource, title || null, body?.slice(0, 500) || null, sender || null, urgency, now).run();
+  } catch (err) {
+    console.error('[Proactive] Failed to save event:', err);
+    return { success: false, error: 'db_error' };
+  }
 
   // Send notification (only if under rate limit)
   if (shouldNotify) {
@@ -526,4 +555,13 @@ export async function cleanup(db: D1Database) {
   await db.prepare(`
     DELETE FROM proactive_events WHERE created_at < datetime('now', '-7 days')
   `).run();
+
+  // Clean up webhook deduplication cache (24h TTL)
+  try {
+    await db.prepare(`
+      DELETE FROM webhook_dedup WHERE created_at < datetime('now', '-1 day')
+    `).run();
+  } catch {
+    // Table might not exist yet
+  }
 }
