@@ -12,7 +12,13 @@
 import { searchMemories } from './memory';
 import { parseActionsFromMessage, type ParseResult, type ParsedAction, requiresConfirmation, generateConfirmationMessage } from './lib/actions/parser';
 import { ActionExecutor, type ActionResult } from './lib/actions/executor';
-import { getUnresolvedContradictions, formatContradictionForChat } from './lib/contradiction/detector';
+import { getUnresolvedContradictions } from './lib/contradiction/detector';
+import {
+  MEMORY_TEMPLATES,
+  CONTEXT_HEADERS,
+  buildChatSystemPrompt,
+  buildSimpleChatPrompt,
+} from './config/prompts';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -44,7 +50,7 @@ interface PendingAction {
 }
 
 /**
- * Format memories as context for the AI - ENHANCED for visible memory moat
+ * Format memories as context for the AI - uses templates from config
  */
 function formatMemoriesContext(
   memories: Array<{
@@ -54,7 +60,7 @@ function formatMemoriesContext(
   }>
 ): string {
   if (memories.length === 0) {
-    return '## Your Memories About This Topic\n\nNo relevant memories found. You can tell the user: "I don\'t have any memories about that yet. Would you like to tell me more?"';
+    return MEMORY_TEMPLATES.NO_MEMORIES;
   }
 
   const formatted = memories
@@ -66,14 +72,13 @@ function formatMemoriesContext(
         year: 'numeric',
       });
       const source = memory.source ? ` [from ${memory.source}]` : '';
-      // Calculate how long ago
       const daysAgo = Math.floor((Date.now() - new Date(memory.created_at).getTime()) / (1000 * 60 * 60 * 24));
       const timeAgo = daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : `${daysAgo} days ago`;
-      return `[Memory ${idx + 1}] (${date} - ${timeAgo}${source})\n${memory.content}`;
+      return MEMORY_TEMPLATES.MEMORY_ITEM(idx + 1, date, timeAgo, source, memory.content);
     })
     .join('\n\n');
 
-  return `## Your Memories About This Topic\n\n${formatted}`;
+  return `${MEMORY_TEMPLATES.MEMORIES_HEADER}\n\n${formatted}`;
 }
 
 // =============================================================================
@@ -152,8 +157,8 @@ async function getEntityContext(db: D1Database, userId: string, entityName: stri
     ORDER BY m.created_at DESC LIMIT 5
   `).bind(entity.id).all<{ content: string; created_at: string; source: string | null }>();
 
-  // Format context
-  let context = `\n## Entity Profile: ${entity.name}\n`;
+  // Format context using config headers
+  let context = `\n${CONTEXT_HEADERS.ENTITY_PROFILE(entity.name)}\n`;
   context += `Type: ${entity.entity_type}\n`;
   context += `Mentioned: ${entity.mention_count} times\n`;
   context += `First mentioned: ${new Date(entity.first_seen).toLocaleDateString()}\n`;
@@ -217,7 +222,7 @@ async function getActiveCommitmentsContext(db: D1Database, userId: string): Prom
 
     if (!commitments.results || commitments.results.length === 0) return '';
 
-    let context = '\n## Active Commitments (mention if relevant to conversation):\n';
+    let context = `\n${CONTEXT_HEADERS.ACTIVE_COMMITMENTS}\n`;
     for (const c of commitments.results) {
       const status = c.is_overdue ? '⚠️ OVERDUE' : '📅 Due soon';
       const person = c.to_entity_name ? ` with ${c.to_entity_name}` : '';
@@ -361,7 +366,7 @@ async function getUserPatterns(db: D1Database, userId: string): Promise<string> 
 
     if (!nudges.results || nudges.results.length === 0) return '';
 
-    let context = '\n## Detected Patterns (mention ONLY if directly relevant):\n';
+    let context = `\n${CONTEXT_HEADERS.DETECTED_PATTERNS}\n`;
     for (const n of nudges.results) {
       context += `- ${n.message}\n`;
     }
@@ -386,7 +391,7 @@ async function getContradictionContext(db: D1Database, userId: string): Promise<
 
     if (contradictions.length === 0) return '';
 
-    let context = '\n## Unresolved Contradictions (ask user to clarify ONE if relevant):\n';
+    let context = `\n${CONTEXT_HEADERS.UNRESOLVED_CONTRADICTIONS}\n`;
     for (const c of contradictions) {
       context += `- "${c.existingContent}" vs "${c.newContent}" (${c.conflictType})\n`;
     }
@@ -460,26 +465,12 @@ export async function chat(
     { limit: contextLimit }
   );
 
-  // Format system message with memory context - ENHANCED for visible memory moat
+  // Format system message with memory context - uses config prompts
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `You are Cortex, an AI assistant with perfect memory. You remember everything the user tells you.
-
-${formatMemoriesContext(memories)}
-
-CRITICAL INSTRUCTIONS FOR MEMORY USAGE:
-1. When using information from a memory, EXPLICITLY acknowledge it with phrases like:
-   - "I remember you mentioned..."
-   - "Based on what you told me on [date]..."
-   - "You previously said..."
-   - "From our earlier conversation..."
-2. If multiple memories are relevant, synthesize them: "Combining what you've shared..."
-3. If NO relevant memories exist, say: "I don't have any memories about that yet. Would you like to tell me about it?"
-4. NEVER make up information not in the memories above.
-5. Make memory references feel natural and conversational.
-6. When referencing a memory, mention WHEN the user told you (e.g., "last week", "3 days ago")
-
-Be concise, friendly, and helpful. Your memory is your superpower - make it VISIBLE to the user.`,
+    content: buildSimpleChatPrompt({
+      memoriesContext: formatMemoriesContext(memories),
+    }),
   };
 
   // User message
@@ -540,29 +531,14 @@ export async function chatWithHistory(
     ? `You are assisting the user with email ${options.userEmail}.`
     : '';
 
-  // Format system message with memory context - ENHANCED for visible memory moat
+  // Format system message with memory context - uses config prompts
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `You are Cortex, an AI assistant with perfect memory. You remember everything the user tells you.
-
-${userIdentity}
-
-${formatMemoriesContext(memories)}
-
-CRITICAL INSTRUCTIONS FOR MEMORY USAGE:
-1. When using information from a memory, EXPLICITLY acknowledge it with phrases like:
-   - "I remember you mentioned..."
-   - "Based on what you told me on [date]..."
-   - "You previously said..."
-   - "From our earlier conversation..."
-2. If multiple memories are relevant, synthesize them: "Combining what you've shared..."
-3. If NO relevant memories exist, say: "I don't have any memories about that yet. Would you like to tell me about it?"
-4. NEVER make up information not in the memories above.
-5. Make memory references feel natural and conversational.
-6. When referencing a memory, mention WHEN the user told you (e.g., "last week", "3 days ago")
-7. Consider the conversation history to maintain context.
-
-Be concise, friendly, and helpful. Your memory is your superpower - make it VISIBLE to the user.`,
+    content: buildSimpleChatPrompt({
+      userIdentity,
+      memoriesContext: formatMemoriesContext(memories),
+      includeHistoryNote: true,
+    }),
   };
 
   // Build message array with history
@@ -738,44 +714,24 @@ export async function chatWithActions(
 
   // Build temporal context if time-filtered query
   const temporalContext = temporalQuery.isTemporalQuery && temporalQuery.label
-    ? `\n## Time-Filtered Search: Showing memories from ${temporalQuery.label}\n`
+    ? `\n${CONTEXT_HEADERS.TIME_FILTERED(temporalQuery.label)}\n`
     : '';
 
+  // Build system message using config prompts
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `You are Cortex, an AI assistant with perfect memory that can take actions (calendar, email, etc.) on behalf of the user.
-
-${userIdentity}
-${temporalContext}
-${formatMemoriesContext(memories)}
-${entityContext}
-${commitmentContext}
-${patternContext}
-${contradictionContext}
-${actionContext}
-
-CRITICAL INSTRUCTIONS FOR MEMORY USAGE:
-1. When using information from a memory, EXPLICITLY acknowledge it:
-   - "I remember you mentioned..."
-   - "Based on what you told me on [date]..."
-   - "You previously said..."
-2. If multiple memories are relevant, synthesize: "Combining what you've shared..."
-3. If NO relevant memories exist for a question, say: "I don't have any memories about that yet."
-4. NEVER make up information not in the memories.
-5. When referencing a memory, mention WHEN (e.g., "you told me last week", "3 days ago")
-6. For entity queries ("What do I know about X?"), give a comprehensive summary from the entity profile.
-7. For temporal queries ("last month", "this week"), group memories by topic/theme.
-8. If there's a relevant commitment, gently remind the user.
-
-ACTION HANDLING:
-- If you created a pending action, confirm what you're about to do and ask for confirmation
-- If you executed a query, summarize the results naturally
-- If there was an error, explain what went wrong
-- For calendar events, mention the date/time clearly
-- For emails, mention who it's to/from
-- When drafting emails, sign with the user's name (${options.userName || 'the user'}), never use placeholders
-
-Be conversational and helpful. Your memory is your superpower - make it VISIBLE to the user.`,
+    content: buildChatSystemPrompt({
+      userIdentity,
+      memoriesContext: formatMemoriesContext(memories),
+      entityContext,
+      commitmentContext,
+      patternContext,
+      contradictionContext,
+      temporalContext,
+      actionContext,
+      userName: options.userName,
+      includeActions: true,
+    }),
   };
 
   const messages: ChatMessage[] = [systemMessage];
@@ -898,7 +854,7 @@ function buildActionContext(
   const parts: string[] = [];
 
   if (pendingActions.length > 0) {
-    parts.push(`PENDING ACTIONS (waiting for confirmation):
+    parts.push(`${CONTEXT_HEADERS.PENDING_ACTIONS}
 ${pendingActions.map(a => `- ${a.action}: ${a.confirmationMessage}`).join('\n')}`);
   }
 
@@ -907,12 +863,12 @@ ${pendingActions.map(a => `- ${a.action}: ${a.confirmationMessage}`).join('\n')}
     const failed = executedActions.filter(a => !a.success);
 
     if (successful.length > 0) {
-      parts.push(`COMPLETED ACTIONS:
+      parts.push(`${CONTEXT_HEADERS.COMPLETED_ACTIONS}
 ${successful.map(a => `- ${a.action}: ${a.message}`).join('\n')}`);
     }
 
     if (failed.length > 0) {
-      parts.push(`FAILED ACTIONS:
+      parts.push(`${CONTEXT_HEADERS.FAILED_ACTIONS}
 ${failed.map(a => `- ${a.action}: ${a.error}`).join('\n')}`);
     }
   }
@@ -922,7 +878,7 @@ ${failed.map(a => `- ${a.action}: ${a.error}`).join('\n')}`);
       // Calendar events
       const events = queryResults.items.slice(0, 5);
       if (events.length > 0) {
-        parts.push(`CALENDAR EVENTS:
+        parts.push(`${CONTEXT_HEADERS.CALENDAR_EVENTS}
 ${events.map((e: any) => {
   const start = e.start?.dateTime || e.start?.date;
   const time = start ? new Date(start).toLocaleString('en-US', {
@@ -941,7 +897,7 @@ ${events.map((e: any) => {
       // Email fetch/search results (new format with emails array)
       const emails = queryResults.emails.slice(0, 10);
       if (emails.length > 0) {
-        parts.push(`YOUR EMAILS (${queryResults.count || emails.length} found):
+        parts.push(`${CONTEXT_HEADERS.EMAILS(queryResults.count || emails.length)}
 ${emails.map((e: any) => {
   const date = e.date ? new Date(e.date).toLocaleDateString('en-US', {
     month: 'short',
