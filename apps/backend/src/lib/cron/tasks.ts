@@ -68,9 +68,79 @@ export const everyMinuteTasks: CronTask[] = [
     },
   },
   {
-    name: 'retry_dlq_events',
+    name: 'process_commitment_reminders',
     interval: 'every_minute',
     priority: 4,
+    timeoutMs: 10000,
+    llmBudget: 0,
+    handler: async (env) => {
+      // Find commitments due within next 24 hours that haven't been reminded
+      const dueCommitments = await env.DB.prepare(`
+        SELECT c.id, c.description, c.to_entity_name, c.due_date, u.push_token, u.id as user_id
+        FROM commitments c
+        JOIN users u ON c.user_id = u.id
+        WHERE c.status = 'pending'
+          AND c.due_date <= datetime('now', '+1 day')
+          AND c.due_date >= datetime('now', '-1 hour')
+          AND (c.reminded = 0 OR c.reminded IS NULL)
+          AND u.push_token IS NOT NULL
+        LIMIT 10
+      `).all<{
+        id: string;
+        description: string;
+        to_entity_name: string | null;
+        due_date: string;
+        push_token: string;
+        user_id: string;
+      }>();
+
+      if (!dueCommitments.results || dueCommitments.results.length === 0) return;
+
+      let sent = 0;
+      for (const commitment of dueCommitments.results) {
+        try {
+          const person = commitment.to_entity_name ? ` with ${commitment.to_entity_name}` : '';
+          const dueDate = new Date(commitment.due_date);
+          const now = new Date();
+          const hoursUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60));
+
+          const timeLabel = hoursUntilDue <= 0 ? 'now' : hoursUntilDue === 1 ? 'in 1 hour' : `in ${hoursUntilDue} hours`;
+
+          // Queue notification instead of sending directly
+          await env.DB.prepare(`
+            INSERT INTO scheduled_notifications (
+              id, user_id, notification_type, title, body, data,
+              channel_id, scheduled_for_utc, user_local_time, timezone, status, created_at, updated_at
+            ) VALUES (?, ?, 'commitment', ?, ?, ?, 'reminders', ?, ?, 'UTC', 'pending', ?, ?)
+          `).bind(
+            `commit_${commitment.id}_${Date.now()}`,
+            commitment.user_id,
+            'Commitment Reminder',
+            `Don't forget: "${commitment.description}"${person} - due ${timeLabel}`,
+            JSON.stringify({ commitmentId: commitment.id, pushToken: commitment.push_token }),
+            now.toISOString(),
+            now.toISOString(),
+            now.toISOString(),
+            now.toISOString()
+          ).run();
+
+          // Mark as reminded
+          await env.DB.prepare(`UPDATE commitments SET reminded = 1 WHERE id = ?`).bind(commitment.id).run();
+          sent++;
+        } catch (error) {
+          console.error(`[Cron] Commitment reminder error for ${commitment.id}:`, error);
+        }
+      }
+
+      if (sent > 0) {
+        console.log(`[Cron] Queued ${sent} commitment reminders`);
+      }
+    },
+  },
+  {
+    name: 'retry_dlq_events',
+    interval: 'every_minute',
+    priority: 5,
     timeoutMs: 15000,
     llmBudget: 2, // May need LLM for re-classification
     handler: async (env, ctx) => {

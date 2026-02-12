@@ -12,6 +12,7 @@
 import { searchMemories } from './memory';
 import { parseActionsFromMessage, type ParseResult, type ParsedAction, requiresConfirmation, generateConfirmationMessage } from './lib/actions/parser';
 import { ActionExecutor, type ActionResult } from './lib/actions/executor';
+import { getUnresolvedContradictions, formatContradictionForChat } from './lib/contradiction/detector';
 
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -43,7 +44,7 @@ interface PendingAction {
 }
 
 /**
- * Format memories as context for the AI
+ * Format memories as context for the AI - ENHANCED for visible memory moat
  */
 function formatMemoriesContext(
   memories: Array<{
@@ -53,22 +54,348 @@ function formatMemoriesContext(
   }>
 ): string {
   if (memories.length === 0) {
-    return 'No relevant memories found.';
+    return '## Your Memories About This Topic\n\nNo relevant memories found. You can tell the user: "I don\'t have any memories about that yet. Would you like to tell me more?"';
   }
 
   const formatted = memories
     .map((memory, idx) => {
       const date = new Date(memory.created_at).toLocaleDateString('en-US', {
+        weekday: 'short',
         month: 'short',
         day: 'numeric',
         year: 'numeric',
       });
-      const source = memory.source ? ` [${memory.source}]` : '';
-      return `${idx + 1}. (${date}${source}) ${memory.content}`;
+      const source = memory.source ? ` [from ${memory.source}]` : '';
+      // Calculate how long ago
+      const daysAgo = Math.floor((Date.now() - new Date(memory.created_at).getTime()) / (1000 * 60 * 60 * 24));
+      const timeAgo = daysAgo === 0 ? 'today' : daysAgo === 1 ? 'yesterday' : `${daysAgo} days ago`;
+      return `[Memory ${idx + 1}] (${date} - ${timeAgo}${source})\n${memory.content}`;
     })
     .join('\n\n');
 
-  return `Relevant memories:\n\n${formatted}`;
+  return `## Your Memories About This Topic\n\n${formatted}`;
+}
+
+// =============================================================================
+// PRIORITY 2: ENTITY INTELLIGENCE
+// =============================================================================
+
+interface EntityQueryResult {
+  isEntityQuery: boolean;
+  entityName: string | null;
+}
+
+/**
+ * Detect if user is asking about a specific person/entity
+ * Examples: "What do I know about Josh?", "Tell me about Sarah"
+ */
+function detectEntityQuery(message: string): EntityQueryResult {
+  const patterns = [
+    /what do (?:you|I) know about (.+?)[\?]?$/i,
+    /what do you remember about (.+?)[\?]?$/i,
+    /tell me about (.+?)[\?]?$/i,
+    /who is (.+?)[\?]?$/i,
+    /summarize (.+?)[\?]?$/i,
+    /what['']?s (.+?)['']?s (?:info|information|details)[\?]?$/i,
+    /everything (?:about|on) (.+?)[\?]?$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = message.match(pattern);
+    if (match) {
+      return { isEntityQuery: true, entityName: match[1].trim() };
+    }
+  }
+  return { isEntityQuery: false, entityName: null };
+}
+
+/**
+ * Get comprehensive entity context including relationships and memories
+ */
+async function getEntityContext(db: D1Database, userId: string, entityName: string): Promise<string | null> {
+  // Search entity by name (fuzzy match)
+  const entity = await db.prepare(`
+    SELECT * FROM entities
+    WHERE user_id = ? AND (name LIKE ? OR canonical_name LIKE ?)
+    ORDER BY importance_score DESC LIMIT 1
+  `).bind(userId, `%${entityName}%`, `%${entityName.toLowerCase()}%`).first<{
+    id: string;
+    name: string;
+    entity_type: string;
+    canonical_name: string;
+    metadata: string | null;
+    importance_score: number;
+    mention_count: number;
+    first_seen: string;
+    last_seen: string;
+  }>();
+
+  if (!entity) return null;
+
+  // Get relationships
+  const relationships = await db.prepare(`
+    SELECT er.relationship_type, er.strength, e.name as related_name, e.entity_type as related_type
+    FROM entity_relationships er
+    JOIN entities e ON (
+      CASE WHEN er.source_entity_id = ? THEN er.target_entity_id = e.id
+           ELSE er.source_entity_id = e.id END
+    )
+    WHERE (er.source_entity_id = ? OR er.target_entity_id = ?)
+    ORDER BY er.strength DESC LIMIT 10
+  `).bind(entity.id, entity.id, entity.id).all();
+
+  // Get memories mentioning this entity
+  const memories = await db.prepare(`
+    SELECT m.content, m.created_at, m.source FROM memories m
+    JOIN memory_entities me ON m.id = me.memory_id
+    WHERE me.entity_id = ? AND m.is_forgotten = 0
+    ORDER BY m.created_at DESC LIMIT 5
+  `).bind(entity.id).all<{ content: string; created_at: string; source: string | null }>();
+
+  // Format context
+  let context = `\n## Entity Profile: ${entity.name}\n`;
+  context += `Type: ${entity.entity_type}\n`;
+  context += `Mentioned: ${entity.mention_count} times\n`;
+  context += `First mentioned: ${new Date(entity.first_seen).toLocaleDateString()}\n`;
+  context += `Last mentioned: ${new Date(entity.last_seen).toLocaleDateString()}\n`;
+
+  // Add metadata if available
+  if (entity.metadata) {
+    try {
+      const meta = JSON.parse(entity.metadata);
+      if (meta.email) context += `Email: ${meta.email}\n`;
+      if (meta.company) context += `Company: ${meta.company}\n`;
+      if (meta.role) context += `Role: ${meta.role}\n`;
+    } catch {}
+  }
+
+  if (relationships.results && relationships.results.length > 0) {
+    context += `\n### Relationships:\n`;
+    for (const r of relationships.results as any[]) {
+      context += `- ${r.relationship_type}: ${r.related_name} (${r.related_type})\n`;
+    }
+  }
+
+  if (memories.results && memories.results.length > 0) {
+    context += `\n### Recent Memories About ${entity.name}:\n`;
+    for (let i = 0; i < memories.results.length; i++) {
+      const m = memories.results[i];
+      const date = new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      context += `${i + 1}. (${date}) ${m.content}\n`;
+    }
+  }
+
+  return context;
+}
+
+// =============================================================================
+// PRIORITY 3: COMMITMENT SURFACING
+// =============================================================================
+
+/**
+ * Get active commitments that are due soon or overdue
+ */
+async function getActiveCommitmentsContext(db: D1Database, userId: string): Promise<string> {
+  const now = new Date().toISOString();
+  const threeDays = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  try {
+    const commitments = await db.prepare(`
+      SELECT description, to_entity_name, due_date, commitment_type,
+        CASE WHEN due_date < ? THEN 1 ELSE 0 END as is_overdue
+      FROM commitments
+      WHERE user_id = ? AND status IN ('pending', 'overdue')
+        AND (due_date < ? OR due_date <= ?)
+      ORDER BY is_overdue DESC, due_date ASC LIMIT 5
+    `).bind(now, userId, now, threeDays).all<{
+      description: string;
+      to_entity_name: string | null;
+      due_date: string | null;
+      commitment_type: string;
+      is_overdue: number;
+    }>();
+
+    if (!commitments.results || commitments.results.length === 0) return '';
+
+    let context = '\n## Active Commitments (mention if relevant to conversation):\n';
+    for (const c of commitments.results) {
+      const status = c.is_overdue ? '⚠️ OVERDUE' : '📅 Due soon';
+      const person = c.to_entity_name ? ` with ${c.to_entity_name}` : '';
+      const date = c.due_date ? ` (due ${new Date(c.due_date).toLocaleDateString()})` : '';
+      context += `- [${status}] "${c.description}"${person}${date}\n`;
+    }
+    context += '\nIf user mentions someone they have a commitment with, gently remind them.\n';
+
+    return context;
+  } catch {
+    return '';
+  }
+}
+
+// =============================================================================
+// PRIORITY 4: TEMPORAL QUERIES
+// =============================================================================
+
+interface TemporalQueryResult {
+  isTemporalQuery: boolean;
+  startDate: Date | null;
+  endDate: Date | null;
+  label: string | null;
+}
+
+/**
+ * Detect temporal queries like "What was I working on last month?"
+ */
+function detectTemporalQuery(message: string): TemporalQueryResult {
+  const now = new Date();
+  const lowerMsg = message.toLowerCase();
+
+  const patterns: Array<{
+    regex: RegExp;
+    getRange: () => { start: Date; end: Date; label: string };
+  }> = [
+    {
+      regex: /last month|previous month/i,
+      getRange: () => ({
+        start: new Date(now.getFullYear(), now.getMonth() - 1, 1),
+        end: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59),
+        label: 'last month',
+      }),
+    },
+    {
+      regex: /this month/i,
+      getRange: () => ({
+        start: new Date(now.getFullYear(), now.getMonth(), 1),
+        end: now,
+        label: 'this month',
+      }),
+    },
+    {
+      regex: /last week|previous week/i,
+      getRange: () => {
+        const start = new Date(now);
+        start.setDate(start.getDate() - start.getDay() - 7);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
+        return { start, end, label: 'last week' };
+      },
+    },
+    {
+      regex: /this week/i,
+      getRange: () => {
+        const start = new Date(now);
+        start.setDate(start.getDate() - start.getDay());
+        start.setHours(0, 0, 0, 0);
+        return { start, end: now, label: 'this week' };
+      },
+    },
+    {
+      regex: /yesterday/i,
+      getRange: () => {
+        const start = new Date(now);
+        start.setDate(start.getDate() - 1);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(start);
+        end.setHours(23, 59, 59, 999);
+        return { start, end, label: 'yesterday' };
+      },
+    },
+    {
+      regex: /past (\d+) days/i,
+      getRange: () => {
+        const match = lowerMsg.match(/past (\d+) days/i);
+        const days = match ? parseInt(match[1]) : 7;
+        const start = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+        return { start, end: now, label: `past ${days} days` };
+      },
+    },
+  ];
+
+  for (const { regex, getRange } of patterns) {
+    if (regex.test(lowerMsg)) {
+      const { start, end, label } = getRange();
+      return { isTemporalQuery: true, startDate: start, endDate: end, label };
+    }
+  }
+  return { isTemporalQuery: false, startDate: null, endDate: null, label: null };
+}
+
+/**
+ * Search memories within a specific time range
+ */
+async function searchMemoriesInTimeRange(
+  db: D1Database,
+  userId: string,
+  startDate: Date,
+  endDate: Date,
+  limit: number = 15
+): Promise<Array<{ content: string; created_at: string; source: string | null }>> {
+  const results = await db.prepare(`
+    SELECT content, created_at, source FROM memories
+    WHERE user_id = ? AND created_at >= ? AND created_at <= ? AND is_forgotten = 0
+    ORDER BY created_at DESC LIMIT ?
+  `).bind(userId, startDate.toISOString(), endDate.toISOString(), limit).all<{
+    content: string;
+    created_at: string;
+    source: string | null;
+  }>();
+
+  return results.results || [];
+}
+
+// =============================================================================
+// PRIORITY 5: PATTERN SURFACING
+// =============================================================================
+
+/**
+ * Get detected patterns and nudges to mention if relevant
+ */
+async function getUserPatterns(db: D1Database, userId: string): Promise<string> {
+  try {
+    const nudges = await db.prepare(`
+      SELECT nudge_type, title, message FROM proactive_nudges
+      WHERE user_id = ? AND dismissed = 0 AND acted = 0
+      ORDER BY priority DESC LIMIT 3
+    `).bind(userId).all<{ nudge_type: string; title: string; message: string }>();
+
+    if (!nudges.results || nudges.results.length === 0) return '';
+
+    let context = '\n## Detected Patterns (mention ONLY if directly relevant):\n';
+    for (const n of nudges.results) {
+      context += `- ${n.message}\n`;
+    }
+    context += '\nMention a pattern only if it naturally fits the conversation.\n';
+
+    return context;
+  } catch {
+    return '';
+  }
+}
+
+// =============================================================================
+// PRIORITY 6: CONTRADICTION CONTEXT
+// =============================================================================
+
+/**
+ * Get unresolved contradictions to mention in chat
+ */
+async function getContradictionContext(db: D1Database, userId: string): Promise<string> {
+  try {
+    const contradictions = await getUnresolvedContradictions(db, userId, 2);
+
+    if (contradictions.length === 0) return '';
+
+    let context = '\n## Unresolved Contradictions (ask user to clarify ONE if relevant):\n';
+    for (const c of contradictions) {
+      context += `- "${c.existingContent}" vs "${c.newContent}" (${c.conflictType})\n`;
+    }
+    context += '\nOnly ask about a contradiction if the current conversation relates to it.\n';
+
+    return context;
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -133,19 +460,26 @@ export async function chat(
     { limit: contextLimit }
   );
 
-  // Format system message with memory context
+  // Format system message with memory context - ENHANCED for visible memory moat
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `You are Cortex, an AI-powered second brain assistant. You help users remember information, make connections, and answer questions based on their memories.
+    content: `You are Cortex, an AI assistant with perfect memory. You remember everything the user tells you.
 
 ${formatMemoriesContext(memories)}
 
-When answering:
-- Use the relevant memories above to provide personalized, context-aware responses
-- If the memories contain the answer, reference them naturally
-- If no relevant memories exist, acknowledge this and provide general help
-- Be concise, friendly, and helpful
-- Don't make up information not present in the memories`,
+CRITICAL INSTRUCTIONS FOR MEMORY USAGE:
+1. When using information from a memory, EXPLICITLY acknowledge it with phrases like:
+   - "I remember you mentioned..."
+   - "Based on what you told me on [date]..."
+   - "You previously said..."
+   - "From our earlier conversation..."
+2. If multiple memories are relevant, synthesize them: "Combining what you've shared..."
+3. If NO relevant memories exist, say: "I don't have any memories about that yet. Would you like to tell me about it?"
+4. NEVER make up information not in the memories above.
+5. Make memory references feel natural and conversational.
+6. When referencing a memory, mention WHEN the user told you (e.g., "last week", "3 days ago")
+
+Be concise, friendly, and helpful. Your memory is your superpower - make it VISIBLE to the user.`,
   };
 
   // User message
@@ -206,22 +540,29 @@ export async function chatWithHistory(
     ? `You are assisting the user with email ${options.userEmail}.`
     : '';
 
-  // Format system message with memory context
+  // Format system message with memory context - ENHANCED for visible memory moat
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `You are Cortex, an AI-powered second brain assistant. You help users remember information, make connections, and answer questions based on their memories.
+    content: `You are Cortex, an AI assistant with perfect memory. You remember everything the user tells you.
 
 ${userIdentity}
 
 ${formatMemoriesContext(memories)}
 
-When answering:
-- Use the relevant memories above to provide personalized, context-aware responses
-- Consider the conversation history to maintain context
-- If the memories contain the answer, reference them naturally
-- If no relevant memories exist, acknowledge this and provide general help
-- Be concise, friendly, and helpful
-- Don't make up information not present in the memories`,
+CRITICAL INSTRUCTIONS FOR MEMORY USAGE:
+1. When using information from a memory, EXPLICITLY acknowledge it with phrases like:
+   - "I remember you mentioned..."
+   - "Based on what you told me on [date]..."
+   - "You previously said..."
+   - "From our earlier conversation..."
+2. If multiple memories are relevant, synthesize them: "Combining what you've shared..."
+3. If NO relevant memories exist, say: "I don't have any memories about that yet. Would you like to tell me about it?"
+4. NEVER make up information not in the memories above.
+5. Make memory references feel natural and conversational.
+6. When referencing a memory, mention WHEN the user told you (e.g., "last week", "3 days ago")
+7. Consider the conversation history to maintain context.
+
+Be concise, friendly, and helpful. Your memory is your superpower - make it VISIBLE to the user.`,
   };
 
   // Build message array with history
@@ -279,17 +620,42 @@ export async function chatWithActions(
     history: options.history,
   });
 
-  // Step 2: Search for relevant memories
-  const memories = await searchMemories(
-    db,
-    vectorize,
-    userId,
-    message,
-    ai,
-    { limit: contextLimit }
-  );
+  // Step 2: Detect special query types
+  const entityQuery = detectEntityQuery(message);
+  const temporalQuery = detectTemporalQuery(message);
 
-  // Step 3: Process actions if found
+  // Step 3: Search for relevant memories (use time-filtered if temporal query)
+  let memories: Array<{ content: string; created_at: string; source: string | null }>;
+  if (temporalQuery.isTemporalQuery && temporalQuery.startDate && temporalQuery.endDate) {
+    memories = await searchMemoriesInTimeRange(
+      db,
+      userId,
+      temporalQuery.startDate,
+      temporalQuery.endDate,
+      contextLimit
+    );
+  } else {
+    memories = await searchMemories(
+      db,
+      vectorize,
+      userId,
+      message,
+      ai,
+      { limit: contextLimit }
+    );
+  }
+
+  // Step 4: Gather additional context (entity, commitments, patterns, contradictions)
+  let entityContext = '';
+  if (entityQuery.isEntityQuery && entityQuery.entityName) {
+    entityContext = await getEntityContext(db, userId, entityQuery.entityName) || '';
+  }
+
+  const commitmentContext = await getActiveCommitmentsContext(db, userId);
+  const patternContext = await getUserPatterns(db, userId);
+  const contradictionContext = await getContradictionContext(db, userId);
+
+  // Step 5: Process actions if found
   const pendingActions: PendingAction[] = [];
   const executedActions: ActionResult[] = [];
   let queryResults: any = null;
@@ -360,7 +726,7 @@ export async function chatWithActions(
     }
   }
 
-  // Step 4: Generate response with context
+  // Step 6: Generate response with context
   const actionContext = buildActionContext(parseResult, pendingActions, executedActions, queryResults);
 
   // Build user identity string
@@ -370,25 +736,46 @@ export async function chatWithActions(
     ? `You are assisting the user with email ${options.userEmail}.`
     : '';
 
+  // Build temporal context if time-filtered query
+  const temporalContext = temporalQuery.isTemporalQuery && temporalQuery.label
+    ? `\n## Time-Filtered Search: Showing memories from ${temporalQuery.label}\n`
+    : '';
+
   const systemMessage: ChatMessage = {
     role: 'system',
-    content: `You are Cortex, an AI assistant that helps manage calendar, email, and memories. You can take actions on behalf of the user.
+    content: `You are Cortex, an AI assistant with perfect memory that can take actions (calendar, email, etc.) on behalf of the user.
 
 ${userIdentity}
-
+${temporalContext}
 ${formatMemoriesContext(memories)}
-
+${entityContext}
+${commitmentContext}
+${patternContext}
+${contradictionContext}
 ${actionContext}
 
-When responding:
+CRITICAL INSTRUCTIONS FOR MEMORY USAGE:
+1. When using information from a memory, EXPLICITLY acknowledge it:
+   - "I remember you mentioned..."
+   - "Based on what you told me on [date]..."
+   - "You previously said..."
+2. If multiple memories are relevant, synthesize: "Combining what you've shared..."
+3. If NO relevant memories exist for a question, say: "I don't have any memories about that yet."
+4. NEVER make up information not in the memories.
+5. When referencing a memory, mention WHEN (e.g., "you told me last week", "3 days ago")
+6. For entity queries ("What do I know about X?"), give a comprehensive summary from the entity profile.
+7. For temporal queries ("last month", "this week"), group memories by topic/theme.
+8. If there's a relevant commitment, gently remind the user.
+
+ACTION HANDLING:
 - If you created a pending action, confirm what you're about to do and ask for confirmation
 - If you executed a query, summarize the results naturally
 - If there was an error, explain what went wrong
-- Be conversational, concise, and helpful
-- Reference memories when relevant
 - For calendar events, mention the date/time clearly
 - For emails, mention who it's to/from
-- When drafting emails, sign with the user's name (${options.userName || 'the user'}), never use placeholders like [Your Name]`,
+- When drafting emails, sign with the user's name (${options.userName || 'the user'}), never use placeholders
+
+Be conversational and helpful. Your memory is your superpower - make it VISIBLE to the user.`,
   };
 
   const messages: ChatMessage[] = [systemMessage];
