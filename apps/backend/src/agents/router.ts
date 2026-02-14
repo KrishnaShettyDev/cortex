@@ -114,6 +114,7 @@ export class AgentRouter {
 
   /**
    * Get cached MCP integrations for the user
+   * NOTE: Does NOT cache failures - allows retry on next request
    */
   private async getMCPIntegrations(): Promise<MCPIntegration[]> {
     if (this.cachedMCPIntegrations !== null) {
@@ -125,7 +126,8 @@ export class AgentRouter {
       return this.cachedMCPIntegrations;
     } catch (error) {
       console.error('[Router] Failed to load MCP integrations:', error);
-      this.cachedMCPIntegrations = [];
+      // Don't cache failure - allow retry on next request
+      // Return empty array for this request only
       return [];
     }
   }
@@ -718,7 +720,7 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
         // gpt-4o-mini has 128k context, ~4 chars per token, leave room for system/user messages
         const MAX_TOOL_RESULT_CHARS = 80000; // ~20k tokens max per tool result
         if (toolResult.length > MAX_TOOL_RESULT_CHARS) {
-          console.log(`[Router] Truncating tool result from ${toolResult.length} to ${MAX_TOOL_RESULT_CHARS} chars`);
+          console.warn(`[Router] Truncating ${toolCall.function.name} result from ${toolResult.length} to ${MAX_TOOL_RESULT_CHARS} chars`);
           // Try to parse and truncate intelligently
           try {
             const parsed = JSON.parse(toolResult);
@@ -729,7 +731,7 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
                 items: truncated,
                 _truncated: true,
                 _originalCount: parsed.length,
-                _message: `Showing 10 of ${parsed.length} items. Ask for more specific queries to narrow results.`,
+                _warning: `IMPORTANT: This result was truncated. Only showing 10 of ${parsed.length} total items. The user may have more items that are not shown here. If you need more specific results, ask the user to refine their query.`,
               });
             } else if (parsed.data && Array.isArray(parsed.data)) {
               const truncated = parsed.data.slice(0, 10);
@@ -738,15 +740,24 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
                 data: truncated,
                 _truncated: true,
                 _originalCount: parsed.data.length,
-                _message: `Showing 10 of ${parsed.data.length} items.`,
+                _warning: `IMPORTANT: This result was truncated. Only showing 10 of ${parsed.data.length} total items. Ask for more specific queries to see other items.`,
               });
             } else {
-              // Just truncate the string
-              toolResult = toolResult.substring(0, MAX_TOOL_RESULT_CHARS) + '... [TRUNCATED - result too large]';
+              // Object too large - truncate and warn
+              const truncatedStr = toolResult.substring(0, MAX_TOOL_RESULT_CHARS);
+              toolResult = JSON.stringify({
+                _truncated: true,
+                _warning: 'IMPORTANT: This result was truncated due to size. Some information may be missing.',
+                partialContent: truncatedStr.substring(0, 5000) + '...',
+              });
             }
           } catch {
-            // Not JSON, just truncate
-            toolResult = toolResult.substring(0, MAX_TOOL_RESULT_CHARS) + '... [TRUNCATED - result too large]';
+            // Not JSON, just truncate with clear warning
+            toolResult = JSON.stringify({
+              _truncated: true,
+              _warning: 'IMPORTANT: This result was truncated due to size. Some information may be missing.',
+              partialContent: toolResult.substring(0, 5000) + '...',
+            });
           }
         }
 
@@ -838,14 +849,21 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
           // Handle different Composio response formats
           const rawEmails = parsed.data?.emails || parsed.emails || parsed.data || [];
 
+          // Helper to extract header value from Gmail API format
+          const getHeader = (email: any, name: string): string => {
+            const headers = email.payload?.headers || email.headers || [];
+            const header = headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase());
+            return header?.value || '';
+          };
+
           if (Array.isArray(rawEmails) && rawEmails.length > 0) {
             const transformedEmails = rawEmails.map((email: any) => ({
               id: email.id || email.messageId || '',
               thread_id: email.threadId || email.thread_id || '',
-              subject: email.subject || '(no subject)',
-              from: email.from || email.sender || '',
+              subject: email.subject || getHeader(email, 'Subject') || '(no subject)',
+              from: email.from || email.sender || getHeader(email, 'From') || 'Unknown',
               to: email.to ? (Array.isArray(email.to) ? email.to : [email.to]) : [],
-              date: email.date || email.internalDate || email.receivedDateTime || new Date().toISOString(),
+              date: email.date || getHeader(email, 'Date') || email.internalDate || email.receivedDateTime || new Date().toISOString(),
               snippet: email.snippet || email.bodyPreview || (email.body ? email.body.substring(0, 200) : ''),
               body: email.body || email.bodyText || '',
               is_unread: email.labelIds?.includes('UNREAD') || !email.isRead,

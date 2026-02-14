@@ -195,8 +195,10 @@ app.get('/sse', async (c) => {
 
   // Send initial connection event
   const encoder = new TextEncoder();
+  let keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       // Send server info
       const initMessage = JSON.stringify({
         type: 'connection',
@@ -208,14 +210,26 @@ app.get('/sse', async (c) => {
       });
       controller.enqueue(encoder.encode(`data: ${initMessage}\n\n`));
 
-      // Keep connection alive
-      const keepAlive = setInterval(() => {
-        controller.enqueue(encoder.encode(`: keepalive\n\n`));
+      // Keep connection alive with 30s heartbeat
+      keepAliveInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(`: keepalive\n\n`));
+        } catch {
+          // Stream closed, clean up
+          if (keepAliveInterval) {
+            clearInterval(keepAliveInterval);
+            keepAliveInterval = null;
+          }
+        }
       }, 30000);
-
-      // Note: In a real implementation, we'd listen for incoming messages
-      // and route them through the MCP server. For now, this just maintains
-      // the connection for real-time notifications.
+    },
+    cancel() {
+      // Clean up interval when client disconnects
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+        console.log('[MCP] Stream closed, cleaned up keepalive interval');
+      }
     },
   });
 

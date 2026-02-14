@@ -122,8 +122,7 @@ export async function updateSyncConnectionHandler(c: Context<{ Bindings: Binding
     }
     if (body.sync_frequency !== undefined) {
       updates.sync_frequency = body.sync_frequency;
-      // Recalculate next sync time
-      const orchestrator = new SyncOrchestrator(c.env);
+      // Recalculate next sync time using the existing orchestrator
       updates.next_sync_at = (orchestrator as any).calculateNextSync(body.sync_frequency);
     }
 

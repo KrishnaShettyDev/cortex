@@ -173,7 +173,10 @@ async function getEntityContext(db: D1Database, userId: string, entityName: stri
       if (meta.email) context += `Email: ${meta.email}\n`;
       if (meta.company) context += `Company: ${meta.company}\n`;
       if (meta.role) context += `Role: ${meta.role}\n`;
-    } catch {}
+    } catch (error) {
+      // Log but don't fail - metadata is optional enrichment
+      console.warn(`[Chat] Failed to parse entity metadata for ${entity.name}:`, error);
+    }
   }
 
   if (relationships.results && relationships.results.length > 0) {
@@ -585,7 +588,7 @@ export async function chatWithActions(
     history?: Array<{ role: 'user' | 'assistant'; content: string }>;
     userName?: string;
     userEmail?: string;
-    serperApiKey?: string; // For web search
+    tavilyApiKey?: string; // For web search
   } = {}
 ): Promise<ActionChatResponse> {
   const model = options.model || 'gpt-4o-mini';
@@ -645,7 +648,7 @@ export async function chatWithActions(
     const executor = new ActionExecutor({
       composioApiKey,
       openaiKey,
-      serperApiKey: options.serperApiKey,
+      tavilyApiKey: options.tavilyApiKey,
       db,
       userId,
       userName: options.userName,
@@ -797,7 +800,7 @@ export async function confirmAction(
   composioApiKey: string,
   openaiKey: string,
   options?: {
-    serperApiKey?: string;
+    tavilyApiKey?: string;
     userName?: string;
   }
 ): Promise<ActionResult> {
@@ -824,7 +827,7 @@ export async function confirmAction(
   const executor = new ActionExecutor({
     composioApiKey,
     openaiKey,
-    serperApiKey: options?.serperApiKey,
+    tavilyApiKey: options?.tavilyApiKey,
     db,
     userId,
     userName: options?.userName,
