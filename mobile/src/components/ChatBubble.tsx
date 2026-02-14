@@ -39,6 +39,61 @@ import {
   ProactiveEmailAction,
 } from './ProactiveEmailCard';
 
+// ============ MARKDOWN LINK RENDERER ============
+/**
+ * Parse markdown links [text](url) and render as clickable elements
+ */
+function renderTextWithLinks(text: string, textStyle: any, linkColor: string): React.ReactNode {
+  // Regex to match markdown links: [text](url)
+  const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match;
+  let keyIndex = 0;
+
+  while ((match = linkRegex.exec(text)) !== null) {
+    // Add text before the link
+    if (match.index > lastIndex) {
+      parts.push(
+        <Text key={`text-${keyIndex++}`} style={textStyle}>
+          {text.slice(lastIndex, match.index)}
+        </Text>
+      );
+    }
+
+    // Add the link
+    const linkText = match[1];
+    const linkUrl = match[2];
+    parts.push(
+      <Text
+        key={`link-${keyIndex++}`}
+        style={[textStyle, { color: linkColor, textDecorationLine: 'underline' }]}
+        onPress={() => Linking.openURL(linkUrl)}
+      >
+        {linkText}
+      </Text>
+    );
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text after the last link
+  if (lastIndex < text.length) {
+    parts.push(
+      <Text key={`text-${keyIndex++}`} style={textStyle}>
+        {text.slice(lastIndex)}
+      </Text>
+    );
+  }
+
+  // If no links found, return the original text
+  if (parts.length === 0) {
+    return <Text style={textStyle}>{text}</Text>;
+  }
+
+  return <Text style={textStyle}>{parts}</Text>;
+}
+
 // ============ PHOTO MEMORY CARD ============
 function PhotoMemoryCard({ photoUrl }: { photoUrl: string }) {
   const { colors: themeColors } = useTheme();
@@ -523,7 +578,7 @@ export function ChatBubble({ message, onReviewAction, onFeedback, onEmailAction 
         <View style={styles.assistantBubbleContainer}>
           <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={styles.assistantBlur}>
             <View style={[styles.assistantBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)', borderColor: themeColors.glassBorder }]}>
-              <Text style={[styles.assistantText, { color: themeColors.textPrimary }]}>{message.content}</Text>
+              {renderTextWithLinks(message.content, [styles.assistantText, { color: themeColors.textPrimary }], themeColors.accent)}
             </View>
           </BlurView>
         </View>
