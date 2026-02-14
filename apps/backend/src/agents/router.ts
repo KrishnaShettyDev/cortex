@@ -31,6 +31,7 @@ import {
   type MCPIntegration,
   type MCPTool,
 } from '../lib/mcp/integrations';
+import { getUserContext, formatContextForPrompt, type UserContext } from '../lib/context';
 
 export interface RouterOptions {
   env: Bindings;
@@ -85,6 +86,8 @@ export class AgentRouter {
   private connectionCacheChecked = false;
   // Cache for MCP integrations (per request)
   private cachedMCPIntegrations: MCPIntegration[] | null = null;
+  // Cache for user context (per request)
+  private cachedUserContext: UserContext | null = null;
 
   constructor(options: RouterOptions) {
     this.env = options.env;
@@ -366,9 +369,27 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
 
+    // Get user context for proactive awareness (cached per request)
+    if (!this.cachedUserContext) {
+      try {
+        this.cachedUserContext = await getUserContext(this.env.DB, this.context.userId);
+      } catch (error) {
+        console.warn('[Router] Failed to load user context:', error);
+      }
+    }
+
+    // Build system prompt with user context
+    let enhancedSystemPrompt = config.systemPrompt;
+    if (this.cachedUserContext) {
+      const contextBlock = formatContextForPrompt(this.cachedUserContext, this.context.userName);
+      if (contextBlock) {
+        enhancedSystemPrompt = `${config.systemPrompt}\n\n${contextBlock}`;
+      }
+    }
+
     // Build messages
     const messages: OpenAIMessage[] = [
-      { role: 'system', content: config.systemPrompt },
+      { role: 'system', content: enhancedSystemPrompt },
     ];
 
     // Add history (sanitized)
@@ -409,12 +430,12 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
         type: 'function' as const,
         function: {
           name: 'delegate_to_execution',
-          description: 'REQUIRED for any task involving emails, calendar, integrations, triggers, or external actions. You CANNOT access Gmail, Google Calendar, MCP integrations, or external services directly - you MUST delegate using this tool. Use for: reading emails, sending emails, searching emails, checking calendar, creating events, updating events, deleting events, managing integrations (list/add/remove MCP servers), creating reminders/triggers, listing scheduled tasks. Always delegate these tasks - never say "I don\'t have access".',
+          description: 'REQUIRED for any task involving: web searches, finding places/restaurants, emails, calendar, integrations, triggers, or external actions. You CANNOT access the internet, Gmail, Google Calendar, MCP integrations, or external services directly - you MUST delegate using this tool. Use for: WEB SEARCH (finding information online, looking up facts, finding restaurants/places, getting current prices, news, reviews), reading/sending/searching emails, checking/creating/updating calendar events, managing integrations, creating reminders/triggers. ALWAYS delegate these tasks - never say "I can\'t search the web" or "I don\'t have access".',
           parameters: {
             type: 'object',
             properties: {
-              goal: { type: 'string', description: 'Clear, specific description of what needs to be done. Include all relevant details: email addresses, dates, times, subject lines, body content, event names, etc.' },
-              context: { type: 'object', description: 'Additional structured context like { "email": "user@example.com", "date": "2024-01-15" }' },
+              goal: { type: 'string', description: 'Clear, specific description of what needs to be done. For web searches, include the search query. For emails, include addresses, subjects. For calendar, include dates/times.' },
+              context: { type: 'object', description: 'Additional structured context like { "query": "best restaurants in NYC", "date": "2024-01-15" }' },
             },
             required: ['goal'],
           },
@@ -1221,6 +1242,14 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
         });
       }
 
+      case 'web_search': {
+        return this.executeWebSearch(args);
+      }
+
+      case 'search_nearby': {
+        return this.executeSearchNearby(args);
+      }
+
       default: {
         // Check if this is a dynamic MCP tool (prefixed with mcp_)
         if (toolName.startsWith('mcp_')) {
@@ -1228,6 +1257,180 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
         }
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
       }
+    }
+  }
+
+  /**
+   * Execute web search using Tavily API
+   */
+  private async executeWebSearch(args: { query: string; num_results?: number }): Promise<string> {
+    const tavilyApiKey = this.env.TAVILY_API_KEY;
+
+    if (!tavilyApiKey) {
+      console.error('[Router] TAVILY_API_KEY not configured');
+      return JSON.stringify({
+        success: false,
+        error: 'Web search not configured',
+        message: 'Web search is not available. Please contact support.',
+      });
+    }
+
+    try {
+      console.log(`[Router] Web search: "${args.query}"`);
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          api_key: tavilyApiKey,
+          query: args.query,
+          max_results: Math.min(args.num_results || 5, 10),
+          include_answer: true,
+          include_raw_content: false,
+          search_depth: 'basic',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[Router] Tavily API error:', response.status, errorText);
+        return JSON.stringify({
+          success: false,
+          error: `Search API error: ${response.status}`,
+          message: 'Web search temporarily unavailable. Please try again later.',
+        });
+      }
+
+      const data = await response.json() as {
+        answer?: string;
+        results?: Array<{
+          title: string;
+          url: string;
+          content: string;
+          score: number;
+        }>;
+        query: string;
+      };
+
+      // Format results for the AI
+      const results = {
+        success: true,
+        answer: data.answer,
+        results: (data.results || []).map(r => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.content,
+          relevance: r.score,
+        })),
+        query: args.query,
+        count: (data.results || []).length,
+        _tool: 'web_search',
+      };
+
+      console.log(`[Router] Web search found ${results.count} results`);
+      return JSON.stringify(results);
+    } catch (error) {
+      console.error('[Router] Web search error:', error);
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'Search failed',
+        message: 'Web search failed. Please try again.',
+      });
+    }
+  }
+
+  /**
+   * Execute nearby places search
+   */
+  private async executeSearchNearby(args: {
+    query: string;
+    latitude?: number;
+    longitude?: number;
+    radius?: number;
+    open_now?: boolean;
+    limit?: number;
+  }): Promise<string> {
+    let latitude = args.latitude;
+    let longitude = args.longitude;
+
+    // Get user's stored location if not provided
+    if (!latitude || !longitude) {
+      const userLocation = await this.env.DB.prepare(`
+        SELECT latitude, longitude FROM users WHERE id = ?
+      `).bind(this.context.userId).first<{ latitude: number; longitude: number }>();
+
+      if (userLocation?.latitude && userLocation?.longitude) {
+        latitude = userLocation.latitude;
+        longitude = userLocation.longitude;
+      } else {
+        return JSON.stringify({
+          success: false,
+          error: 'Location required',
+          message: 'I need your location to search for nearby places. Please enable location access in the app settings.',
+          needs_location: true,
+        });
+      }
+    }
+
+    // Use Tavily web search as a fallback for nearby places
+    // Format the query to get location-specific results
+    const locationQuery = `${args.query} near latitude ${latitude} longitude ${longitude}`;
+
+    try {
+      console.log(`[Router] Nearby search: "${args.query}" at (${latitude}, ${longitude})`);
+
+      // Use Tavily for nearby search with location context
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          api_key: this.env.TAVILY_API_KEY,
+          query: `best ${args.query} restaurants places ${args.open_now ? 'open now' : ''}`,
+          max_results: args.limit || 5,
+          include_answer: true,
+          search_depth: 'basic',
+        }),
+      });
+
+      if (!response.ok) {
+        return JSON.stringify({
+          success: false,
+          error: 'Search failed',
+          message: 'Unable to search for nearby places right now.',
+        });
+      }
+
+      const data = await response.json() as {
+        answer?: string;
+        results?: Array<{
+          title: string;
+          url: string;
+          content: string;
+        }>;
+      };
+
+      return JSON.stringify({
+        success: true,
+        answer: data.answer,
+        places: (data.results || []).map(r => ({
+          name: r.title,
+          url: r.url,
+          description: r.content,
+        })),
+        query: args.query,
+        location: { latitude, longitude },
+        _tool: 'search_nearby',
+      });
+    } catch (error) {
+      console.error('[Router] Nearby search error:', error);
+      return JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'Search failed',
+        message: 'Unable to search for nearby places.',
+      });
     }
   }
 
@@ -1536,6 +1739,42 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
               name_pattern: { type: 'string', description: 'Pattern to match trigger name if ID not known, e.g., "morning briefing"' },
             },
             required: [],
+          },
+        },
+      },
+      // Web search tool (uses Tavily API)
+      {
+        type: 'function' as const,
+        function: {
+          name: 'web_search',
+          description: 'Search the web for current information. Use this for: finding restaurants, checking prices, getting news, looking up facts, finding reviews, or any question that requires up-to-date information from the internet.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'The search query. Be specific and include relevant details like location if needed.' },
+              num_results: { type: 'number', description: 'Number of results to return (default: 5, max: 10)' },
+            },
+            required: ['query'],
+          },
+        },
+      },
+      // Location-based search tool
+      {
+        type: 'function' as const,
+        function: {
+          name: 'search_nearby',
+          description: 'Search for nearby places like restaurants, cafes, gyms, stores, etc. Uses the user\'s location to find relevant businesses.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'What to search for (e.g., "Italian restaurants", "coffee shops", "gym")' },
+              latitude: { type: 'number', description: 'Latitude (uses stored location if not provided)' },
+              longitude: { type: 'number', description: 'Longitude (uses stored location if not provided)' },
+              radius: { type: 'number', description: 'Search radius in meters (default: 5000)' },
+              open_now: { type: 'boolean', description: 'Only show places open now' },
+              limit: { type: 'number', description: 'Max results (default: 5)' },
+            },
+            required: ['query'],
           },
         },
       },
