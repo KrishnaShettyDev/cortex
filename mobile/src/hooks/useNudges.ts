@@ -43,7 +43,7 @@ async function fetchNudges(): Promise<NudgesResponse> {
   try {
     const response = await api.request<NudgesResponse>('/v3/nudges');
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Failed to fetch nudges:', error);
     // Return empty state on error
     return {
@@ -59,14 +59,20 @@ async function fetchNudges(): Promise<NudgesResponse> {
 
 /**
  * Hook to fetch proactive nudges
+ *
+ * OPTIMIZED: Reduced polling to minimize API calls - rely on push notifications
+ * for real-time updates. Polling is just a fallback.
  */
 export const useNudges = () => {
   return useQuery({
     queryKey: queryKeys.nudges?.list() || ['nudges'],
     queryFn: fetchNudges,
-    staleTime: 2 * 60 * 1000, // 2 minutes
-    refetchInterval: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: true,
+    staleTime: 10 * 60 * 1000, // 10 minutes - data stays fresh longer
+    gcTime: 30 * 60 * 1000, // 30 minutes - keep in cache longer
+    refetchInterval: 15 * 60 * 1000, // 15 minutes - reduced from 5 min
+    refetchOnWindowFocus: false, // Don't refetch on every focus - push handles this
+    refetchOnMount: false, // Don't refetch if we have cached data
+    refetchOnReconnect: true, // Do refetch when network comes back
   });
 };
 

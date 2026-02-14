@@ -1,4 +1,4 @@
-import { API_BASE_URL } from './constants';
+import { API_BASE_URL, API_TIMEOUTS, UI_DELAYS } from './constants';
 import { storage } from './storage';
 import { logger } from '../utils/logger';
 import { MemoryReference, PendingAction, ActionTaken } from '../types';
@@ -212,11 +212,11 @@ class ApiService {
     // - Integrations endpoints: OAuth and sync operations
     // - Feedback endpoints: LLM preference extraction
     // Note: /memories is now fast (<100ms) - processing happens in background
-    let timeoutMs = 10000; // Default 10 seconds
+    let timeoutMs: number = API_TIMEOUTS.DEFAULT;
     if (endpoint.includes('/chat')) {
-      timeoutMs = 60000; // 60 seconds for chat
+      timeoutMs = API_TIMEOUTS.CHAT;
     } else if (endpoint.includes('/calendar') || endpoint.includes('/integrations') || endpoint.includes('/feedback')) {
-      timeoutMs = 45000; // 45 seconds for calendar, integrations, and feedback (Composio can be slow)
+      timeoutMs = API_TIMEOUTS.LONG_OPERATIONS;
     }
 
     try {
@@ -333,7 +333,7 @@ class ApiService {
           headers,
           body: JSON.stringify(body),
         },
-        90000
+        API_TIMEOUTS.STREAM
       );
     };
 
@@ -375,8 +375,9 @@ class ApiService {
           try {
             const event: StreamEvent = JSON.parse(data);
             events.push(event);
-          } catch (e) {
-            // Not JSON, skip
+          } catch (parseError) {
+            // Log malformed data for debugging - could indicate server issues
+            logger.warn('API: Failed to parse stream event:', { data: data.substring(0, 100), error: parseError });
           }
         }
       }
@@ -389,14 +390,14 @@ class ApiService {
         // Add delay before status events so user can see them
         if (event.type === 'status') {
           // Give more time to see each step
-          await new Promise(resolve => setTimeout(resolve, 400));
+          await new Promise(resolve => setTimeout(resolve, UI_DELAYS.STATUS_BEFORE));
         }
 
         this.handleStreamEvent(event, callbacks);
 
         // Delay after status events to let UI render
         if (event.type === 'status') {
-          await new Promise(resolve => setTimeout(resolve, 300));
+          await new Promise(resolve => setTimeout(resolve, UI_DELAYS.STATUS_AFTER));
         }
       }
 

@@ -470,8 +470,9 @@ class NotificationService {
       await api.request('/notifications/preferences', {
         method: 'PUT',
         body: { timezone },
-      }).catch(() => {
-        // Ignore errors - preferences might not exist yet
+      }).catch((error) => {
+        // Log but don't fail - preferences might not exist yet for new users
+        logger.warn('Failed to update notification timezone preference:', error);
       });
 
       logger.log('Push token registered with backend, timezone:', timezone);

@@ -190,8 +190,9 @@ class IntegrationsService {
         `/integrations/google/calendar/available?${params}`
       );
       return { success: true, free_slots: response.slots };
-    } catch (error: any) {
-      return { success: false, error: error.message || 'Failed to get availability' };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to get availability';
+      return { success: false, error: message };
     }
   }
 }

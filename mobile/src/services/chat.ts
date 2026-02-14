@@ -12,6 +12,7 @@ import {
   BriefingItem,
 } from '../types';
 import { logger } from '../utils/logger';
+import { CHAT_CONFIG, simulateStreaming } from './constants';
 
 // Re-export StatusUpdate for convenience
 export type { StatusUpdate } from './api';
@@ -143,24 +144,21 @@ class ChatService {
         method: 'POST',
         body: {
           message,
-          history: history?.slice(-10), // Send last 10 messages for context
-          model: 'gpt-4o-mini',
-          contextLimit: 5,
+          history: history?.slice(-CHAT_CONFIG.MAX_HISTORY_MESSAGES),
+          model: CHAT_CONFIG.DEFAULT_MODEL,
+          contextLimit: CHAT_CONFIG.DEFAULT_CONTEXT_LIMIT,
         },
       });
 
       callbacks.onMemoriesFound?.([]);
 
-      const fullContent = response.response;
-      const chunkSize = 20;
-      for (let i = 0; i < fullContent.length; i += chunkSize) {
-        const chunk = fullContent.slice(i, i + chunkSize);
-        callbacks.onContent?.(chunk, fullContent.slice(0, i + chunkSize));
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
+      // Simulate streaming for smooth UX
+      await simulateStreaming(response.response, (chunk, fullSoFar) => {
+        callbacks.onContent?.(chunk, fullSoFar);
+      });
 
       callbacks.onComplete?.({
-        response: fullContent,
+        response: response.response,
         conversation_id: conversationId || '',
         memories_used: [],
         pending_actions: [],
@@ -212,8 +210,8 @@ class ChatService {
       body: {
         message,
         history,
-        model: model || 'gpt-4o-mini',
-        contextLimit: contextLimit || 5,
+        model: model || CHAT_CONFIG.DEFAULT_MODEL,
+        contextLimit: contextLimit || CHAT_CONFIG.DEFAULT_CONTEXT_LIMIT,
       },
     });
 
@@ -340,6 +338,49 @@ class ChatService {
   }
 
   /**
+   * Execute an email action directly (faster than chat).
+   * Supports: archive, mark_as_read, star, delete
+   */
+  async executeEmailAction(
+    action: 'archive' | 'mark_as_read' | 'star' | 'delete',
+    messageId: string,
+    options?: { starred?: boolean }
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await api.request<{
+        success: boolean;
+        message: string;
+        result?: any;
+        error?: string;
+      }>('/v3/actions/execute', {
+        method: 'POST',
+        body: {
+          action: action === 'archive' ? 'archive_email' :
+                  action === 'mark_as_read' ? 'mark_as_read' :
+                  action === 'star' ? 'star_email' :
+                  action === 'delete' ? 'delete_email' : action,
+          parameters: {
+            message_id: messageId,
+            ...(action === 'star' && options?.starred !== undefined ? { starred: options.starred } : {}),
+          },
+          confirmed: action !== 'delete', // Delete needs confirmation
+        },
+      });
+
+      return {
+        success: response.success,
+        message: response.message || (response.success ? 'Action completed' : 'Action failed'),
+      };
+    } catch (error) {
+      logger.error('ChatService: executeEmailAction failed', error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Action failed',
+      };
+    }
+  }
+
+  /**
    * Stream chat with action support
    * This provides Iris/Poke-style chat with calendar/email action capabilities
    */
@@ -353,7 +394,7 @@ class ChatService {
       callbacks.onSearchingMemories?.();
       callbacks.onStatus?.({ step: 'searching', message: 'Understanding your request...' });
 
-      const response = await this.chatWithActions(message, history?.slice(-10));
+      const response = await this.chatWithActions(message, history?.slice(-CHAT_CONFIG.MAX_HISTORY_MESSAGES));
 
       callbacks.onMemoriesFound?.([]);
 
@@ -389,16 +430,12 @@ class ChatService {
       callbacks.onStatus?.({ step: 'generating', message: 'Generating response...' });
 
       // Stream the response content
-      const fullContent = response.response;
-      const chunkSize = 20;
-      for (let i = 0; i < fullContent.length; i += chunkSize) {
-        const chunk = fullContent.slice(i, i + chunkSize);
-        callbacks.onContent?.(chunk, fullContent.slice(0, i + chunkSize));
-        await new Promise(resolve => setTimeout(resolve, 30));
-      }
+      await simulateStreaming(response.response, (chunk, fullSoFar) => {
+        callbacks.onContent?.(chunk, fullSoFar);
+      });
 
       callbacks.onComplete?.({
-        response: fullContent,
+        response: response.response,
         conversation_id: conversationId || '',
         memories_used: [],
         pending_actions: response.actions?.pending?.map(p => ({
@@ -436,16 +473,13 @@ class ChatService {
 
       callbacks.onMemoriesFound?.([]);
 
-      const fullContent = response.response;
-      const chunkSize = 20;
-      for (let i = 0; i < fullContent.length; i += chunkSize) {
-        const chunk = fullContent.slice(i, i + chunkSize);
-        callbacks.onContent?.(chunk, fullContent.slice(0, i + chunkSize));
-        await new Promise(resolve => setTimeout(resolve, 30));
-      }
+      // Simulate streaming for smooth UX
+      await simulateStreaming(response.response, (chunk, fullSoFar) => {
+        callbacks.onContent?.(chunk, fullSoFar);
+      });
 
       callbacks.onComplete?.({
-        response: fullContent,
+        response: response.response,
         conversation_id: conversationId || '',
         memories_used: [],
         pending_actions: [],
@@ -458,16 +492,32 @@ class ChatService {
 
   /**
    * Get smart contextual suggestions (nudges from the relationship layer).
-   * Uses v3/nudges endpoint instead of the stub.
+   * Uses v3/nudges endpoint. If empty, triggers generation.
    */
   async getSuggestions(): Promise<SmartSuggestionsResponse> {
     try {
+      // First try to get cached nudges
       const response = await api.request<{ nudges: Nudge[] }>('/v3/nudges', {
         method: 'GET',
       });
 
+      let nudges = response.nudges || [];
+
+      // If no cached nudges, trigger generation
+      if (nudges.length === 0) {
+        logger.log('ChatService: No cached nudges, triggering generation...');
+        try {
+          const genResponse = await api.request<{ nudges: Nudge[] }>('/v3/nudges/generate', {
+            method: 'POST',
+          });
+          nudges = genResponse.nudges || [];
+        } catch (genError) {
+          logger.warn('ChatService: Nudge generation failed', genError);
+        }
+      }
+
       // Transform nudges to suggestions format
-      const suggestions = (response.nudges || []).map(nudge => ({
+      const suggestions = nudges.map(nudge => ({
         id: nudge.id,
         text: nudge.title,
         description: nudge.message,
