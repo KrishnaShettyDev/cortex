@@ -83,6 +83,6 @@ PROACTIVE_MAX_SYNC_USERS = "10"
 #
 # Optional (for world context features):
 # - OPENWEATHER_API_KEY (for weather in briefings)
-# - SERPER_API_KEY (for web search and news)
+# - TAVILY_API_KEY (for web search - AI-optimized search API)
 # - YELP_API_KEY (for nearby places/restaurants)
 # - GOOGLE_CLIENT_ID (optional, defaults to iOS client ID)

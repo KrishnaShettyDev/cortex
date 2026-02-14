@@ -5,7 +5,7 @@
  * Clean Apple aesthetic with subtle interactions.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,9 +17,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, useTheme } from '../theme';
-import { chatService } from '../services';
 import { BriefingItem, DailyBriefingResponse } from '../types';
-import { logger } from '../utils/logger';
+import { useBriefing } from '../hooks/useChat';
 import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
 import { Skeleton } from './Skeleton';
 
@@ -222,27 +221,7 @@ export const DayBriefingScroll: React.FC<DayBriefingScrollProps> = ({
   onItemPress,
 }) => {
   const { colors: themeColors } = useTheme();
-  const [briefing, setBriefing] = useState<DailyBriefingResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchBriefing = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const data = await chatService.getBriefing();
-      setBriefing(data);
-    } catch (err: any) {
-      logger.warn('Failed to fetch day briefing:', err);
-      setError('Could not load');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchBriefing();
-  }, [fetchBriefing]);
+  const { data: briefing, isLoading, error } = useBriefing();
 
   const handleNowPress = () => onItemPress("What should I focus on right now?");
   const handleItemPress = (item: BriefingItem) => onItemPress(item.action_prompt);

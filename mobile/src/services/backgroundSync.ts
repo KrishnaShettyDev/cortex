@@ -7,6 +7,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { logger } from '../utils/logger';
 import { locationService } from './location';
 import { commitmentsService } from './commitments';
+import { geofencingService } from './geofencing';
 import { storage } from './storage';
 
 // Minimum interval between syncs (5 minutes)
@@ -20,6 +21,7 @@ export interface SyncResult {
   success: boolean;
   locationUpdated: boolean;
   locationRemindersTriggered: number;
+  geofencesSynced: number;
   timestamp: Date;
 }
 
@@ -108,6 +110,7 @@ class BackgroundSyncService {
         success: false,
         locationUpdated: false,
         locationRemindersTriggered: 0,
+        geofencesSynced: 0,
         timestamp: new Date(),
       };
     }
@@ -119,6 +122,7 @@ class BackgroundSyncService {
       success: true,
       locationUpdated: false,
       locationRemindersTriggered: 0,
+      geofencesSynced: 0,
       timestamp: new Date(),
     };
 
@@ -127,7 +131,11 @@ class BackgroundSyncService {
       const locationUpdated = await this.syncLocation();
       result.locationUpdated = locationUpdated;
 
-      // 2. Check location-based reminders if location is available
+      // 2. Sync geofences (location-based reminders from backend)
+      // This registers geofences with the OS for background monitoring
+      result.geofencesSynced = await this.syncGeofences();
+
+      // 3. Check legacy location-based reminders (v3 commitments)
       if (locationUpdated) {
         result.locationRemindersTriggered = await this.checkLocationReminders();
       }
@@ -159,6 +167,23 @@ class BackgroundSyncService {
     } catch (error) {
       logger.error('BackgroundSync: Location sync failed', error);
       return false;
+    }
+  }
+
+  /**
+   * Sync location-based reminders and register geofences with the OS
+   * This enables battery-efficient background location monitoring
+   */
+  private async syncGeofences(): Promise<number> {
+    try {
+      const count = await geofencingService.syncReminders();
+      if (count > 0) {
+        logger.log(`BackgroundSync: Synced ${count} geofences`);
+      }
+      return count;
+    } catch (error) {
+      logger.error('BackgroundSync: Geofence sync failed', error);
+      return 0;
     }
   }
 

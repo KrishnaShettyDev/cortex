@@ -149,6 +149,43 @@ export const AVAILABLE_ACTIONS: ActionDefinition[] = [
     category: 'email',
   },
   {
+    name: 'archive_email',
+    description: 'Archive an email (remove from inbox)',
+    parameters: [
+      { name: 'message_id', type: 'string', description: 'Email message ID to archive', required: true },
+    ],
+    requiresConfirmation: false,
+    category: 'email',
+  },
+  {
+    name: 'mark_as_read',
+    description: 'Mark an email as read',
+    parameters: [
+      { name: 'message_id', type: 'string', description: 'Email message ID to mark as read', required: true },
+    ],
+    requiresConfirmation: false,
+    category: 'email',
+  },
+  {
+    name: 'star_email',
+    description: 'Star or unstar an email',
+    parameters: [
+      { name: 'message_id', type: 'string', description: 'Email message ID to star', required: true },
+      { name: 'starred', type: 'boolean', description: 'True to star, false to unstar', required: false },
+    ],
+    requiresConfirmation: false,
+    category: 'email',
+  },
+  {
+    name: 'delete_email',
+    description: 'Move an email to trash',
+    parameters: [
+      { name: 'message_id', type: 'string', description: 'Email message ID to delete', required: true },
+    ],
+    requiresConfirmation: true,
+    category: 'email',
+  },
+  {
     name: 'get_calendar_events',
     description: 'Get calendar events for a time range',
     parameters: [
@@ -158,18 +195,16 @@ export const AVAILABLE_ACTIONS: ActionDefinition[] = [
     requiresConfirmation: false,
     category: 'calendar',
   },
-  // Web search is optional - only available if SERPER_API_KEY is configured
-  // Can be enabled later if needed, but not core to personal assistant functionality
-  // {
-  //   name: 'web_search',
-  //   description: 'Search the web for information',
-  //   parameters: [
-  //     { name: 'query', type: 'string', description: 'Search query', required: true },
-  //     { name: 'num_results', type: 'number', description: 'Number of results', required: false },
-  //   ],
-  //   requiresConfirmation: false,
-  //   category: 'search',
-  // },
+  {
+    name: 'web_search',
+    description: 'Search the web for information (restaurants, weather, news, facts, etc.)',
+    parameters: [
+      { name: 'query', type: 'string', description: 'Search query', required: true },
+      { name: 'num_results', type: 'number', description: 'Number of results (default 5)', required: false },
+    ],
+    requiresConfirmation: false,
+    category: 'search',
+  },
   {
     name: 'create_memory',
     description: 'Save information to memory for future recall (use when user says "remember", "note that", "save this", etc.)',
@@ -209,11 +244,41 @@ export const AVAILABLE_ACTIONS: ActionDefinition[] = [
     requiresConfirmation: true,
     category: 'general',
   },
+  {
+    name: 'search_nearby',
+    description: 'Search for nearby places like restaurants, cafes, gyms, etc. using user location',
+    parameters: [
+      { name: 'query', type: 'string', description: 'What to search for (e.g., "italian restaurant", "coffee shop", "gym")', required: true },
+      { name: 'latitude', type: 'number', description: 'User latitude', required: false },
+      { name: 'longitude', type: 'number', description: 'User longitude', required: false },
+      { name: 'radius', type: 'number', description: 'Search radius in meters (default 5000)', required: false },
+      { name: 'open_now', type: 'boolean', description: 'Only show places open now', required: false },
+      { name: 'limit', type: 'number', description: 'Number of results (default 5)', required: false },
+    ],
+    requiresConfirmation: false,
+    category: 'search',
+  },
+  {
+    name: 'create_location_reminder',
+    description: 'Create a reminder that triggers when user arrives at or leaves a location (geofencing)',
+    parameters: [
+      { name: 'location_name', type: 'string', description: 'Name of the location (e.g., "Home", "Work", "Gym", "Grocery Store")', required: true },
+      { name: 'message', type: 'string', description: 'What to remind the user about', required: true },
+      { name: 'trigger_on', type: 'string', description: 'When to trigger: "enter" (arrive), "exit" (leave), or "both"', required: false },
+      { name: 'latitude', type: 'number', description: 'Location latitude (if known)', required: false },
+      { name: 'longitude', type: 'number', description: 'Location longitude (if known)', required: false },
+      { name: 'is_recurring', type: 'boolean', description: 'Remind every time (true) or just once (false)', required: false },
+    ],
+    requiresConfirmation: false,
+    category: 'general',
+  },
 ];
 
 export class ActionExecutor {
   private composioApiKey: string;
   private openaiKey: string;
+  private tavilyApiKey?: string;
+  private composio: ReturnType<typeof createComposioServices>;
   private db: D1Database;
   private userId: string;
   private userName?: string;
@@ -221,13 +286,15 @@ export class ActionExecutor {
   constructor(params: {
     composioApiKey: string;
     openaiKey: string;
-    serperApiKey?: string; // Deprecated - web search disabled
+    tavilyApiKey?: string;
     db: D1Database;
     userId: string;
     userName?: string;
   }) {
     this.composioApiKey = params.composioApiKey;
     this.openaiKey = params.openaiKey;
+    this.tavilyApiKey = params.tavilyApiKey;
+    this.composio = createComposioServices(params.composioApiKey);
     this.db = params.db;
     this.userId = params.userId;
     this.userName = params.userName;
@@ -347,7 +414,9 @@ export class ActionExecutor {
           console.log(`[ActionExecutor] Found contact ${name} -> ${meta.email} from metadata`);
           return meta.email;
         }
-      } catch {}
+      } catch (error) {
+        console.warn(`[ActionExecutor] Failed to parse entity metadata for ${name}:`, error);
+      }
     }
 
     // Search Google contacts via Composio
@@ -636,16 +705,18 @@ Write the email body only (no subject line needed).`;
         return this.searchEmails(parameters as any);
       case 'search_contacts':
         return this.searchContacts(parameters as any);
+      case 'archive_email':
+        return this.archiveEmail(parameters as any);
+      case 'mark_as_read':
+        return this.markAsRead(parameters as any);
+      case 'star_email':
+        return this.starEmail(parameters as any);
+      case 'delete_email':
+        return this.deleteEmail(parameters as any);
       case 'get_calendar_events':
         return this.getCalendarEvents(parameters as any);
       case 'web_search':
-        // Web search is disabled - not a core feature
-        return {
-          success: false,
-          action: 'web_search',
-          error: 'Web search not available',
-          message: 'Web search is not enabled. I can help you with emails, calendar, and remembering things instead.',
-        };
+        return this.webSearch(parameters as { query: string; num_results?: number });
       case 'create_memory':
         return this.createMemory(parameters as any);
       case 'create_reminder':
@@ -654,6 +725,10 @@ Write the email body only (no subject line needed).`;
         return this.getReminders(parameters as any);
       case 'delete_reminder':
         return this.deleteReminder(parameters as any);
+      case 'search_nearby':
+        return this.searchNearby(parameters as any);
+      case 'create_location_reminder':
+        return this.createLocationReminder(parameters as any);
       default:
         return {
           success: false,
@@ -1357,6 +1432,225 @@ Write the email body only (no subject line needed).`;
   }
 
   /**
+   * Archive email (remove from inbox)
+   */
+  private async archiveEmail(params: {
+    message_id: string;
+  }): Promise<ActionResult> {
+    const connectedAccountId = await this.getConnectedAccountId('gmail');
+    if (!connectedAccountId) {
+      return {
+        success: false,
+        action: 'archive_email',
+        error: 'Gmail not connected',
+        message: 'Please connect your Google account in Settings first.',
+      };
+    }
+
+    const composio = createComposioServices(this.composioApiKey);
+
+    try {
+      const result = await composio.gmail.archiveEmail({
+        connectedAccountId,
+        messageId: params.message_id,
+      });
+
+      if (result.successful) {
+        await this.logAction('archive_email', params, result);
+        return {
+          success: true,
+          action: 'archive_email',
+          result: result.data,
+          message: 'Email archived successfully',
+        };
+      }
+
+      return {
+        success: false,
+        action: 'archive_email',
+        error: result.error || 'Unknown error',
+        message: `Failed to archive email: ${result.error}`,
+      };
+    } catch (error: any) {
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('gmail');
+        return {
+          success: false,
+          action: 'archive_email',
+          error: 'Token expired',
+          message: 'Your Gmail connection has expired. Please reconnect in Settings.',
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Mark email as read
+   */
+  private async markAsRead(params: {
+    message_id: string;
+  }): Promise<ActionResult> {
+    const connectedAccountId = await this.getConnectedAccountId('gmail');
+    if (!connectedAccountId) {
+      return {
+        success: false,
+        action: 'mark_as_read',
+        error: 'Gmail not connected',
+        message: 'Please connect your Google account in Settings first.',
+      };
+    }
+
+    const composio = createComposioServices(this.composioApiKey);
+
+    try {
+      const result = await composio.gmail.markAsRead({
+        connectedAccountId,
+        messageId: params.message_id,
+      });
+
+      if (result.successful) {
+        await this.logAction('mark_as_read', params, result);
+        return {
+          success: true,
+          action: 'mark_as_read',
+          result: result.data,
+          message: 'Email marked as read',
+        };
+      }
+
+      return {
+        success: false,
+        action: 'mark_as_read',
+        error: result.error || 'Unknown error',
+        message: `Failed to mark email as read: ${result.error}`,
+      };
+    } catch (error: any) {
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('gmail');
+        return {
+          success: false,
+          action: 'mark_as_read',
+          error: 'Token expired',
+          message: 'Your Gmail connection has expired. Please reconnect in Settings.',
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Star or unstar email
+   */
+  private async starEmail(params: {
+    message_id: string;
+    starred?: boolean;
+  }): Promise<ActionResult> {
+    const connectedAccountId = await this.getConnectedAccountId('gmail');
+    if (!connectedAccountId) {
+      return {
+        success: false,
+        action: 'star_email',
+        error: 'Gmail not connected',
+        message: 'Please connect your Google account in Settings first.',
+      };
+    }
+
+    const composio = createComposioServices(this.composioApiKey);
+    const starred = params.starred !== false; // Default to true
+
+    try {
+      const result = await composio.gmail.toggleStar({
+        connectedAccountId,
+        messageId: params.message_id,
+        starred,
+      });
+
+      if (result.successful) {
+        await this.logAction('star_email', params, result);
+        return {
+          success: true,
+          action: 'star_email',
+          result: result.data,
+          message: starred ? 'Email starred' : 'Email unstarred',
+        };
+      }
+
+      return {
+        success: false,
+        action: 'star_email',
+        error: result.error || 'Unknown error',
+        message: `Failed to star email: ${result.error}`,
+      };
+    } catch (error: any) {
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('gmail');
+        return {
+          success: false,
+          action: 'star_email',
+          error: 'Token expired',
+          message: 'Your Gmail connection has expired. Please reconnect in Settings.',
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Delete email (move to trash)
+   */
+  private async deleteEmail(params: {
+    message_id: string;
+  }): Promise<ActionResult> {
+    const connectedAccountId = await this.getConnectedAccountId('gmail');
+    if (!connectedAccountId) {
+      return {
+        success: false,
+        action: 'delete_email',
+        error: 'Gmail not connected',
+        message: 'Please connect your Google account in Settings first.',
+      };
+    }
+
+    const composio = createComposioServices(this.composioApiKey);
+
+    try {
+      const result = await composio.gmail.trashEmail({
+        connectedAccountId,
+        messageId: params.message_id,
+      });
+
+      if (result.successful) {
+        await this.logAction('delete_email', params, result);
+        return {
+          success: true,
+          action: 'delete_email',
+          result: result.data,
+          message: 'Email moved to trash',
+        };
+      }
+
+      return {
+        success: false,
+        action: 'delete_email',
+        error: result.error || 'Unknown error',
+        message: `Failed to delete email: ${result.error}`,
+      };
+    } catch (error: any) {
+      if (error instanceof ComposioTokenExpiredError) {
+        await this.markConnectionExpired('gmail');
+        return {
+          success: false,
+          action: 'delete_email',
+          error: 'Token expired',
+          message: 'Your Gmail connection has expired. Please reconnect in Settings.',
+        };
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Get calendar events
    */
   private async getCalendarEvents(params: {
@@ -1440,21 +1734,324 @@ Write the email body only (no subject line needed).`;
   }
 
   /**
-   * Web search - DISABLED
-   * Web search feature is not enabled. Can be re-enabled by adding
-   * SERPER_API_KEY environment variable and uncommenting the action definition.
+   * Web search using Tavily API (designed for AI applications)
+   * Returns clean, structured search results
    */
-  private async webSearch(_params: {
+  private async webSearch(params: {
     query: string;
     num_results?: number;
   }): Promise<ActionResult> {
-    // Web search is disabled - not a core feature
-    return {
-      success: false,
-      action: 'web_search',
-      error: 'Web search not available',
-      message: 'Web search is not enabled. I can help you with emails, calendar, and remembering things instead.',
-    };
+    if (!this.tavilyApiKey) {
+      return {
+        success: false,
+        action: 'web_search',
+        error: 'Web search not configured',
+        message: 'Web search is not configured. Please add TAVILY_API_KEY to enable this feature.',
+      };
+    }
+
+    try {
+      const response = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          api_key: this.tavilyApiKey,
+          query: params.query,
+          max_results: params.num_results || 5,
+          include_answer: true,
+          include_raw_content: false,
+          search_depth: 'basic',
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('[ActionExecutor] Tavily API error:', response.status, errorText);
+        return {
+          success: false,
+          action: 'web_search',
+          error: `Search API error: ${response.status}`,
+          message: 'Web search temporarily unavailable. Please try again later.',
+        };
+      }
+
+      const data = await response.json() as {
+        answer?: string;
+        results?: Array<{
+          title: string;
+          url: string;
+          content: string;
+          score: number;
+        }>;
+        query: string;
+      };
+
+      // Format results for the AI to use
+      const results = {
+        answer: data.answer,
+        organic_results: (data.results || []).map(r => ({
+          title: r.title,
+          link: r.url,
+          snippet: r.content,
+          score: r.score,
+        })),
+        query: params.query,
+        _tool: 'web_search',
+      };
+
+      const resultCount = results.organic_results.length;
+      let message = `Found ${resultCount} result${resultCount !== 1 ? 's' : ''} for "${params.query}"`;
+
+      // If Tavily provided a direct answer, include it
+      if (data.answer) {
+        message = `${data.answer}\n\n${message}`;
+      }
+
+      await this.logAction('web_search', params, { resultCount });
+
+      return {
+        success: true,
+        action: 'web_search',
+        result: results,
+        message,
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Web search failed:', error);
+      return {
+        success: false,
+        action: 'web_search',
+        error: error.message,
+        message: `Search failed: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * Search for nearby places using Yelp API
+   * Supports restaurants, cafes, gyms, and any business type
+   */
+  private async searchNearby(params: {
+    query: string;
+    latitude?: number;
+    longitude?: number;
+    radius?: number;
+    open_now?: boolean;
+    limit?: number;
+  }): Promise<ActionResult> {
+    // Get user's last known location if not provided
+    let latitude = params.latitude;
+    let longitude = params.longitude;
+
+    if (!latitude || !longitude) {
+      // Try to get user's stored location
+      const userLocation = await this.db.prepare(`
+        SELECT latitude, longitude FROM users WHERE id = ?
+      `).bind(this.userId).first<{ latitude: number; longitude: number }>();
+
+      if (userLocation?.latitude && userLocation?.longitude) {
+        latitude = userLocation.latitude;
+        longitude = userLocation.longitude;
+      } else {
+        return {
+          success: false,
+          action: 'search_nearby',
+          error: 'Location required',
+          message: 'I need your location to search for nearby places. Please enable location access in the app.',
+        };
+      }
+    }
+
+    try {
+      // Use Composio's Yelp service (no API key needed - Composio manages it)
+      const result = await this.composio.yelp.searchBusinesses({
+        entityId: this.userId,
+        term: params.query,
+        latitude,
+        longitude,
+        radius: params.radius || 5000,
+        limit: params.limit || 5,
+        sortBy: 'best_match',
+      });
+
+      if (!result.successful) {
+        return {
+          success: false,
+          action: 'search_nearby',
+          error: result.error || 'Search failed',
+          message: `Places search failed: ${result.error || 'Unknown error'}`,
+        };
+      }
+
+      const businesses = result.data?.businesses || [];
+
+      if (businesses.length === 0) {
+        return {
+          success: true,
+          action: 'search_nearby',
+          result: { places: [], count: 0, _tool: 'search_nearby' },
+          message: `No ${params.query} found nearby. Try expanding your search or trying a different category.`,
+        };
+      }
+
+      // Format places for response (Yelp API format)
+      const places = businesses.map((biz: any) => ({
+        id: biz.id,
+        name: biz.name,
+        category: biz.categories?.[0]?.title || 'Business',
+        rating: biz.rating,
+        review_count: biz.review_count,
+        price: biz.price,
+        address: biz.location?.display_address?.join(', ') || '',
+        phone: biz.display_phone,
+        distance_meters: biz.distance,
+        is_open: !biz.is_closed,
+        url: biz.url,
+        image_url: biz.image_url,
+      }));
+
+      await this.logAction('search_nearby', params, { count: places.length });
+
+      // Build a nice message with top results
+      const topPlaces = places.slice(0, 3).map((p: any, i: number) =>
+        `${i + 1}. ${p.name} (${p.rating}★) - ${p.address}${p.price ? ` - ${p.price}` : ''}`
+      ).join('\n');
+
+      return {
+        success: true,
+        action: 'search_nearby',
+        result: {
+          places,
+          count: places.length,
+          query: params.query,
+          location: { latitude, longitude },
+          _tool: 'search_nearby',
+        },
+        message: `Found ${places.length} ${params.query} nearby:\n\n${topPlaces}`,
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Nearby search failed:', error);
+      return {
+        success: false,
+        action: 'search_nearby',
+        error: error.message,
+        message: `Places search failed: ${error.message}`,
+      };
+    }
+  }
+
+  /**
+   * Create a location-based reminder (geofencing)
+   * Stores in database, mobile app syncs and registers with OS
+   */
+  private async createLocationReminder(params: {
+    location_name: string;
+    message: string;
+    trigger_on?: 'enter' | 'exit' | 'both';
+    latitude?: number;
+    longitude?: number;
+    is_recurring?: boolean;
+  }): Promise<ActionResult> {
+    // Check if we have coordinates, or need to look up the location
+    let latitude = params.latitude;
+    let longitude = params.longitude;
+
+    // If no coordinates provided, try to look up from known locations
+    if (!latitude || !longitude) {
+      const knownLocation = await this.db.prepare(`
+        SELECT latitude, longitude FROM known_locations
+        WHERE user_id = ? AND LOWER(name) = LOWER(?)
+      `).bind(this.userId, params.location_name).first<{ latitude: number; longitude: number }>();
+
+      if (knownLocation) {
+        latitude = knownLocation.latitude;
+        longitude = knownLocation.longitude;
+      } else {
+        // Check if it's a standard location like "home" or "work" from user profile
+        const userLocation = await this.db.prepare(`
+          SELECT latitude, longitude FROM users WHERE id = ?
+        `).bind(this.userId).first<{ latitude: number; longitude: number }>();
+
+        // For now, return error asking for location
+        // In future, could use geocoding API to look up address
+        return {
+          success: false,
+          action: 'create_location_reminder',
+          error: 'Location not found',
+          message: `I don't have coordinates for "${params.location_name}". Can you save this location first in the app, or provide the address?`,
+        };
+      }
+    }
+
+    // Check reminder count (iOS limit is 20)
+    const countResult = await this.db.prepare(`
+      SELECT COUNT(*) as count FROM location_reminders
+      WHERE user_id = ? AND status = 'active'
+    `).bind(this.userId).first<{ count: number }>();
+
+    if (countResult && countResult.count >= 20) {
+      return {
+        success: false,
+        action: 'create_location_reminder',
+        error: 'Limit reached',
+        message: 'You already have 20 location reminders (the maximum). Delete some old ones to add new ones.',
+      };
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const triggerOn = params.trigger_on || 'enter';
+
+    try {
+      await this.db.prepare(`
+        INSERT INTO location_reminders (
+          id, user_id, name, latitude, longitude, radius_meters,
+          message, trigger_on, is_recurring, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 100, ?, ?, ?, 'active', ?, ?)
+      `).bind(
+        id,
+        this.userId,
+        params.location_name,
+        latitude,
+        longitude,
+        params.message,
+        triggerOn,
+        params.is_recurring ? 1 : 0,
+        now,
+        now
+      ).run();
+
+      await this.logAction('create_location_reminder', params, { id });
+
+      const triggerText = triggerOn === 'exit'
+        ? `leave ${params.location_name}`
+        : triggerOn === 'both'
+          ? `arrive at or leave ${params.location_name}`
+          : `arrive at ${params.location_name}`;
+
+      return {
+        success: true,
+        action: 'create_location_reminder',
+        result: {
+          id,
+          location: params.location_name,
+          message: params.message,
+          triggerOn,
+          isRecurring: !!params.is_recurring,
+          _tool: 'create_location_reminder',
+        },
+        message: `Got it! I'll remind you "${params.message}" when you ${triggerText}.${params.is_recurring ? ' (This will remind you every time.)' : ''}`,
+      };
+    } catch (error: any) {
+      console.error('[ActionExecutor] Create location reminder failed:', error);
+      return {
+        success: false,
+        action: 'create_location_reminder',
+        error: error.message,
+        message: `Failed to create location reminder: ${error.message}`,
+      };
+    }
   }
 
   /**
@@ -1475,6 +2072,8 @@ Write the email body only (no subject line needed).`;
         return `Update the calendar event?`;
       case 'delete_calendar_event':
         return `Delete the calendar event? This cannot be undone.`;
+      case 'delete_email':
+        return `Delete this email? It will be moved to trash.`;
       default:
         return `Execute ${action}?`;
     }
@@ -1623,7 +2222,10 @@ Write the email body only (no subject line needed).`;
         try {
           const rawData = JSON.parse(r.raw_data || '{}');
           repeat = rawData.repeat || 'none';
-        } catch {}
+        } catch (error) {
+          // Use default 'none' if parsing fails
+          console.warn(`[ActionExecutor] Failed to parse reminder raw_data for ${r.id}:`, error);
+        }
 
         return {
           id: r.id,
@@ -1737,7 +2339,7 @@ Write the email body only (no subject line needed).`;
 export function createActionExecutor(params: {
   composioApiKey: string;
   openaiKey: string;
-  serperApiKey?: string; // Deprecated - web search disabled
+  tavilyApiKey?: string;
   db: D1Database;
   userId: string;
   userName?: string;

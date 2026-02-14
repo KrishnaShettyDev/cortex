@@ -13,16 +13,17 @@ import { logger } from '../utils/logger';
 
 /**
  * Hook to fetch pending autonomous actions.
- * Auto-refreshes every 2 minutes and on app focus.
+ * Reduced polling - rely on push notifications for real-time updates.
  */
 export const useAutonomousActions = () => {
   return useQuery({
     queryKey: queryKeys.autonomousActions.pending(),
     queryFn: () => autonomousActionsService.getPendingActions(),
-    staleTime: 60 * 1000, // 1 minute
-    refetchInterval: 2 * 60 * 1000, // 2 minutes
-    refetchOnWindowFocus: true,
-    refetchOnMount: 'always',
+    staleTime: 5 * 60 * 1000, // 5 minutes (increased from 1 min)
+    gcTime: 15 * 60 * 1000, // 15 minutes cache
+    refetchInterval: 15 * 60 * 1000, // 15 minutes (reduced from 2 min)
+    refetchOnWindowFocus: false, // Don't refetch on every focus
+    refetchOnMount: false,
   });
 };
 

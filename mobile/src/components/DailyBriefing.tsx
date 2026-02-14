@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -11,9 +11,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { colors, gradients, spacing, borderRadius, useTheme } from '../theme';
-import { chatService } from '../services';
 import { BriefingItem, DailyBriefingResponse } from '../types';
-import { logger } from '../utils/logger';
+import { useBriefing } from '../hooks/useChat';
 import { GmailIcon, GoogleCalendarIcon } from './ServiceIcons';
 
 interface DailyBriefingProps {
@@ -107,29 +106,9 @@ export const DailyBriefing: React.FC<DailyBriefingProps> = ({
   variant = 'card',
 }) => {
   const { colors: themeColors, gradients: themeGradients } = useTheme();
-  const [briefing, setBriefing] = useState<DailyBriefingResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { data: briefing, isLoading, error } = useBriefing();
   const [isExpanded, setIsExpanded] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const expandAnim = useState(new Animated.Value(1))[0];
-
-  const fetchBriefing = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const data = await chatService.getBriefing();
-      setBriefing(data);
-    } catch (err: any) {
-      logger.warn('Failed to fetch briefing:', err);
-      setError('Could not load briefing');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchBriefing();
-  }, [fetchBriefing]);
 
   const toggleExpanded = () => {
     const toValue = isExpanded ? 0 : 1;

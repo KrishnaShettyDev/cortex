@@ -22,6 +22,7 @@ export interface Bindings {
   // World context API keys
   OPENWEATHER_API_KEY?: string;
   SERPER_API_KEY?: string;
+  TAVILY_API_KEY?: string;
   YELP_API_KEY?: string;
   // APNs push notifications
   APNS_KEY_ID?: string;

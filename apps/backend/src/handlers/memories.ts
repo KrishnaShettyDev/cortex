@@ -311,7 +311,7 @@ export async function chatWithActionsHandler(c: Context<{ Bindings: Bindings }>)
         history,
         userName: user?.name || undefined,
         userEmail: user?.email,
-        serperApiKey: c.env.SERPER_API_KEY,
+        tavilyApiKey: c.env.TAVILY_API_KEY,
       }
     );
 
@@ -343,7 +343,7 @@ export async function confirmActionHandler(c: Context<{ Bindings: Bindings }>) {
       c.env.COMPOSIO_API_KEY,
       c.env.OPENAI_API_KEY,
       {
-        serperApiKey: c.env.SERPER_API_KEY,
+        tavilyApiKey: c.env.TAVILY_API_KEY,
         userName: user?.name || undefined,
       }
     );

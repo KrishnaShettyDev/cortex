@@ -255,12 +255,45 @@ export async function checkErrorRate(
 }
 
 /**
+ * Log error to database for analysis
+ */
+export async function logErrorToDatabase(
+  db: D1Database,
+  errorType: string,
+  message: string,
+  stack: string | undefined,
+  context: Record<string, any>,
+  userId?: string,
+  path?: string
+): Promise<void> {
+  try {
+    const id = `err_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`;
+    await db.prepare(`
+      INSERT INTO error_logs (id, error_type, message, stack, context, user_id, path)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id,
+      errorType,
+      message.substring(0, 1000), // Limit message length
+      stack?.substring(0, 4000) || null, // Limit stack length
+      JSON.stringify(context),
+      userId || null,
+      path || null
+    ).run();
+  } catch (err) {
+    // Don't let error logging fail the request
+    console.warn('[ErrorLog] Failed to log error to database:', err);
+  }
+}
+
+/**
  * Global error handler for uncaught errors
  */
 export function handleUncaughtError(
   error: Error,
   context: Partial<ErrorContext>,
-  kv?: KVNamespace
+  kv?: KVNamespace,
+  db?: D1Database
 ): CategorizedError {
   const categorized = categorizeError(error, context);
 
@@ -271,6 +304,27 @@ export function handleUncaughtError(
   if (kv) {
     trackErrorMetrics(kv, categorized).catch((err) =>
       console.warn('Failed to track metrics:', err)
+    );
+  }
+
+  // Log to database if available (non-blocking)
+  if (db) {
+    logErrorToDatabase(
+      db,
+      categorized.category,
+      categorized.message,
+      context.errorStack,
+      {
+        severity: categorized.severity,
+        endpoint: context.endpoint,
+        method: context.method,
+        containerTag: context.containerTag,
+        metadata: context.metadata,
+      },
+      context.userId,
+      context.endpoint
+    ).catch((err) =>
+      console.warn('Failed to log to database:', err)
     );
   }
 

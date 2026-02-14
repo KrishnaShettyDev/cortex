@@ -20,17 +20,17 @@ export const queryClient = new QueryClient({
   }),
   defaultOptions: {
     queries: {
-      // Data is fresh for 30 seconds
-      staleTime: 30 * 1000,
-      // Keep unused data in cache for 5 minutes
-      gcTime: 5 * 60 * 1000,
-      // Retry failed requests 3 times with exponential backoff
-      retry: 3,
+      // Data is fresh for 2 minutes (increased from 30s to reduce API calls)
+      staleTime: 2 * 60 * 1000,
+      // Keep unused data in cache for 10 minutes
+      gcTime: 10 * 60 * 1000,
+      // Retry failed requests 2 times with exponential backoff
+      retry: 2,
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-      // Refetch on window focus (useful when app comes to foreground)
-      refetchOnWindowFocus: true,
-      // Don't refetch on mount if data is fresh
-      refetchOnMount: true,
+      // Don't refetch on window focus - rely on push notifications
+      refetchOnWindowFocus: false,
+      // Don't refetch on mount if data exists in cache
+      refetchOnMount: false,
       // Network mode - always try to fetch
       networkMode: 'offlineFirst',
     },

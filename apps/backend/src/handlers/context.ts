@@ -25,7 +25,7 @@ import {
   type HybridSearchOptions,
 } from '../lib/retrieval';
 import { getFormattedProfile } from '../lib/db/profiles';
-import { generateEmbedding, insertMemoryVector } from '../lib/vectorize';
+import { generateEmbedding, generateEmbeddingsBatch, insertMemoryVector, batchUpsertVectors } from '../lib/vectorize';
 import { invalidateSearchCache } from '../lib/cache';
 import { createProcessingJob, ProcessingPipeline } from '../lib/processing/pipeline';
 import type { ProcessingContext } from '../lib/processing/types';
@@ -278,15 +278,26 @@ export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) 
       `[ContextualMemory] Extracted ${contextualMemories.length} facts`
     );
 
-    // Store each extracted fact as a separate memory
+    // BATCH OPTIMIZATION: Generate all embeddings in one call
+    const facts = contextualMemories.map(cm => cm.fact);
+    const embeddings = await generateEmbeddingsBatch(c.env, facts);
+
+    // Create all memories in D1
     const memoryIds: string[] = [];
     const results = [];
+    const vectorsToUpsert: Array<{
+      id: string;
+      userId: string;
+      content: string;
+      containerTag: string;
+      embedding: number[];
+    }> = [];
 
-    for (const extracted of contextualMemories) {
+    for (let i = 0; i < contextualMemories.length; i++) {
+      const extracted = contextualMemories[i];
+      const embedding = embeddings[i];
+
       try {
-        // Generate embedding
-        const embedding = await generateEmbedding(c.env, extracted.fact);
-
         // Create memory (skip AUDN for now to avoid complexity)
         const memory = await createMemory(c.env.DB, {
           userId,
@@ -301,21 +312,20 @@ export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) 
           },
         });
 
-        // Insert vector
-        await insertMemoryVector(
-          c.env.VECTORIZE,
-          memory.id,
-          userId,
-          extracted.fact,
-          memory.container_tag,
-          embedding
-        );
-
         memoryIds.push(memory.id);
         results.push({
           id: memory.id,
           fact: extracted.fact,
           entities: extracted.entities,
+        });
+
+        // Queue for batch vector upsert
+        vectorsToUpsert.push({
+          id: memory.id,
+          userId,
+          content: extracted.fact,
+          containerTag: memory.container_tag,
+          embedding,
         });
       } catch (error) {
         console.error(
@@ -323,6 +333,11 @@ export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) 
           error
         );
       }
+    }
+
+    // BATCH OPTIMIZATION: Upsert all vectors at once
+    if (vectorsToUpsert.length > 0) {
+      await batchUpsertVectors(c.env.VECTORIZE, vectorsToUpsert);
     }
 
     return c.json({

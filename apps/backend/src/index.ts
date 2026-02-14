@@ -31,6 +31,8 @@ import mcpRouter from './handlers/mcp';
 import proactiveRouter from './handlers/proactive';
 import triggersRouter from './handlers/triggers';
 import personalityRouter from './handlers/personality';
+import locationRemindersRouter from './handlers/location-reminders';
+import * as beliefsHandlers from './handlers/beliefs';
 import * as agentHandlers from './handlers/agents';
 import { SyncOrchestrator } from './lib/sync/orchestrator';
 // DELETED: handleSleepComputeCron - cognitive layer purged
@@ -107,7 +109,8 @@ app.onError((err, c) => {
       endpoint: c.req.path,
       method: c.req.method,
     },
-    c.env.CACHE
+    c.env.CACHE,
+    c.env.DB // Log to error_logs table
   );
 
   // Return appropriate error response
@@ -292,22 +295,69 @@ app.delete('/auth/account', authHandlers.deleteAccount);
 app.use('/auth/google/connect', authenticateWithJwt);
 app.post('/auth/google/connect', authHandlers.connectGoogle);
 
-// Public stubs (mobile app compatibility)
-app.get('/chat/greeting', (c) =>
-  c.json({ greeting: 'Welcome back!', contextual_message: null })
-);
+// Legacy chat endpoints (protected - wire to real data for web app)
+app.use('/chat/*', authenticateWithJwt);
+
+app.get('/chat/greeting', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+  try {
+    const user = await c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first<{ name: string }>();
+    const hour = new Date().getUTCHours();
+    const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    const name = user?.name || 'there';
+    return c.json({ greeting: `${timeGreeting}, ${name}`, contextual_message: null });
+  } catch {
+    return c.json({ greeting: 'Welcome back!', contextual_message: null });
+  }
+});
+
 app.get('/chat/suggestions', (c) => c.json({ suggestions: [] }));
-app.get('/chat/insights', (c) =>
-  c.json({
-    total_attention_needed: 0,
-    urgent_emails: 0,
-    pending_commitments: 0,
-    important_dates: 0,
-  })
-);
-app.get('/chat/briefing', (c) =>
-  c.json({ summary: 'Your day looks good!', sections: [] })
-);
+
+app.get('/chat/insights', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+  const now = new Date().toISOString();
+  try {
+    const [overdueResult, pendingResult] = await Promise.all([
+      c.env.DB.prepare(`SELECT COUNT(*) as count FROM commitments WHERE user_id = ? AND status = 'pending' AND due_date < ?`).bind(userId, now).first<{ count: number }>(),
+      c.env.DB.prepare(`SELECT COUNT(*) as count FROM commitments WHERE user_id = ? AND status = 'pending'`).bind(userId).first<{ count: number }>(),
+    ]);
+    return c.json({
+      total_attention_needed: (overdueResult?.count || 0) + (pendingResult?.count || 0),
+      urgent_emails: 0, // No email integration check for now
+      pending_commitments: pendingResult?.count || 0,
+      important_dates: overdueResult?.count || 0,
+    });
+  } catch {
+    return c.json({ total_attention_needed: 0, urgent_emails: 0, pending_commitments: 0, important_dates: 0 });
+  }
+});
+
+app.get('/chat/briefing', async (c) => {
+  const userId = c.get('jwtPayload').sub;
+  const now = new Date().toISOString();
+  try {
+    const [user, commitments] = await Promise.all([
+      c.env.DB.prepare('SELECT name FROM users WHERE id = ?').bind(userId).first<{ name: string }>(),
+      c.env.DB.prepare(`SELECT * FROM commitments WHERE user_id = ? AND status = 'pending' ORDER BY due_date ASC LIMIT 5`).bind(userId).all(),
+    ]);
+    const hour = new Date().getUTCHours();
+    const timeGreeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    const overdueCount = (commitments.results || []).filter((c: any) => c.due_date && new Date(c.due_date) < new Date()).length;
+    return c.json({
+      greeting: `${timeGreeting}, ${user?.name || 'there'}`,
+      summary: overdueCount > 0 ? `You have ${overdueCount} overdue commitment(s)` : 'Your day looks good!',
+      urgent_items: (commitments.results || []).slice(0, 3).map((c: any) => ({
+        type: 'commitment',
+        title: c.description || c.content?.slice(0, 50),
+        description: c.due_date ? `Due: ${new Date(c.due_date).toLocaleDateString()}` : '',
+      })),
+      insights: [],
+      autonomous_actions: [],
+    });
+  } catch {
+    return c.json({ greeting: 'Welcome back!', summary: 'Your day looks good!', urgent_items: [], insights: [], autonomous_actions: [] });
+  }
+});
 // Note: /autonomous-actions requires auth - moved to protected section below
 
 // PUBLIC: OAuth callback routes (no auth required - Composio redirects here)
@@ -589,14 +639,18 @@ app.route('/v3/nudges', relationshipRouter);
 // Performance monitoring endpoints
 app.route('/v3/performance', performanceRouter);
 
-// DELETED: Cognitive layer (learnings, beliefs, outcomes, sleep) - purged for Supermemory++
-// These over-engineered subsystems had 0 users and added complexity without value
+// Beliefs/Cognitive layer (restored - production-ready version)
+app.get('/v3/beliefs', beliefsHandlers.getBeliefs);
+app.get('/v3/beliefs/:id', beliefsHandlers.getBeliefWithEvidence);
 
 // Briefing endpoint (consolidated mobile home screen data)
 app.route('/v3/briefing', briefingRouter);
 
 // Personality endpoint (per-user AI personality customization)
 app.route('/v3/personality', personalityRouter);
+
+// Location-based reminders (client-side geofencing)
+app.route('/v3/location-reminders', locationRemindersRouter);
 
 // Actions endpoint (action execution via Composio)
 app.route('/v3/actions', actionsRouter);

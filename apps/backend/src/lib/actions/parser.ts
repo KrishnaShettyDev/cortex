@@ -253,6 +253,256 @@ User: "What reminders do I have?"
     "confirmationMessage": "Get your upcoming reminders"
   }],
   "queryIntent": "User wants to see their reminders"
+}
+
+User: "Archive this email" or "Archive it"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "archive_email",
+    "parameters": {
+      "message_id": "{from_context_or_last_email}"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Archive this email"
+  }]
+}
+
+User: "Mark as read" or "I've read it"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "mark_as_read",
+    "parameters": {
+      "message_id": "{from_context_or_last_email}"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Mark email as read"
+  }]
+}
+
+User: "Star this email" or "Mark this important"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "star_email",
+    "parameters": {
+      "message_id": "{from_context_or_last_email}",
+      "starred": true
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Star this email"
+  }]
+}
+
+User: "Delete this email" or "Trash it"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "delete_email",
+    "parameters": {
+      "message_id": "{from_context_or_last_email}"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Move this email to trash"
+  }]
+}
+
+User: "Look for a dinner tonight" or "Find restaurants nearby"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "web_search",
+    "parameters": {
+      "query": "best restaurants for dinner tonight near me",
+      "num_results": 5
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Search for dinner options"
+  }],
+  "queryIntent": "User wants restaurant recommendations"
+}
+
+User: "What's the weather in San Francisco?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "web_search",
+    "parameters": {
+      "query": "weather in San Francisco today",
+      "num_results": 3
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Check weather in San Francisco"
+  }],
+  "queryIntent": "User wants current weather information"
+}
+
+User: "Find flights to NYC next week"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "web_search",
+    "parameters": {
+      "query": "flights to New York City next week",
+      "num_results": 5
+    },
+    "confidence": 0.9,
+    "confirmationMessage": "Search for flights to NYC"
+  }],
+  "queryIntent": "User wants flight options"
+}
+
+User: "What's the latest news about AI?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "web_search",
+    "parameters": {
+      "query": "latest AI news today",
+      "num_results": 5
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Search for AI news"
+  }],
+  "queryIntent": "User wants news updates"
+}
+
+User: "Find restaurants near me" or "What's good to eat nearby?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "search_nearby",
+    "parameters": {
+      "query": "restaurants",
+      "limit": 5
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Search for nearby restaurants"
+  }],
+  "queryIntent": "User wants nearby restaurant recommendations"
+}
+
+User: "Find a coffee shop nearby" or "Where can I get coffee?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "search_nearby",
+    "parameters": {
+      "query": "coffee shop",
+      "open_now": true,
+      "limit": 5
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Search for nearby coffee shops"
+  }],
+  "queryIntent": "User wants to find coffee nearby"
+}
+
+User: "Find a gym near me"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "search_nearby",
+    "parameters": {
+      "query": "gym fitness",
+      "limit": 5
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Search for nearby gyms"
+  }],
+  "queryIntent": "User wants to find a gym"
+}
+
+User: "Where can I get Italian food?"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "search_nearby",
+    "parameters": {
+      "query": "Italian restaurant",
+      "limit": 5
+    },
+    "confidence": 1.0,
+    "confirmationMessage": "Search for Italian restaurants nearby"
+  }],
+  "queryIntent": "User wants Italian food recommendations"
+}
+
+User: "Remind me to take out the trash when I get home"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_location_reminder",
+    "parameters": {
+      "location_name": "Home",
+      "message": "Take out the trash",
+      "trigger_on": "enter"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Remind you to take out the trash when you arrive home"
+  }]
+}
+
+User: "When I leave work, remind me to pick up groceries"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_location_reminder",
+    "parameters": {
+      "location_name": "Work",
+      "message": "Pick up groceries",
+      "trigger_on": "exit"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Remind you to pick up groceries when you leave work"
+  }]
+}
+
+User: "Remind me to buy milk when I'm at the grocery store"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_location_reminder",
+    "parameters": {
+      "location_name": "Grocery Store",
+      "message": "Buy milk",
+      "trigger_on": "enter"
+    },
+    "confidence": 0.9,
+    "confirmationMessage": "Remind you to buy milk when you arrive at the grocery store"
+  }]
+}
+
+User: "Every time I get to the gym, remind me to stretch first"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_location_reminder",
+    "parameters": {
+      "location_name": "Gym",
+      "message": "Stretch first",
+      "trigger_on": "enter",
+      "is_recurring": true
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Remind you to stretch every time you arrive at the gym"
+  }]
+}
+
+User: "Remind me when I'm at the office to submit my timesheet"
+{
+  "hasAction": true,
+  "actions": [{
+    "action": "create_location_reminder",
+    "parameters": {
+      "location_name": "Office",
+      "message": "Submit timesheet",
+      "trigger_on": "enter"
+    },
+    "confidence": 0.95,
+    "confirmationMessage": "Remind you to submit your timesheet when you arrive at the office"
+  }]
 }`;
 
 /**
@@ -401,6 +651,18 @@ export function generateConfirmationMessage(action: ParsedAction): string {
 
     case 'delete_calendar_event':
       return `Cancel/delete this meeting?`;
+
+    case 'archive_email':
+      return `Archive this email?`;
+
+    case 'mark_as_read':
+      return `Mark this email as read?`;
+
+    case 'star_email':
+      return parameters.starred !== false ? `Star this email?` : `Unstar this email?`;
+
+    case 'delete_email':
+      return `Delete this email? It will be moved to trash.`;
 
     default:
       return action.confirmationMessage || `Execute ${actionName}?`;

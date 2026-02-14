@@ -58,39 +58,11 @@ interface ProactiveEmailCardProps {
 
 // ============ HELPER FUNCTIONS ============
 
-const getInitials = (name: string): string => {
-  const parts = name.trim().split(' ');
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
-};
-
 const getSenderName = (from: string): string => {
   // Extract name from "Name <email>" format
   const match = from.match(/^([^<]+)/);
   if (match) return match[1].trim();
   return from.split('@')[0];
-};
-
-const getSenderEmail = (from: string): string => {
-  const match = from.match(/<([^>]+)>/);
-  if (match) return match[1];
-  return from;
-};
-
-const getAvatarColor = (email: string): string => {
-  // Generate consistent color based on email
-  const colors = [
-    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
-    '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9',
-    '#F8B500', '#00CED1', '#FF7F50', '#9370DB', '#20B2AA',
-  ];
-  let hash = 0;
-  for (let i = 0; i < email.length; i++) {
-    hash = email.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return colors[Math.abs(hash) % colors.length];
 };
 
 const formatDate = (dateStr: string): string => {
@@ -151,8 +123,6 @@ export function ProactiveEmailCard({
   const [expanded, setExpanded] = useState(false);
 
   const senderName = getSenderName(email.from);
-  const senderEmail = email.fromEmail || getSenderEmail(email.from);
-  const avatarColor = getAvatarColor(senderEmail);
   const urgent = isUrgent(email);
 
   const handleAction = async (action: ProactiveEmailAction) => {
@@ -199,9 +169,9 @@ export function ProactiveEmailCard({
 
           {/* Header Row */}
           <View style={styles.headerRow}>
-            {/* Avatar */}
-            <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-              <Text style={styles.avatarText}>{getInitials(senderName)}</Text>
+            {/* Gmail Icon (left side) */}
+            <View style={styles.serviceIconContainer}>
+              <GmailIcon size={24} />
             </View>
 
             {/* Sender & Meta */}
@@ -226,17 +196,16 @@ export function ProactiveEmailCard({
               </Text>
             </View>
 
-            {/* Service Icon & Badges */}
+            {/* Badges only (no Gmail icon on right) */}
             <View style={styles.badgeContainer}>
               {urgent && (
                 <View style={[styles.urgentBadge, { backgroundColor: themeColors.error + '20' }]}>
-                  <Text style={[styles.urgentBadgeText, { color: themeColors.error }]}>Urgent</Text>
+                  <Text style={[styles.urgentBadgeText, { color: themeColors.error }]}>URGENT</Text>
                 </View>
               )}
               {email.isUnread && (
                 <View style={[styles.unreadDot, { backgroundColor: themeColors.accent }]} />
               )}
-              <GmailIcon size={16} />
             </View>
           </View>
 
@@ -411,19 +380,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: spacing.sm,
   },
-  avatar: {
+  serviceIconContainer: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: spacing.sm,
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    backgroundColor: 'transparent',
   },
   headerContent: {
     flex: 1,

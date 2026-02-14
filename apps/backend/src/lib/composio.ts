@@ -325,6 +325,62 @@ export class ComposioClient {
   }
 
   /**
+   * Execute a tool that doesn't require authentication (like Yelp, Weather, etc.)
+   * Uses v3 API with entityId instead of connectedAccountId
+   */
+  async executePublicTool<T = any>(params: {
+    toolSlug: string; // 'YELP_SEARCH_BUSINESSES'
+    entityId: string; // User ID for scoping
+    arguments: Record<string, any>;
+  }): Promise<ToolExecutionResult<T>> {
+    // Use v3 API for public tools
+    const url = `${COMPOSIO_API_BASE}/tools/${params.toolSlug}/execute`;
+    const headers = {
+      'x-api-key': this.apiKey,
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          entityId: params.entityId,
+          input: params.arguments,
+        }),
+        timeout: COMPOSIO_TIMEOUT,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+
+        // Handle 429 - Rate limited
+        if (response.status === 429) {
+          const retryAfter = parseInt(response.headers.get('Retry-After') || '60', 10);
+          console.error(`[Composio] 429 Rate limited for ${params.toolSlug}, retry after ${retryAfter}s`);
+          throw new ComposioRateLimitError(
+            `Composio rate limited, retry after ${retryAfter} seconds`,
+            retryAfter
+          );
+        }
+
+        throw new Error(`Composio API error: ${response.status} - ${errorText}`);
+      }
+
+      return response.json();
+    } catch (error: any) {
+      if (error instanceof FetchTimeoutError) {
+        console.error(`[Composio] Request to ${params.toolSlug} timed out after ${COMPOSIO_TIMEOUT}ms`);
+        throw new Error(`Composio request timed out: ${params.toolSlug}`);
+      }
+      if (error instanceof ComposioRateLimitError) {
+        throw error;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Delete connected account (disconnect)
    */
   async deleteConnectedAccount(id: string): Promise<void> {
@@ -625,6 +681,52 @@ export class GmailService {
       },
     });
   }
+
+  /**
+   * Move email to trash
+   */
+  async trashEmail(params: {
+    connectedAccountId: string;
+    messageId: string;
+  }) {
+    return this.client.executeTool({
+      toolSlug: 'GMAIL_TRASH_MESSAGE',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        message_id: params.messageId,
+      },
+    });
+  }
+
+  /**
+   * Unsubscribe from a mailing list (if unsubscribe link available)
+   */
+  async unsubscribe(params: {
+    connectedAccountId: string;
+    messageId: string;
+  }) {
+    // First fetch the email to find unsubscribe headers
+    const email = await this.client.executeTool({
+      toolSlug: 'GMAIL_GET_MESSAGE',
+      connectedAccountId: params.connectedAccountId,
+      arguments: {
+        message_id: params.messageId,
+        format: 'metadata',
+        metadata_headers: ['List-Unsubscribe'],
+      },
+    });
+
+    if (!email.successful) {
+      return email;
+    }
+
+    // For now, just archive emails that user wants to unsubscribe from
+    // Full unsubscribe would require following the List-Unsubscribe header link
+    return this.archiveEmail({
+      connectedAccountId: params.connectedAccountId,
+      messageId: params.messageId,
+    });
+  }
 }
 
 /**
@@ -758,6 +860,97 @@ export class CalendarService {
 }
 
 /**
+ * Yelp-specific actions (no auth required - uses Composio's managed API key)
+ */
+export class YelpService {
+  constructor(private client: ComposioClient) {}
+
+  /**
+   * Search for businesses near a location
+   */
+  async searchBusinesses(params: {
+    entityId: string; // User ID for scoping
+    term?: string; // Search keyword (e.g., "restaurants", "coffee")
+    location?: string; // Address, city, state, or zip
+    latitude?: number;
+    longitude?: number;
+    radius?: number; // Up to 40,000 meters
+    categories?: string; // Comma-separated (e.g., "bars,french")
+    price?: string; // 1-4 (e.g., "1,2" for $ and $$)
+    sortBy?: 'best_match' | 'rating' | 'review_count' | 'distance';
+    limit?: number; // Max 50
+  }) {
+    return this.client.executePublicTool({
+      toolSlug: 'YELP_SEARCH_BUSINESSES',
+      entityId: params.entityId,
+      arguments: {
+        term: params.term,
+        location: params.location,
+        latitude: params.latitude,
+        longitude: params.longitude,
+        radius: params.radius,
+        categories: params.categories,
+        price: params.price,
+        sort_by: params.sortBy || 'best_match',
+        limit: params.limit || 10,
+      },
+    });
+  }
+
+  /**
+   * Get business details by ID
+   */
+  async getBusinessDetails(params: {
+    entityId: string;
+    businessId: string;
+  }) {
+    return this.client.executePublicTool({
+      toolSlug: 'YELP_GET_BUSINESS_DETAILS',
+      entityId: params.entityId,
+      arguments: {
+        business_id: params.businessId,
+      },
+    });
+  }
+
+  /**
+   * Get business reviews
+   */
+  async getBusinessReviews(params: {
+    entityId: string;
+    businessId: string;
+    sortBy?: 'yelp_sort' | 'newest' | 'oldest';
+  }) {
+    return this.client.executePublicTool({
+      toolSlug: 'YELP_GET_BUSINESS_REVIEWS',
+      entityId: params.entityId,
+      arguments: {
+        business_id: params.businessId,
+        sort_by: params.sortBy || 'yelp_sort',
+      },
+    });
+  }
+
+  /**
+   * Natural language search (AI-powered)
+   */
+  async searchAndChat(params: {
+    entityId: string;
+    query: string; // Natural language question
+    chatId?: string; // For conversation continuity
+  }) {
+    return this.client.executePublicTool({
+      toolSlug: 'YELP_SEARCH_AND_CHAT',
+      entityId: params.entityId,
+      arguments: {
+        query: params.query,
+        chat_id: params.chatId,
+      },
+    });
+  }
+}
+
+/**
  * Factory function to create Composio services
  */
 export function createComposioServices(config: ComposioConfig | string) {
@@ -771,6 +964,7 @@ export function createComposioServices(config: ComposioConfig | string) {
     client,
     gmail: new GmailService(client),
     calendar: new CalendarService(client),
+    yelp: new YelpService(client),
   };
 }
 

@@ -19,3 +19,4 @@ export * from './entities';
 export * from './commitments';
 export * from './cognitive';
 export * from './mcp';
+export * from './geofencing';

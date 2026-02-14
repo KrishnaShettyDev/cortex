@@ -14,6 +14,7 @@ export * from './Skeleton';
 export * from './ErrorBoundary';
 export * from './InlineActionReview';
 export * from './LocationPermissionModal';
+export * from './BackgroundLocationModal';
 export * from './ReasoningSteps';
 export * from './InsightCards';
 export * from './RichContentCards';

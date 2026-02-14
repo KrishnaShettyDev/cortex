@@ -22,6 +22,120 @@ export interface VectorSearchResult {
 import { getCachedEmbedding, cacheEmbedding } from './cache';
 
 /**
+ * Generate embeddings for multiple texts in a single batch call
+ *
+ * OPTIMIZATION: Cloudflare AI supports batch inputs.
+ * Instead of N API calls, we make ceil(N/100) calls.
+ * This reduces latency and is more efficient.
+ */
+export async function generateEmbeddingsBatch(
+  env: { AI: any; CACHE?: KVNamespace },
+  texts: string[]
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+
+  // Cloudflare AI batch limit (conservative)
+  const BATCH_SIZE = 100;
+  const results: number[][] = [];
+
+  for (let i = 0; i < texts.length; i += BATCH_SIZE) {
+    const batch = texts.slice(i, i + BATCH_SIZE);
+
+    // Check cache for each text first
+    const cachedResults: (number[] | null)[] = [];
+    const uncachedTexts: { index: number; text: string }[] = [];
+
+    if (env.CACHE) {
+      for (let j = 0; j < batch.length; j++) {
+        try {
+          const cached = await getCachedEmbedding(env.CACHE, batch[j]);
+          if (cached) {
+            cachedResults[j] = cached;
+          } else {
+            cachedResults[j] = null;
+            uncachedTexts.push({ index: j, text: batch[j] });
+          }
+        } catch {
+          cachedResults[j] = null;
+          uncachedTexts.push({ index: j, text: batch[j] });
+        }
+      }
+    } else {
+      // No cache, all texts need embedding
+      batch.forEach((text, j) => {
+        cachedResults[j] = null;
+        uncachedTexts.push({ index: j, text });
+      });
+    }
+
+    // Generate embeddings for uncached texts
+    if (uncachedTexts.length > 0) {
+      console.log(`[Vectorize] Generating ${uncachedTexts.length} embeddings (${batch.length - uncachedTexts.length} cache hits)`);
+
+      const response = await env.AI.run('@cf/baai/bge-base-en-v1.5', {
+        text: uncachedTexts.map(u => u.text),
+      });
+
+      // Map results back and cache them
+      for (let k = 0; k < uncachedTexts.length; k++) {
+        const { index, text } = uncachedTexts[k];
+        const embedding = response.data[k];
+        cachedResults[index] = embedding;
+
+        // Cache the embedding (non-blocking)
+        if (env.CACHE) {
+          cacheEmbedding(env.CACHE, text, embedding).catch(() => {});
+        }
+      }
+    }
+
+    // Add all results (cached + newly generated)
+    results.push(...(cachedResults as number[][]));
+  }
+
+  return results;
+}
+
+/**
+ * Batch upsert vectors to Vectorize
+ */
+export async function batchUpsertVectors(
+  vectorize: Vectorize,
+  vectors: Array<{
+    id: string;
+    userId: string;
+    content: string;
+    containerTag: string;
+    embedding: number[];
+    type?: 'memory' | 'chunk';
+  }>
+): Promise<void> {
+  if (vectors.length === 0) return;
+
+  const vectorData = vectors.map(v => ({
+    id: v.id,
+    values: v.embedding,
+    metadata: {
+      id: v.id,
+      user_id: v.userId,
+      type: v.type || 'memory',
+      content: v.content.substring(0, 500),
+      container_tag: v.containerTag,
+      created_at: new Date().toISOString(),
+    } as VectorMetadata,
+  }));
+
+  // Vectorize supports up to 1000 vectors per upsert
+  const UPSERT_BATCH_SIZE = 100;
+  for (let i = 0; i < vectorData.length; i += UPSERT_BATCH_SIZE) {
+    const batch = vectorData.slice(i, i + UPSERT_BATCH_SIZE);
+    await vectorize.upsert(batch);
+  }
+
+  console.log(`[Vectorize] Batch upserted ${vectors.length} vectors`);
+}
+
+/**
  * Generate embedding using Cloudflare AI (with caching)
  *
  * OPTIMIZATION: Re-enabled caching with error handling.

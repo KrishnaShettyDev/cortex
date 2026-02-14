@@ -27,7 +27,7 @@ app.get('/', async (c) => {
     const executor = createActionExecutor({
       composioApiKey: c.env.COMPOSIO_API_KEY,
       openaiKey: c.env.OPENAI_API_KEY,
-      serperApiKey: c.env.SERPER_API_KEY,
+      tavilyApiKey: c.env.TAVILY_API_KEY,
       db: c.env.DB,
       userId,
     });
@@ -67,7 +67,7 @@ app.post('/execute', async (c) => {
     const executor = createActionExecutor({
       composioApiKey: c.env.COMPOSIO_API_KEY,
       openaiKey: c.env.OPENAI_API_KEY,
-      serperApiKey: c.env.SERPER_API_KEY,
+      tavilyApiKey: c.env.TAVILY_API_KEY,
       db: c.env.DB,
       userId,
       userName: user?.name || undefined,
@@ -180,7 +180,7 @@ app.post('/confirm/:id', async (c) => {
     const executor = createActionExecutor({
       composioApiKey: c.env.COMPOSIO_API_KEY,
       openaiKey: c.env.OPENAI_API_KEY,
-      serperApiKey: c.env.SERPER_API_KEY,
+      tavilyApiKey: c.env.TAVILY_API_KEY,
       db: c.env.DB,
       userId,
       userName: user?.name || undefined,

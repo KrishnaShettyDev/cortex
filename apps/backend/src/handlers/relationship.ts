@@ -262,9 +262,9 @@ app.post('/generate', async (c) => {
 
         // Queue push notification for urgent/high priority nudges
         if (nudge.priority === 'urgent' || nudge.priority === 'high') {
-          // Get user's push token
+          // Get user's push token from push_tokens table
           const tokenResult = await c.env.DB
-            .prepare(`SELECT push_token FROM users WHERE id = ? AND push_token IS NOT NULL`)
+            .prepare(`SELECT push_token FROM push_tokens WHERE user_id = ? AND is_active = 1 LIMIT 1`)
             .bind(userId)
             .first<{ push_token: string }>();
 

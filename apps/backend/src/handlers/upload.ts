@@ -251,22 +251,26 @@ export async function uploadAudioWithTranscription(c: Context<{ Bindings: Bindin
       );
     }
 
-    // Upload to R2 for storage
-    const audioId = nanoid();
-    const audioKey = `audio/${userId}/${audioId}.${mimeType.split('/')[1] || 'webm'}`;
+    // Upload to R2 for storage (if available)
+    let audioUrl: string | null = null;
+    if (c.env.MEDIA) {
+      const audioId = nanoid();
+      const audioKey = `audio/${userId}/${audioId}.${mimeType.split('/')[1] || 'webm'}`;
 
-    await c.env.MEDIA.put(audioKey, audioData, {
-      httpMetadata: { contentType: mimeType },
-    });
+      await c.env.MEDIA.put(audioKey, audioData, {
+        httpMetadata: { contentType: mimeType },
+      });
 
-    // Generate public URL (R2 custom domain or presigned)
-    const audioUrl = `https://media.askcortex.com/${audioKey}`;
-
-    console.log(`[Upload] Audio transcribed and stored: ${transcription.text.length} chars`);
+      // Generate public URL (R2 custom domain or presigned)
+      audioUrl = `https://media.askcortex.com/${audioKey}`;
+      console.log(`[Upload] Audio transcribed and stored: ${transcription.text.length} chars`);
+    } else {
+      console.log(`[Upload] Audio transcribed (storage disabled): ${transcription.text.length} chars`);
+    }
 
     // Return format expected by mobile app
     return c.json({
-      url: audioUrl,
+      url: audioUrl, // null if R2 is disabled
       transcription: transcription.text,
       duration_seconds: transcription.duration || null,
       language: transcription.language || null,
@@ -292,6 +296,15 @@ export async function uploadAudioWithTranscription(c: Context<{ Bindings: Bindin
  * Returns: { url }
  */
 export async function uploadPhoto(c: Context<{ Bindings: Bindings }>) {
+  // Check if R2 storage is available
+  if (!c.env.MEDIA) {
+    return c.json({
+      error: 'Photo uploads temporarily unavailable',
+      code: 'STORAGE_DISABLED',
+      message: 'File storage is not configured. Please try again later.',
+    }, 503);
+  }
+
   const userId = c.get('jwtPayload').sub;
 
   const SUPPORTED_IMAGE_FORMATS = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic'];
@@ -366,6 +379,15 @@ export async function uploadPhoto(c: Context<{ Bindings: Bindings }>) {
  * Returns: { url, fileId, memoryId? }
  */
 export async function uploadFile(c: Context<{ Bindings: Bindings }>) {
+  // Check if R2 storage is available
+  if (!c.env.MEDIA) {
+    return c.json({
+      error: 'File uploads temporarily unavailable',
+      code: 'STORAGE_DISABLED',
+      message: 'File storage is not configured. Please try again later.',
+    }, 503);
+  }
+
   const userId = c.get('jwtPayload').sub;
   const tenantScope = c.get('tenantScope') || { containerTag: 'default' };
   const containerTag = tenantScope.containerTag;

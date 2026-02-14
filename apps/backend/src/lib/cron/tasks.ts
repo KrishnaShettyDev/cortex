@@ -21,6 +21,7 @@ import { runActionGeneration } from '../actions/generator';
 import { generateProactiveNudges } from '../relationship/nudge-generator';
 import { ComposioClient } from '../composio';
 import { reconcileTriggers } from '../triggers';
+import { upsertBelief, decayStaleBeliefs } from '../../handlers/beliefs';
 import type { Bindings } from '../../types';
 
 /**
@@ -76,14 +77,13 @@ export const everyMinuteTasks: CronTask[] = [
     handler: async (env) => {
       // Find commitments due within next 24 hours that haven't been reminded
       const dueCommitments = await env.DB.prepare(`
-        SELECT c.id, c.description, c.to_entity_name, c.due_date, u.push_token, u.id as user_id
+        SELECT c.id, c.description, c.to_entity_name, c.due_date, pt.push_token, c.user_id
         FROM commitments c
-        JOIN users u ON c.user_id = u.id
+        JOIN push_tokens pt ON c.user_id = pt.user_id AND pt.is_active = 1
         WHERE c.status = 'pending'
           AND c.due_date <= datetime('now', '+1 day')
           AND c.due_date >= datetime('now', '-1 hour')
           AND (c.reminded = 0 OR c.reminded IS NULL)
-          AND u.push_token IS NOT NULL
         LIMIT 10
       `).all<{
         id: string;
@@ -291,7 +291,7 @@ export const every6HourTasks: CronTask[] = [
             nudgesGenerated++;
 
             if (nudge.priority === 'urgent' || nudge.priority === 'high') {
-              const tokenResult = await env.DB.prepare(`SELECT push_token FROM users WHERE id = ? AND push_token IS NOT NULL`).bind(user_id).first<{ push_token: string }>();
+              const tokenResult = await env.DB.prepare(`SELECT push_token FROM push_tokens WHERE user_id = ? AND is_active = 1 LIMIT 1`).bind(user_id).first<{ push_token: string }>();
               if (tokenResult?.push_token) {
                 await env.DB.prepare(`
                   INSERT INTO scheduled_notifications (id, user_id, notification_type, title, body, data, channel_id, scheduled_for_utc, user_local_time, timezone, status, created_at, updated_at)
@@ -428,6 +428,111 @@ export const dailyTasks: CronTask[] = [
         } catch (error) {
           console.error(`[Cron] Consolidation failed for user ${user.user_id}:`, error);
         }
+      }
+    },
+  },
+  {
+    name: 'belief_synthesis',
+    interval: 'daily',
+    priority: 2,
+    timeoutMs: 120000, // 2 minutes
+    llmBudget: 15, // Higher budget for AI synthesis
+    handler: async (env) => {
+      // Run weekly (only on Sundays)
+      const dayOfWeek = new Date().getUTCDay();
+      if (dayOfWeek !== 0) return;
+
+      // Get active users
+      const usersResult = await env.DB.prepare(`
+        SELECT DISTINCT user_id FROM memories
+        WHERE created_at >= datetime('now', '-7 days')
+        LIMIT 50
+      `).all<{ user_id: string }>();
+
+      let beliefsCreated = 0;
+      let beliefsDecayed = 0;
+
+      for (const { user_id } of usersResult.results || []) {
+        try {
+          // Get recent high-importance memories for this user
+          const memoriesResult = await env.DB.prepare(`
+            SELECT id, content, type, importance_score
+            FROM memories
+            WHERE user_id = ? AND created_at >= datetime('now', '-30 days')
+            ORDER BY importance_score DESC
+            LIMIT 50
+          `).bind(user_id).all<{
+            id: string;
+            content: string;
+            type: string;
+            importance_score: number;
+          }>();
+
+          const memories = memoriesResult.results || [];
+          if (memories.length < 5) continue; // Need enough data for synthesis
+
+          // Use AI to synthesize beliefs from memories
+          const memoryTexts = memories.map(m => `[${m.type}] ${m.content}`).join('\n');
+
+          const synthesisPrompt = `Analyze these memories and extract 3-5 core beliefs, values, or patterns about this person.
+
+Memories:
+${memoryTexts}
+
+For each belief, provide:
+1. The belief statement (one sentence)
+2. Category: value | preference | habit | relationship | goal
+3. Confidence: 0.5-1.0 based on how many memories support it
+
+Format as JSON array:
+[{"belief": "...", "category": "...", "confidence": 0.8}]
+
+Only include beliefs strongly supported by multiple memories.`;
+
+          const response = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+            messages: [{ role: 'user', content: synthesisPrompt }],
+            max_tokens: 500,
+          });
+
+          // Parse AI response
+          const responseText = response.response || '';
+          const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+          if (!jsonMatch) continue;
+
+          const synthesizedBeliefs = JSON.parse(jsonMatch[0]) as Array<{
+            belief: string;
+            category: string;
+            confidence: number;
+          }>;
+
+          // Upsert each belief
+          for (const belief of synthesizedBeliefs) {
+            if (!belief.belief || !belief.category) continue;
+
+            await upsertBelief(
+              env.DB,
+              user_id,
+              belief.belief,
+              belief.category,
+              Math.min(1.0, Math.max(0.3, belief.confidence || 0.5)),
+              memories.slice(0, 5).map(m => m.id) // Link to supporting memories
+            );
+            beliefsCreated++;
+          }
+        } catch (error) {
+          console.error(`[Cron] Belief synthesis failed for user ${user_id}:`, error);
+        }
+      }
+
+      // Decay stale beliefs for all users
+      try {
+        beliefsDecayed = await decayStaleBeliefs(env.DB);
+      } catch (error) {
+        console.error('[Cron] Belief decay failed:', error);
+      }
+
+      if (beliefsCreated > 0 || beliefsDecayed > 0) {
+        console.log(`[Cron] Belief synthesis: ${beliefsCreated} created/reinforced, ${beliefsDecayed} decayed`);
       }
     },
   },
