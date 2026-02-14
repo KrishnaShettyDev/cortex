@@ -919,7 +919,7 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
         });
 
       case 'calendar_list_events':
-        return this.composioExecute('GOOGLECALENDAR_LIST_EVENTS', connectedAccountId!, {
+        return this.composioExecute('GOOGLECALENDAR_EVENTS_LIST', connectedAccountId!, {
           time_min: args.time_min || new Date().toISOString(),
           time_max: args.time_max,
           max_results: args.max_results || 10,

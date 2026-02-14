@@ -385,7 +385,7 @@ async function syncCalendarForUser(
     const now = new Date();
     const twoHoursLater = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
-    const response = await fetch('https://backend.composio.dev/api/v2/actions/GOOGLECALENDAR_LIST_EVENTS/execute', {
+    const response = await fetch('https://backend.composio.dev/api/v2/actions/GOOGLECALENDAR_EVENTS_LIST/execute', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

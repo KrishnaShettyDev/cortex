@@ -263,7 +263,7 @@ export class ComposioClient {
    * so callers can prompt user to reauthorize that specific connection.
    */
   async executeTool<T = any>(params: {
-    toolSlug: string; // 'GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_LIST_EVENTS'
+    toolSlug: string; // 'GMAIL_FETCH_EMAILS', 'GOOGLECALENDAR_EVENTS_LIST'
     connectedAccountId: string;
     arguments: Record<string, any>;
   }): Promise<ToolExecutionResult<T>> {
@@ -742,7 +742,7 @@ export class CalendarService {
     maxResults?: number;
   }) {
     return this.client.executeTool({
-      toolSlug: 'GOOGLECALENDAR_LIST_EVENTS',
+      toolSlug: 'GOOGLECALENDAR_EVENTS_LIST',
       connectedAccountId: params.connectedAccountId,
       arguments: {
         time_min: params.timeMin,

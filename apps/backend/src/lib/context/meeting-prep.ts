@@ -357,7 +357,7 @@ export async function syncCalendarEvents(
   try {
     // Fetch upcoming events from Composio
     const response = await fetch(
-      'https://backend.composio.dev/api/v2/actions/GOOGLECALENDAR_LIST_EVENTS/execute',
+      'https://backend.composio.dev/api/v2/actions/GOOGLECALENDAR_EVENTS_LIST/execute',
       {
         method: 'POST',
         headers: {

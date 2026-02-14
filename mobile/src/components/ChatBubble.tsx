@@ -1,15 +1,14 @@
 /**
- * ChatBubble - Enhanced chat message component
+ * ChatBubble - iMessage-style chat message component
  *
  * Features:
- * - Glassmorphic styling for better readability
+ * - Native iOS iMessage-style chat bubbles
  * - Rich content cards for Composio integration results (emails, calendar, etc.)
- * - Improved typography and spacing
- * - Blur effects for glass aesthetics
+ * - Clean typography matching Apple HIG
+ * - Bubble tails for user/assistant differentiation
  */
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Linking, Image, ActivityIndicator } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, borderRadius, spacing, typography, useTheme } from '../theme';
 import {
@@ -536,12 +535,12 @@ export function ChatBubble({ message, onReviewAction, onFeedback, onEmailAction 
     );
   });
 
-  // User message
+  // User message - iMessage style blue bubble
   if (isUser) {
     return (
       <View style={styles.userContainer}>
-        <View style={[styles.userBubble, { backgroundColor: themeColors.accent + '25', borderColor: themeColors.accent + '40' }]}>
-          <Text style={[styles.userText, { color: themeColors.textPrimary }]}>{message.content}</Text>
+        <View style={[styles.userBubble, { backgroundColor: themeColors.accent }]}>
+          <Text style={styles.userText}>{message.content}</Text>
         </View>
       </View>
     );
@@ -573,14 +572,10 @@ export function ChatBubble({ message, onReviewAction, onFeedback, onEmailAction 
         </View>
       )}
 
-      {/* Message text with glassmorphic styling */}
+      {/* Message text - iMessage style gray bubble */}
       {message.content && (
-        <View style={styles.assistantBubbleContainer}>
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={styles.assistantBlur}>
-            <View style={[styles.assistantBubble, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.03)', borderColor: themeColors.glassBorder }]}>
-              {renderTextWithLinks(message.content, [styles.assistantText, { color: themeColors.textPrimary }], themeColors.accent)}
-            </View>
-          </BlurView>
+        <View style={[styles.assistantBubble, { backgroundColor: isDark ? '#3A3A3C' : '#E9E9EB' }]}>
+          {renderTextWithLinks(message.content, [styles.assistantText, { color: isDark ? '#FFFFFF' : '#000000' }], themeColors.accent)}
         </View>
       )}
 
@@ -620,56 +615,44 @@ export function ChatBubble({ message, onReviewAction, onFeedback, onEmailAction 
 
 // ============ STYLES ============
 const styles = StyleSheet.create({
-  // User message container
+  // User message container - iMessage style (right side, blue)
   userContainer: {
     alignSelf: 'flex-end',
-    maxWidth: '85%',
+    maxWidth: '80%',
+    marginBottom: 2,
   },
   userBubble: {
-    backgroundColor: colors.accent + '25',
-    borderRadius: borderRadius.lg,
-    borderBottomRightRadius: borderRadius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: colors.accent + '40',
+    borderRadius: 18,
+    borderBottomRightRadius: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   userText: {
-    fontSize: 15,
-    lineHeight: 20,
-    color: colors.textPrimary,
+    fontSize: 17,
+    lineHeight: 22,
+    color: '#FFFFFF',
     fontWeight: '400',
+    letterSpacing: -0.41,
   },
 
-  // Assistant message container
+  // Assistant message container - iMessage style (left side, gray)
   assistantContainer: {
     alignSelf: 'flex-start',
-    maxWidth: '95%',
-  },
-  assistantBubbleContainer: {
-    borderRadius: borderRadius.lg,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  assistantBlur: {
-    borderRadius: borderRadius.lg,
-    overflow: 'hidden',
+    maxWidth: '85%',
+    marginBottom: 2,
   },
   assistantBubble: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: borderRadius.lg,
-    borderBottomLeftRadius: borderRadius.sm,
-    paddingHorizontal: 12,
+    borderRadius: 18,
+    borderBottomLeftRadius: 4,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
+    marginBottom: 4,
   },
   assistantText: {
-    fontSize: 15,
-    lineHeight: 21,
-    color: colors.textPrimary,
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: '400',
-    letterSpacing: 0.1,
+    letterSpacing: -0.41,
   },
 
   // Actions section
