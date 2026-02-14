@@ -20,6 +20,7 @@ import type {
   CommitmentExtractionMetadata,
 } from './types';
 import { CommitmentExtractionError } from './types';
+import { scheduleJob } from '../jobs';
 
 export class CommitmentExtractor {
   private db: D1Database;
@@ -291,7 +292,7 @@ Return [] if none.`;
   }
 
   /**
-   * Create reminder for commitment
+   * Create reminder for commitment using the job scheduler
    */
   private async createReminder(commitment: Commitment): Promise<void> {
     if (!commitment.due_date) return;
@@ -299,34 +300,41 @@ Return [] if none.`;
     const dueDate = new Date(commitment.due_date);
     const now = new Date();
 
-    // Calculate reminder date (1 day before due date)
-    const reminderDate = new Date(dueDate);
-    reminderDate.setDate(reminderDate.getDate() - 1);
-
-    // Only create reminder if it's in the future
-    if (reminderDate < now) {
+    // Only create reminder if due date is in the future
+    if (dueDate < now) {
       return;
     }
 
-    const id = nanoid();
-    await this.db
-      .prepare(
-        `INSERT INTO commitment_reminders (
-          id, commitment_id, user_id, reminder_type,
-          scheduled_for, sent_at, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
-        id,
-        commitment.id,
-        commitment.user_id,
-        'due_soon',
-        reminderDate.toISOString(),
-        null,
-        'pending',
-        new Date().toISOString()
-      )
-      .run();
+    // Schedule reminder job at due time
+    await scheduleJob(this.db, {
+      userId: commitment.user_id,
+      type: 'commitment_reminder',
+      scheduledFor: dueDate,
+      payload: {
+        commitmentId: commitment.id,
+        title: commitment.description,
+        description: commitment.context || undefined,
+        dueAt: Math.floor(dueDate.getTime() / 1000),
+      },
+    });
+
+    // Also schedule an early reminder 1 day before if there's enough time
+    const earlyReminderDate = new Date(dueDate);
+    earlyReminderDate.setDate(earlyReminderDate.getDate() - 1);
+
+    if (earlyReminderDate > now) {
+      await scheduleJob(this.db, {
+        userId: commitment.user_id,
+        type: 'commitment_reminder',
+        scheduledFor: earlyReminderDate,
+        payload: {
+          commitmentId: commitment.id,
+          title: `Due tomorrow: ${commitment.description}`,
+          description: commitment.context || undefined,
+          dueAt: Math.floor(dueDate.getTime() / 1000),
+        },
+      });
+    }
   }
 
   /**

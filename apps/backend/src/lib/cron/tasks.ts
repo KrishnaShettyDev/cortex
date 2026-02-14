@@ -23,6 +23,8 @@ import { generateProactiveNudges } from '../relationship/nudge-generator';
 import { ComposioClient } from '../composio';
 import { reconcileTriggers } from '../triggers';
 import { upsertBelief, decayStaleBeliefs } from '../../handlers/beliefs';
+import { processMeetingPrepNotifications, syncCalendarEvents, pollNewEmails } from '../context';
+import { processDueJobs, cleanupOldJobs, resetStuckJobs } from '../jobs';
 import type { Bindings } from '../../types';
 
 /**
@@ -30,9 +32,30 @@ import type { Bindings } from '../../types';
  */
 export const everyMinuteTasks: CronTask[] = [
   {
+    name: 'process_scheduled_jobs',
+    interval: 'every_minute',
+    priority: 0, // Highest - event-driven jobs
+    timeoutMs: 30000,
+    llmBudget: 3, // Some handlers may use AI
+    handler: async (env) => {
+      // Reset any stuck jobs first
+      await resetStuckJobs(env.DB);
+
+      // Process due jobs
+      const results = await processDueJobs(env.DB, {
+        EXPO_ACCESS_TOKEN: env.EXPO_ACCESS_TOKEN,
+        OPENAI_API_KEY: env.OPENAI_API_KEY,
+      });
+
+      if (results.processed > 0 || results.failed > 0) {
+        console.log(`[Cron] Jobs: ${results.processed} processed, ${results.failed} failed`);
+      }
+    },
+  },
+  {
     name: 'flush_notification_batches',
     interval: 'every_minute',
-    priority: 1, // Highest - user-facing
+    priority: 1, // Second highest - user-facing
     timeoutMs: 5000,
     llmBudget: 0,
     handler: async (env) => {
@@ -218,6 +241,55 @@ export const every5MinTasks: CronTask[] = [
       }
     },
   },
+  {
+    name: 'meeting_prep_notifications',
+    interval: 'every_5_min',
+    priority: 2,
+    timeoutMs: 30000,
+    llmBudget: 0, // No LLM needed - uses pre-stored context
+    handler: async (env) => {
+      try {
+        const result = await processMeetingPrepNotifications(env);
+        if (result.notificationsSent > 0) {
+          console.log(`[Cron] Meeting prep: ${result.notificationsSent} notifications sent (${result.processed} meetings checked)`);
+        }
+      } catch (error) {
+        console.error('[Cron] Meeting prep failed:', error);
+      }
+    },
+  },
+  {
+    name: 'sync_user_calendars',
+    interval: 'every_5_min',
+    priority: 3,
+    timeoutMs: 45000,
+    llmBudget: 0,
+    handler: async (env) => {
+      // Get users with connected Google accounts who have been active recently
+      const activeUsers = await env.DB.prepare(`
+        SELECT DISTINCT i.user_id
+        FROM integrations i
+        JOIN memories m ON m.user_id = i.user_id
+        WHERE i.provider = 'googlesuper' AND i.connected = 1
+        AND m.created_at > datetime('now', '-7 days')
+        LIMIT 10
+      `).all<{ user_id: string }>();
+
+      let totalSynced = 0;
+      for (const { user_id } of activeUsers.results || []) {
+        try {
+          const result = await syncCalendarEvents(env, user_id);
+          totalSynced += result.synced;
+        } catch (error) {
+          console.error(`[Cron] Calendar sync failed for ${user_id}:`, error);
+        }
+      }
+
+      if (totalSynced > 0) {
+        console.log(`[Cron] Calendar sync: ${totalSynced} events synced for ${activeUsers.results?.length || 0} users`);
+      }
+    },
+  },
 ];
 
 /**
@@ -225,15 +297,60 @@ export const every5MinTasks: CronTask[] = [
  */
 export const hourlyTasks: CronTask[] = [
   {
-    name: 'cleanup_dlq',
+    name: 'cleanup_scheduled_jobs',
     interval: 'every_hour',
     priority: 1,
+    timeoutMs: 15000,
+    llmBudget: 0,
+    handler: async (env) => {
+      const cleaned = await cleanupOldJobs(env.DB);
+      if (cleaned > 0) {
+        console.log(`[Cron] Cleaned ${cleaned} old scheduled jobs`);
+      }
+    },
+  },
+  {
+    name: 'cleanup_dlq',
+    interval: 'every_hour',
+    priority: 2,
     timeoutMs: 10000,
     llmBudget: 0,
     handler: async (env) => {
       const cleaned = await cleanupResolvedEntries(env.DB);
       if (cleaned > 0) {
         console.log(`[Cron] Cleaned ${cleaned} resolved DLQ entries`);
+      }
+    },
+  },
+  {
+    name: 'poll_important_emails',
+    interval: 'every_hour',
+    priority: 2,
+    timeoutMs: 60000, // 1 minute for email processing
+    llmBudget: 0, // No LLM - uses rule-based classification
+    handler: async (env) => {
+      // Get users with connected Google accounts
+      const usersWithGmail = await env.DB.prepare(`
+        SELECT DISTINCT i.user_id
+        FROM integrations i
+        JOIN notification_preferences np ON np.user_id = i.user_id
+        WHERE i.provider = 'googlesuper' AND i.connected = 1
+        AND np.push_token IS NOT NULL
+        LIMIT 20
+      `).all<{ user_id: string }>();
+
+      let totalProcessed = 0;
+      for (const { user_id } of usersWithGmail.results || []) {
+        try {
+          const processed = await pollNewEmails(env, user_id);
+          totalProcessed += processed;
+        } catch (error) {
+          console.error(`[Cron] Email poll failed for ${user_id}:`, error);
+        }
+      }
+
+      if (totalProcessed > 0) {
+        console.log(`[Cron] Email poll: ${totalProcessed} emails processed for ${usersWithGmail.results?.length || 0} users`);
       }
     },
   },
