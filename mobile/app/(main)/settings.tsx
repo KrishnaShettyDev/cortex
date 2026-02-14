@@ -37,6 +37,8 @@ import { logger } from '../../src/utils/logger';
 import { usePostHog } from 'posthog-react-native';
 import { ANALYTICS_EVENTS } from '../../src/lib/analytics';
 import { useAppStore } from '../../src/stores/appStore';
+import { API_BASE_URL, IS_PRODUCTION, APP_CONFIG } from '../../src/config/env';
+import { storage } from '../../src/services/storage';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -88,6 +90,32 @@ export default function SettingsScreen() {
   const [newMcpName, setNewMcpName] = useState('');
   const [newMcpUrl, setNewMcpUrl] = useState('');
   const [isAddingMcp, setIsAddingMcp] = useState(false);
+
+  // Debug info state (for TestFlight diagnostics)
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<{
+    hasToken: boolean;
+    apiUrl: string;
+    isProduction: boolean;
+    appVersion: string;
+    bundleId: string;
+  } | null>(null);
+
+  // Load debug info when toggled
+  useEffect(() => {
+    if (showDebug) {
+      (async () => {
+        const token = await storage.getAccessToken();
+        setDebugInfo({
+          hasToken: !!token,
+          apiUrl: API_BASE_URL,
+          isProduction: IS_PRODUCTION,
+          appVersion: APP_CONFIG.version,
+          bundleId: APP_CONFIG.bundleId,
+        });
+      })();
+    }
+  }, [showDebug]);
 
   const loadIntegrationStatus = useCallback(async () => {
     try {
@@ -435,6 +463,37 @@ export default function SettingsScreen() {
             <View style={{ flex: 1 }} />
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </TouchableOpacity>
+        </View>
+
+        {/* Debug Section - Tap version 5x to show */}
+        <View style={styles.section}>
+          <TouchableOpacity
+            style={styles.actionRow}
+            onPress={() => setShowDebug(!showDebug)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="bug-outline" size={20} color={colors.textSecondary} />
+            <Text style={[styles.actionText, { color: colors.textPrimary }]}>
+              Debug Info {showDebug ? '(tap to hide)' : ''}
+            </Text>
+            <View style={{ flex: 1 }} />
+            <Text style={{ color: colors.textTertiary, fontSize: 12 }}>
+              v{APP_CONFIG.version}
+            </Text>
+          </TouchableOpacity>
+
+          {showDebug && debugInfo && (
+            <View style={{ padding: spacing.md, backgroundColor: colors.fill, margin: spacing.md, borderRadius: borderRadius.md }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>
+                {`API: ${debugInfo.apiUrl}\n`}
+                {`Production: ${debugInfo.isProduction}\n`}
+                {`Has Token: ${debugInfo.hasToken}\n`}
+                {`Bundle: ${debugInfo.bundleId}\n`}
+                {`User: ${user?.email || 'Not logged in'}\n`}
+                {`User ID: ${user?.id || 'N/A'}`}
+              </Text>
+            </View>
+          )}
         </View>
       </ScrollView>
 

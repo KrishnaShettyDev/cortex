@@ -28,10 +28,8 @@ export const initSentry = () => {
     debug: !IS_PRODUCTION,
     // Before send hook for filtering/modifying events
     beforeSend(event) {
-      // Don't send events in development unless explicitly enabled
-      if (!IS_PRODUCTION && !__DEV__) {
-        return null;
-      }
+      // Always send events - Sentry filters by environment anyway
+      // Events will be tagged with environment: 'production' or 'development'
       return event;
     },
     // Integrations

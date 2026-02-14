@@ -1,7 +1,10 @@
 /**
  * Production-safe logging utility
- * Logs are only output in development mode
+ * - Development: Logs to console
+ * - Production: Errors are sent to Sentry
  */
+
+import * as Sentry from '@sentry/react-native';
 
 const isDev = __DEV__;
 
@@ -14,14 +17,26 @@ export const logger = {
   warn: (...args: any[]) => {
     if (isDev) {
       console.warn(...args);
+    } else {
+      // Capture warnings as breadcrumbs in production
+      Sentry.addBreadcrumb({
+        category: 'warning',
+        message: args.map(a => String(a)).join(' '),
+        level: 'warning',
+      });
     }
   },
   error: (...args: any[]) => {
     if (isDev) {
       console.error(...args);
     }
-    // In production, you could send errors to a service like Sentry
-    // Sentry.captureException(args[0]);
+    // Always capture errors in Sentry (production and dev)
+    const error = args[0];
+    if (error instanceof Error) {
+      Sentry.captureException(error);
+    } else {
+      Sentry.captureMessage(args.map(a => String(a)).join(' '), 'error');
+    }
   },
   debug: (...args: any[]) => {
     if (isDev) {
