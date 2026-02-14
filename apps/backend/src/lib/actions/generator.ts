@@ -265,13 +265,13 @@ async function generateRelationshipActions(
 
   try {
     const nudges = await db.prepare(`
-      SELECT n.id, n.entity_id, n.nudge_type, n.content, n.priority, e.name, e.entity_type
-      FROM nudges n
+      SELECT n.id, n.entity_id, n.nudge_type, n.message as content, n.priority, e.name, e.entity_type
+      FROM proactive_nudges n
       JOIN entities e ON n.entity_id = e.id
-      WHERE n.user_id = ? AND n.status = 'pending'
+      WHERE n.user_id = ? AND n.dismissed = 0 AND n.acted = 0
       AND n.nudge_type IN ('at_risk', 'maintenance', 'follow_up')
       ORDER BY
-        CASE n.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+        CASE n.priority WHEN 4 THEN 1 WHEN 3 THEN 2 ELSE 3 END,
         n.created_at DESC
       LIMIT 5
     `).bind(userId).all();

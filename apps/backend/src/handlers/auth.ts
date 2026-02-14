@@ -248,7 +248,7 @@ export async function deleteAccount(c: Context<{ Bindings: Bindings }>) {
       // Commitments and nudges
       'DELETE FROM commitment_reminders WHERE commitment_id IN (SELECT id FROM commitments WHERE user_id = ?)',
       'DELETE FROM commitments WHERE user_id = ?',
-      'DELETE FROM nudges WHERE user_id = ?',
+      'DELETE FROM proactive_nudges WHERE user_id = ?',
 
       // Sync infrastructure
       'DELETE FROM sync_logs WHERE connection_id IN (SELECT id FROM sync_connections WHERE user_id = ?)',

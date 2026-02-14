@@ -256,19 +256,65 @@ async function executeReminder(db: D1Database, trigger: Trigger): Promise<Record
 }
 
 /**
- * Execute briefing action - generates morning/evening briefing
+ * Execute briefing action - generates morning/evening briefing with REAL data
  */
 async function executeBriefing(db: D1Database, trigger: Trigger): Promise<Record<string, any>> {
   const briefingType = trigger.actionPayload.briefingType || 'morning';
-
-  // Create proactive message prompting a briefing
   const messageId = nanoid();
   const now = new Date().toISOString();
+  const todayStart = now.split('T')[0] + 'T00:00:00Z';
+  const todayEnd = now.split('T')[0] + 'T23:59:59Z';
 
-  const content = briefingType === 'morning'
-    ? '☀️ **Good morning!** Here\'s your daily briefing. Type "briefing" to see your schedule and important updates.'
-    : '🌙 **Good evening!** Here\'s your end-of-day summary. Type "recap" to see what happened today.';
+  // Fetch REAL data for the user
+  const [userResult, commitmentsResult, nudgesResult, overdueResult] = await Promise.all([
+    db.prepare('SELECT name FROM users WHERE id = ?').bind(trigger.userId).first<{ name: string }>(),
+    db.prepare(`
+      SELECT COUNT(*) as count FROM commitments
+      WHERE user_id = ? AND status = 'pending'
+      AND due_date >= ? AND due_date <= ?
+    `).bind(trigger.userId, todayStart, todayEnd).first<{ count: number }>(),
+    db.prepare(`
+      SELECT COUNT(*) as count FROM proactive_nudges
+      WHERE user_id = ? AND dismissed = 0 AND acted = 0 AND priority >= 3
+    `).bind(trigger.userId).first<{ count: number }>(),
+    db.prepare(`
+      SELECT COUNT(*) as count FROM commitments
+      WHERE user_id = ? AND status = 'pending' AND due_date < ?
+    `).bind(trigger.userId, todayStart).first<{ count: number }>(),
+  ]);
 
+  const userName = userResult?.name?.split(' ')[0] || '';
+  const commitCount = commitmentsResult?.count || 0;
+  const nudgeCount = nudgesResult?.count || 0;
+  const overdueCount = overdueResult?.count || 0;
+
+  // Build DYNAMIC title and body
+  let title: string;
+  let body: string;
+  let content: string;
+
+  if (briefingType === 'morning') {
+    const hour = new Date().getUTCHours();
+    const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    title = userName ? `☀️ ${greeting}, ${userName}` : `☀️ ${greeting}`;
+
+    const parts: string[] = [];
+    if (commitCount > 0) parts.push(`${commitCount} thing${commitCount > 1 ? 's' : ''} to do`);
+    if (overdueCount > 0) parts.push(`${overdueCount} overdue`);
+    if (nudgeCount > 0) parts.push(`${nudgeCount} person${nudgeCount > 1 ? 's' : ''} to reach out to`);
+
+    body = parts.length > 0
+      ? parts.join(' · ')
+      : 'Your day looks clear. Time to create something.';
+
+    content = `☀️ **${greeting}${userName ? ', ' + userName : ''}!** ${body}`;
+  } else {
+    title = userName ? `🌙 Good evening, ${userName}` : '🌙 Evening Recap';
+    body = 'How did today go? Tap to reflect.';
+    content = `🌙 **Good evening${userName ? ', ' + userName : ''}!** Here\'s your end-of-day summary.`;
+  }
+
+  // Create proactive message with dynamic content
   await db.prepare(`
     INSERT INTO proactive_messages (
       id, user_id, trigger_id, message_type, content, suggested_actions, is_read, created_at
@@ -279,13 +325,13 @@ async function executeBriefing(db: D1Database, trigger: Trigger): Promise<Record
     trigger.id,
     content,
     JSON.stringify([
-      { type: 'get_briefing', label: briefingType === 'morning' ? 'Get Briefing' : 'Get Recap' },
-      { type: 'dismiss', label: 'Skip' },
+      { type: 'get_briefing', label: briefingType === 'morning' ? 'View Details' : 'View Recap' },
+      { type: 'dismiss', label: 'Dismiss' },
     ]),
     now
   ).run();
 
-  // Schedule push notification
+  // Schedule push notification with DYNAMIC content
   await db.prepare(`
     INSERT INTO scheduled_notifications (
       id, user_id, notification_type, title, body, data, channel_id,
@@ -294,9 +340,9 @@ async function executeBriefing(db: D1Database, trigger: Trigger): Promise<Record
   `).bind(
     nanoid(),
     trigger.userId,
-    briefingType === 'morning' ? 'Morning Briefing' : 'Evening Recap',
-    'Tap to see your personalized briefing',
-    JSON.stringify({ triggerId: trigger.id, messageId, briefingType }),
+    title,
+    body,
+    JSON.stringify({ triggerId: trigger.id, messageId, briefingType, commitCount, nudgeCount, overdueCount }),
     now,
     now,
     trigger.timezone,
@@ -304,7 +350,7 @@ async function executeBriefing(db: D1Database, trigger: Trigger): Promise<Record
     now
   ).run();
 
-  return { messageId, briefingType };
+  return { messageId, briefingType, commitCount, nudgeCount, overdueCount };
 }
 
 /**

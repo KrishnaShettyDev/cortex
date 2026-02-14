@@ -12,6 +12,7 @@ import type { CronTask } from './task-runner';
 import { flushDueBatches, cleanupStaleBatches, resetDailyCounters } from '../proactive/batcher';
 import { processDueTriggers } from '../triggers/executor';
 import { processScheduledNotifications, processProactiveNotificationQueue } from '../notifications/scheduler';
+import { generateCommitmentReminder, generateNudgeNotification } from '../notifications/ai-generator';
 import { cleanup as runProactiveCleanup } from '../proactive';
 import { cleanupSeenEvents, cleanupClassificationCache } from '../proactive/sync';
 import { runIncrementalSync } from '../proactive/incremental-sync';
@@ -72,14 +73,15 @@ export const everyMinuteTasks: CronTask[] = [
     name: 'process_commitment_reminders',
     interval: 'every_minute',
     priority: 4,
-    timeoutMs: 10000,
-    llmBudget: 0,
+    timeoutMs: 15000, // Increased for AI generation
+    llmBudget: 3, // Allow AI calls for reminders
     handler: async (env) => {
       // Find commitments due within next 24 hours that haven't been reminded
       const dueCommitments = await env.DB.prepare(`
-        SELECT c.id, c.description, c.to_entity_name, c.due_date, pt.push_token, c.user_id
+        SELECT c.id, c.description, c.to_entity_name, c.due_date, pt.push_token, c.user_id, u.name as user_name
         FROM commitments c
         JOIN push_tokens pt ON c.user_id = pt.user_id AND pt.is_active = 1
+        JOIN users u ON c.user_id = u.id
         WHERE c.status = 'pending'
           AND c.due_date <= datetime('now', '+1 day')
           AND c.due_date >= datetime('now', '-1 hour')
@@ -92,21 +94,28 @@ export const everyMinuteTasks: CronTask[] = [
         due_date: string;
         push_token: string;
         user_id: string;
+        user_name: string | null;
       }>();
 
       if (!dueCommitments.results || dueCommitments.results.length === 0) return;
 
       let sent = 0;
+      let aiUsed = 0;
       for (const commitment of dueCommitments.results) {
         try {
-          const person = commitment.to_entity_name ? ` with ${commitment.to_entity_name}` : '';
-          const dueDate = new Date(commitment.due_date);
+          // Generate AI-powered notification (falls back to template if rate limited)
+          const notification = await generateCommitmentReminder(
+            env.DB,
+            env.AI,
+            commitment.user_id,
+            commitment.id
+          );
+
+          if (notification.usedAI) aiUsed++;
+
           const now = new Date();
-          const hoursUntilDue = Math.ceil((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60));
 
-          const timeLabel = hoursUntilDue <= 0 ? 'now' : hoursUntilDue === 1 ? 'in 1 hour' : `in ${hoursUntilDue} hours`;
-
-          // Queue notification instead of sending directly
+          // Queue notification with AI-generated content
           await env.DB.prepare(`
             INSERT INTO scheduled_notifications (
               id, user_id, notification_type, title, body, data,
@@ -115,9 +124,13 @@ export const everyMinuteTasks: CronTask[] = [
           `).bind(
             `commit_${commitment.id}_${Date.now()}`,
             commitment.user_id,
-            'Commitment Reminder',
-            `Don't forget: "${commitment.description}"${person} - due ${timeLabel}`,
-            JSON.stringify({ commitmentId: commitment.id, pushToken: commitment.push_token }),
+            notification.title,
+            notification.body,
+            JSON.stringify({
+              commitmentId: commitment.id,
+              pushToken: commitment.push_token,
+              usedAI: notification.usedAI ? 1 : 0,
+            }),
             now.toISOString(),
             now.toISOString(),
             now.toISOString(),
@@ -133,7 +146,7 @@ export const everyMinuteTasks: CronTask[] = [
       }
 
       if (sent > 0) {
-        console.log(`[Cron] Queued ${sent} commitment reminders`);
+        console.log(`[Cron] Queued ${sent} commitment reminders (${aiUsed} AI-generated)`);
       }
     },
   },
@@ -263,8 +276,8 @@ export const every6HourTasks: CronTask[] = [
     name: 'generate_nudges',
     interval: 'every_6_hours',
     priority: 3,
-    timeoutMs: 60000, // Nudge generation can be slow
-    llmBudget: 5,
+    timeoutMs: 90000, // Increased for AI generation
+    llmBudget: 10, // Higher budget for AI-powered nudges
     handler: async (env) => {
       const activeUsers = await env.DB.prepare(`
         SELECT DISTINCT user_id FROM memories
@@ -274,6 +287,7 @@ export const every6HourTasks: CronTask[] = [
 
       let nudgesGenerated = 0;
       let notificationsQueued = 0;
+      let aiNotifications = 0;
 
       for (const { user_id } of activeUsers.results || []) {
         try {
@@ -290,13 +304,41 @@ export const every6HourTasks: CronTask[] = [
             `).bind(nudge.id, user_id, nudge.nudge_type, nudge.title, nudge.message, nudge.entity_id || null, priorityToInt[nudge.priority] || 2, nudge.suggested_action || null, now).run();
             nudgesGenerated++;
 
+            // For high-priority nudges, generate AI-powered notification
             if (nudge.priority === 'urgent' || nudge.priority === 'high') {
               const tokenResult = await env.DB.prepare(`SELECT push_token FROM push_tokens WHERE user_id = ? AND is_active = 1 LIMIT 1`).bind(user_id).first<{ push_token: string }>();
               if (tokenResult?.push_token) {
+                // Generate AI notification for this nudge
+                const notification = await generateNudgeNotification(
+                  env.DB,
+                  env.AI,
+                  user_id,
+                  nudge.id
+                );
+
+                if (notification.usedAI) aiNotifications++;
+
                 await env.DB.prepare(`
                   INSERT INTO scheduled_notifications (id, user_id, notification_type, title, body, data, channel_id, scheduled_for_utc, user_local_time, timezone, status, created_at, updated_at)
                   VALUES (?, ?, 'nudge', ?, ?, ?, 'nudges', ?, ?, 'UTC', 'pending', ?, ?)
-                `).bind(`notif_${nudge.id}`, user_id, nudge.title, nudge.message.slice(0, 200), JSON.stringify({ nudgeId: nudge.id, nudgeType: nudge.nudge_type, entityId: nudge.entity_id, priority: nudge.priority, pushToken: tokenResult.push_token }), now, now, now, now).run();
+                `).bind(
+                  `notif_${nudge.id}`,
+                  user_id,
+                  notification.title,
+                  notification.body.slice(0, 200),
+                  JSON.stringify({
+                    nudgeId: nudge.id,
+                    nudgeType: nudge.nudge_type,
+                    entityId: nudge.entity_id,
+                    priority: nudge.priority,
+                    pushToken: tokenResult.push_token,
+                    usedAI: notification.usedAI ? 1 : 0,
+                  }),
+                  now,
+                  now,
+                  now,
+                  now
+                ).run();
                 notificationsQueued++;
               }
             }
@@ -307,7 +349,7 @@ export const every6HourTasks: CronTask[] = [
       }
 
       if (nudgesGenerated > 0) {
-        console.log(`[Cron] Nudge generation: ${nudgesGenerated} nudges, ${notificationsQueued} notifications queued`);
+        console.log(`[Cron] Nudge generation: ${nudgesGenerated} nudges, ${notificationsQueued} notifications queued (${aiNotifications} AI-generated)`);
       }
     },
   },

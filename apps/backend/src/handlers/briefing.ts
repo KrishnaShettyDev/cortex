@@ -87,7 +87,7 @@ app.get('/', async (c) => {
 
       // Top nudges (safe - table exists)
       c.env.DB.prepare(
-        `SELECT * FROM nudges
+        `SELECT * FROM proactive_nudges
          WHERE user_id = ? AND status = 'pending'
          ORDER BY
            CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,

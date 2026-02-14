@@ -17,6 +17,10 @@ import {
   isWithinQuietHours,
   getGreetingForTimezone,
 } from './timezone';
+import {
+  generateMorningBriefing,
+  generateEveningBriefing,
+} from './ai-generator';
 import type { Bindings } from '../../types';
 
 interface NotificationPrefs {
@@ -209,6 +213,7 @@ export async function processScheduledNotifications(
 
 /**
  * Send morning briefing notification
+ * Uses AI to generate contextual, personalized notifications
  */
 async function sendMorningBriefing(
   db: D1Database,
@@ -219,49 +224,16 @@ async function sendMorningBriefing(
   console.log(`[NotificationScheduler] Sending morning briefing to ${prefs.user_id}`);
 
   try {
-    // Get today's data for briefing
-    const now = new Date();
-    const todayStart = now.toISOString().split('T')[0] + 'T00:00:00Z';
-    const todayEnd = now.toISOString().split('T')[0] + 'T23:59:59Z';
+    // Generate AI-powered briefing (falls back to template if rate limited or fails)
+    const notification = await generateMorningBriefing(
+      db,
+      ai,
+      prefs.user_id,
+      prefs.user_name || 'there',
+      prefs.timezone
+    );
 
-    // Get today's commitments
-    const commitmentsResult = await db.prepare(`
-      SELECT COUNT(*) as count FROM commitments
-      WHERE user_id = ? AND status = 'pending'
-      AND due_date >= ? AND due_date <= ?
-    `).bind(prefs.user_id, todayStart, todayEnd).first<{ count: number }>();
-
-    // Get overdue commitments
-    const overdueResult = await db.prepare(`
-      SELECT COUNT(*) as count FROM commitments
-      WHERE user_id = ? AND (status = 'pending' OR status = 'overdue')
-      AND due_date < ?
-    `).bind(prefs.user_id, todayStart).first<{ count: number }>();
-
-    // Get pending nudges
-    const nudgesResult = await db.prepare(`
-      SELECT COUNT(*) as count FROM nudges
-      WHERE user_id = ? AND status = 'pending'
-      AND (priority = 'high' OR priority = 'urgent')
-    `).bind(prefs.user_id).first<{ count: number }>();
-
-    const todayCount = commitmentsResult?.count || 0;
-    const overdueCount = overdueResult?.count || 0;
-    const nudgesCount = nudgesResult?.count || 0;
-
-    // Build briefing message
-    const greeting = getGreetingForTimezone(prefs.timezone, prefs.user_name);
-    let body = '';
-
-    if (todayCount > 0 || overdueCount > 0 || nudgesCount > 0) {
-      const parts: string[] = [];
-      if (todayCount > 0) parts.push(`${todayCount} commitment${todayCount > 1 ? 's' : ''} due today`);
-      if (overdueCount > 0) parts.push(`${overdueCount} overdue`);
-      if (nudgesCount > 0) parts.push(`${nudgesCount} important nudge${nudgesCount > 1 ? 's' : ''}`);
-      body = parts.join(' · ');
-    } else {
-      body = 'Your day looks clear. What would you like to focus on?';
-    }
+    console.log(`[NotificationScheduler] Generated briefing (AI: ${notification.usedAI}): ${notification.title}`);
 
     // Send to all active devices
     let success = false;
@@ -270,21 +242,28 @@ async function sendMorningBriefing(
 
       const result = await sendPushNotification(
         token.push_token,
-        greeting,
-        body,
+        notification.title,
+        notification.body,
         {
           type: 'briefing',
           briefing_type: 'morning',
-          today_count: todayCount,
-          overdue_count: overdueCount,
-          nudges_count: nudgesCount,
+          usedAI: notification.usedAI,
         },
         { channelId: 'briefings', priority: 'high' }
       );
 
       if (result.success) {
         success = true;
-        await logNotification(db, prefs.user_id, token.id, 'briefing', greeting, body, result.ticketId);
+        await logNotificationWithAI(
+          db,
+          prefs.user_id,
+          token.id,
+          'briefing',
+          notification.title,
+          notification.body,
+          result.ticketId,
+          notification.usedAI
+        );
       }
     }
 
@@ -297,6 +276,7 @@ async function sendMorningBriefing(
 
 /**
  * Send evening briefing notification
+ * Uses AI to generate contextual, personalized notifications
  */
 async function sendEveningBriefing(
   db: D1Database,
@@ -307,54 +287,15 @@ async function sendEveningBriefing(
   console.log(`[NotificationScheduler] Sending evening briefing to ${prefs.user_id}`);
 
   try {
-    // Get today's completed vs pending
-    const now = new Date();
-    const todayStart = now.toISOString().split('T')[0] + 'T00:00:00Z';
-    const todayEnd = now.toISOString().split('T')[0] + 'T23:59:59Z';
+    // Generate AI-powered briefing (falls back to template if rate limited or fails)
+    const notification = await generateEveningBriefing(
+      db,
+      ai,
+      prefs.user_id,
+      prefs.user_name || 'there'
+    );
 
-    const completedResult = await db.prepare(`
-      SELECT COUNT(*) as count FROM commitments
-      WHERE user_id = ? AND status = 'completed'
-      AND updated_at >= ?
-    `).bind(prefs.user_id, todayStart).first<{ count: number }>();
-
-    const pendingResult = await db.prepare(`
-      SELECT COUNT(*) as count FROM commitments
-      WHERE user_id = ? AND status = 'pending'
-      AND due_date <= ?
-    `).bind(prefs.user_id, todayEnd).first<{ count: number }>();
-
-    // Get tomorrow's commitments
-    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    const tomorrowStart = tomorrow.toISOString().split('T')[0] + 'T00:00:00Z';
-    const tomorrowEnd = tomorrow.toISOString().split('T')[0] + 'T23:59:59Z';
-
-    const tomorrowResult = await db.prepare(`
-      SELECT COUNT(*) as count FROM commitments
-      WHERE user_id = ? AND status = 'pending'
-      AND due_date >= ? AND due_date <= ?
-    `).bind(prefs.user_id, tomorrowStart, tomorrowEnd).first<{ count: number }>();
-
-    const completedCount = completedResult?.count || 0;
-    const pendingCount = pendingResult?.count || 0;
-    const tomorrowCount = tomorrowResult?.count || 0;
-
-    // Build evening message
-    const title = `Good evening, ${prefs.user_name || 'there'}`;
-    let body = '';
-
-    if (completedCount > 0) {
-      body = `You completed ${completedCount} thing${completedCount > 1 ? 's' : ''} today.`;
-    }
-
-    if (tomorrowCount > 0) {
-      body += body ? ' ' : '';
-      body += `${tomorrowCount} coming up tomorrow.`;
-    }
-
-    if (!body) {
-      body = 'How did your day go? Tap to reflect.';
-    }
+    console.log(`[NotificationScheduler] Generated evening briefing (AI: ${notification.usedAI}): ${notification.title}`);
 
     // Send to all active devices
     let success = false;
@@ -363,21 +304,28 @@ async function sendEveningBriefing(
 
       const result = await sendPushNotification(
         token.push_token,
-        title,
-        body,
+        notification.title,
+        notification.body,
         {
           type: 'briefing',
           briefing_type: 'evening',
-          completed_count: completedCount,
-          pending_count: pendingCount,
-          tomorrow_count: tomorrowCount,
+          usedAI: notification.usedAI,
         },
         { channelId: 'briefings' }
       );
 
       if (result.success) {
         success = true;
-        await logNotification(db, prefs.user_id, token.id, 'briefing', title, body, result.ticketId);
+        await logNotificationWithAI(
+          db,
+          prefs.user_id,
+          token.id,
+          'briefing',
+          notification.title,
+          notification.body,
+          result.ticketId,
+          notification.usedAI
+        );
       }
     }
 
@@ -525,6 +473,38 @@ async function logNotification(
     title,
     body,
     ticketId || null
+  ).run();
+}
+
+/**
+ * Log notification with AI usage tracking
+ * Used to enforce AI notification rate limits
+ */
+async function logNotificationWithAI(
+  db: D1Database,
+  userId: string,
+  tokenId: string,
+  type: string,
+  title: string,
+  body: string,
+  ticketId?: string,
+  usedAI: boolean = false
+): Promise<void> {
+  await db.prepare(`
+    INSERT INTO notification_log (
+      id, user_id, push_token_id, notification_type,
+      title, body, status, expo_ticket_id,
+      data, scheduled_for, sent_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, datetime('now'), datetime('now'), datetime('now'))
+  `).bind(
+    nanoid(),
+    userId,
+    tokenId,
+    type,
+    title,
+    body,
+    ticketId || null,
+    JSON.stringify({ usedAI: usedAI ? 1 : 0 })
   ).run();
 }
 

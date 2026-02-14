@@ -190,8 +190,8 @@ export class BriefingIntelligence {
       // Relationship health from nudges
       db.prepare(`
         SELECT entity_id, nudge_type, priority
-        FROM nudges
-        WHERE user_id = ? AND status = 'pending'
+        FROM proactive_nudges
+        WHERE user_id = ? AND dismissed = 0 AND acted = 0
         AND (nudge_type = 'at_risk' OR nudge_type = 'maintenance')
       `).bind(userId).all(),
 
