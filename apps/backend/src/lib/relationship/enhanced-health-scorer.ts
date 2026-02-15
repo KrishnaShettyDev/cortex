@@ -370,10 +370,9 @@ Return ONLY a JSON array of numbers, one for each memory:
         COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
         COUNT(CASE WHEN status = 'overdue' THEN 1 END) as overdue
       FROM commitments
-      WHERE entity_id = ?
+      WHERE (to_entity_id = ? OR from_entity_id = ?)
         AND user_id = ?
-        AND container_tag = ?
-    `).bind(entityId, userId, containerTag).first<{
+    `).bind(entityId, entityId, userId).first<{
       pending: number;
       completed: number;
       overdue: number;
