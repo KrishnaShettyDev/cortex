@@ -31,15 +31,26 @@ describe('appStore', () => {
       expect(state.chatDraft).toBe('');
       expect(state.lastConversationId).toBeNull();
       expect(state.hasSeenOnboarding).toBe(false);
-      expect(state.themeMode).toBe('dark');
+      expect(state.themeMode).toBe('system');
       expect(state.isApiHealthy).toBe(true);
       expect(state.lastHealthCheckAt).toBeNull();
-      expect(state.notificationSettings).toEqual({
-        morningBriefing: true,
-        eveningBriefing: true,
-        smartReminders: true,
-        memoryInsights: true,
-      });
+      expect(state.notificationSettings.morningBriefing).toBe(true);
+      expect(state.notificationSettings.eveningBriefing).toBe(true);
+      expect(state.notificationSettings.smartReminders).toBe(true);
+      expect(state.notificationSettings.memoryInsights).toBe(true);
+      expect(state.notificationSettings.meetingPrep).toBe(true);
+      expect(state.notificationSettings.emailAlerts).toBe(true);
+      expect(state.notificationSettings.commitmentReminders).toBe(true);
+      expect(state.notificationSettings.patternWarnings).toBe(true);
+      expect(state.notificationSettings.reconnectionNudges).toBe(true);
+      expect(state.notificationSettings.importantDates).toBe(true);
+      expect(state.notificationSettings.maxNotificationsPerDay).toBe(8);
+      expect(state.notificationSettings.quietHoursEnabled).toBe(false);
+      expect(state.notificationSettings.quietHoursStart).toBe('22:00');
+      expect(state.notificationSettings.quietHoursEnd).toBe('07:00');
+      expect(state.notificationSettings.morningBriefingTime).toBe('08:00');
+      expect(state.notificationSettings.eveningBriefingTime).toBe('18:00');
+      expect(state.notificationSettings.meetingPrepMinutesBefore).toBe(30);
       expect(state.integrationStatus).toBeNull();
       expect(state.integrationStatusLoadedAt).toBeNull();
     });
@@ -339,7 +350,7 @@ describe('appStore', () => {
       expect(state.lastScreen).toBe('/(main)/chat');
       expect(state.chatDraft).toBe('');
       expect(state.hasSeenOnboarding).toBe(false);
-      expect(state.themeMode).toBe('dark');
+      expect(state.themeMode).toBe('system');
       expect(state.notificationSettings.morningBriefing).toBe(true);
     });
   });

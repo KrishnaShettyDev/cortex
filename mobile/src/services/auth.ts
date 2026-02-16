@@ -1,8 +1,31 @@
 import { api } from './api';
 import { storage } from './storage';
 import { AuthResponse, User } from '../types';
+import { useAppStore } from '../stores/appStore';
 
 class AuthService {
+  /**
+   * Clear stale data if a different user is logging in.
+   * This prevents chat history from leaking between users.
+   */
+  private async clearStaleDataIfNeeded(newUserId: string): Promise<void> {
+    try {
+      const existingUserJson = await storage.getUser();
+      if (existingUserJson) {
+        const existingUser = JSON.parse(existingUserJson);
+        if (existingUser.id && existingUser.id !== newUserId) {
+          // Different user logging in - clear all persisted app state
+          console.log('[Auth] Different user detected, clearing stale data');
+          useAppStore.getState().reset();
+        }
+      }
+    } catch (error) {
+      // If we can't determine, clear to be safe
+      console.warn('[Auth] Could not check existing user, clearing data to be safe');
+      useAppStore.getState().reset();
+    }
+  }
+
   // Apple Sign-In
   async signInWithApple(
     identityToken: string,
@@ -31,6 +54,11 @@ class AuthService {
       requiresAuth: false,
     });
 
+    // Clear stale data if different user is logging in
+    if (response.user?.id) {
+      await this.clearStaleDataIfNeeded(response.user.id);
+    }
+
     await storage.saveAccessToken(response.access_token);
     await storage.saveRefreshToken(response.refresh_token);
     if (response.user) {
@@ -54,6 +82,11 @@ class AuthService {
       requiresAuth: false,
     });
 
+    // Clear stale data if different user is logging in
+    if (response.user?.id) {
+      await this.clearStaleDataIfNeeded(response.user.id);
+    }
+
     await storage.saveAccessToken(response.access_token);
     await storage.saveRefreshToken(response.refresh_token);
     if (response.user) {
@@ -70,6 +103,8 @@ class AuthService {
 
   // Sign out
   async signOut(): Promise<void> {
+    // Clear all persisted app state (including chat messages) to prevent data leakage between users
+    useAppStore.getState().reset();
     await storage.clearAll();
   }
 
@@ -83,6 +118,8 @@ class AuthService {
       console.warn('AuthService: deleteAccount endpoint not implemented in backend');
       // Still clear local data
     }
+    // Clear all persisted app state (including chat messages) to prevent data leakage between users
+    useAppStore.getState().reset();
     await storage.clearAll();
   }
 
