@@ -514,6 +514,11 @@ export default function ChatScreen() {
 
   const clearConversation = () => {
     clearChatMessages();
+    // Reset greeting state so it shows again after clearing
+    setCortexGreetingShown(false);
+    setProactiveLoaded(false);
+    // Refetch greeting to get a fresh one
+    refetchCortexGreeting();
   };
 
   useEffect(() => {
