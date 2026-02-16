@@ -218,12 +218,12 @@ export class ProactiveNudgeGenerator {
     const nudges: ProactiveNudge[] = [];
 
     // Get commitments related to this entity
+    // Note: commitments table doesn't have container_tag column
     const commitmentsResult = await this.db.prepare(`
       SELECT c.*, ce.role
       FROM commitments c
       LEFT JOIN commitment_entities ce ON ce.commitment_id = c.id AND ce.entity_id = ?
       WHERE c.user_id = ?
-        AND c.container_tag = ?
         AND c.status IN ('pending', 'overdue')
         AND (
           ce.entity_id = ?
@@ -234,7 +234,6 @@ export class ProactiveNudgeGenerator {
     `).bind(
       entity.id,
       this.userId,
-      this.containerTag,
       entity.id,
       entity.name
     ).all();
