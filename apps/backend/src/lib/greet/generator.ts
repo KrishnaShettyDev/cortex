@@ -279,12 +279,12 @@ export class CortexGreetGenerator {
       const result = await this.db.prepare(`
         SELECT
           e.name,
-          julianday('now') - julianday(e.last_seen_at) as days_since_contact
+          julianday('now') - julianday(e.last_mentioned) as days_since_contact
         FROM entities e
         WHERE e.user_id = ?
           AND e.entity_type = 'person'
-          AND e.last_seen_at IS NOT NULL
-          AND julianday('now') - julianday(e.last_seen_at) >= 14
+          AND e.last_mentioned IS NOT NULL
+          AND julianday('now') - julianday(e.last_mentioned) >= 14
         ORDER BY days_since_contact DESC
         LIMIT 5
       `).bind(userId).all();
@@ -292,7 +292,7 @@ export class CortexGreetGenerator {
       return (result.results as any[]).map(r => ({
         name: r.name,
         daysSinceContact: Math.floor(r.days_since_contact || 0),
-        relationship: null, // No metadata column available
+        relationship: null,
       }));
     } catch (error) {
       console.error('[GreetGenerator] Error fetching relationships:', error);

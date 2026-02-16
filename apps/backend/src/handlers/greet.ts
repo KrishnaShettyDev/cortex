@@ -65,11 +65,15 @@ app.get('/', async (c) => {
       userName,
     };
 
-    // Cache for 1 hour
+    // Cache for 1 hour (don't fail request if caching fails)
     if (c.env.CACHE) {
-      await c.env.CACHE.put(cacheKey, JSON.stringify(response), {
-        expirationTtl: 3600, // 1 hour
-      });
+      try {
+        await c.env.CACHE.put(cacheKey, JSON.stringify(response), {
+          expirationTtl: 3600, // 1 hour
+        });
+      } catch (cacheError) {
+        console.warn('[Greet] Failed to cache greeting (non-fatal):', cacheError);
+      }
     }
 
     console.log('[Greet] Generated new greeting for user:', userId, 'type:', greeting.greetType);
