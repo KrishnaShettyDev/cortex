@@ -25,6 +25,7 @@ import relationshipRouter from './handlers/relationship';
 import performanceRouter from './handlers/performance';
 // DELETED: learnings, beliefs, outcomes, sleep - cognitive layer purged for Supermemory++
 import briefingRouter from './handlers/briefing';
+import greetRouter from './handlers/greet';
 import actionsRouter from './handlers/actions';
 import webhooksRouter from './handlers/webhooks';
 import mcpRouter from './handlers/mcp';
@@ -645,6 +646,9 @@ app.get('/v3/beliefs/:id', beliefsHandlers.getBeliefWithEvidence);
 
 // Briefing endpoint (consolidated mobile home screen data)
 app.route('/v3/briefing', briefingRouter);
+
+// Greet endpoint (proactive savage greeting from Cortex)
+app.route('/v3/greet', greetRouter);
 
 // Personality endpoint (per-user AI personality customization)
 app.route('/v3/personality', personalityRouter);
