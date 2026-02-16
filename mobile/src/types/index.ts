@@ -99,6 +99,9 @@ export interface ChatMessage {
   isProactive?: boolean;
   proactiveType?: 'notification' | 'briefing' | 'reminder' | 'insight' | 'action_result';
   metadata?: Record<string, any>;
+  // Cortex greeting flags (savage roast-style)
+  isCortexGreeting?: boolean;
+  greetType?: 'roast' | 'nudge' | 'celebration' | 'curiosity';
 }
 
 export interface MemoryReference {

@@ -18,6 +18,20 @@ export const useGreeting = () => {
   });
 };
 
+// Fetch proactive Cortex greeting (savage roast-style)
+export const useCortexGreeting = () => {
+  return useQuery({
+    queryKey: ['cortex-greeting'],
+    queryFn: () => chatService.getCortexGreeting(),
+    // Greeting is cached for 1 hour on backend, match that here
+    staleTime: 60 * 60 * 1000, // 1 hour
+    gcTime: 60 * 60 * 1000, // 1 hour cache
+    // Refetch on mount to get fresh greeting when app opens
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+  });
+};
+
 // Fetch chat suggestions with auto-refresh
 export const useChatSuggestions = () => {
   return useQuery({

@@ -97,6 +97,18 @@ interface Nudge {
   suggested_action: string;
 }
 
+// Cortex proactive greeting response
+export interface CortexGreetingResponse {
+  greeting: {
+    message: string;
+    greetType: 'roast' | 'nudge' | 'celebration' | 'curiosity';
+    targetedItem?: string;
+    severity: 'light' | 'medium' | 'savage';
+    generatedAt: string;
+  };
+  userName: string;
+}
+
 interface Commitment {
   id: string;
   content: string;
@@ -575,6 +587,33 @@ class ChatService {
       return {
         greeting: `${timeGreeting}!`,
         contextual_message: null,
+      };
+    }
+  }
+
+  /**
+   * Get a proactive, savage greeting from Cortex.
+   * This greeting is designed to start a conversation by roasting
+   * the user about overdue tasks, neglected relationships, etc.
+   */
+  async getCortexGreeting(): Promise<CortexGreetingResponse> {
+    try {
+      const response = await api.request<CortexGreetingResponse>('/v3/greet', {
+        method: 'GET',
+      });
+      return response;
+    } catch (error) {
+      logger.warn('ChatService: Failed to fetch Cortex greeting', error);
+      // Return a fallback greeting
+      return {
+        greeting: {
+          message: "Hey! What chaos are we getting into today? 👀",
+          greetType: 'curiosity',
+          targetedItem: undefined,
+          severity: 'light',
+          generatedAt: new Date().toISOString(),
+        },
+        userName: 'friend',
       };
     }
   }

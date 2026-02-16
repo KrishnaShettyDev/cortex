@@ -43,7 +43,7 @@ import { chatService, speechService, api, StatusUpdate } from '../../src/service
 import { ChatMessage, PendingAction, MemoryReference, ActionTaken } from '../../src/types';
 import { colors, spacing, borderRadius, useTheme } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
-import { useChatSuggestions, useGreeting, useProactiveMessages } from '../../src/hooks/useChat';
+import { useChatSuggestions, useGreeting, useProactiveMessages, useCortexGreeting } from '../../src/hooks/useChat';
 import { useAppStore } from '../../src/stores/appStore';
 import { SkeletonChip } from '../../src/components/Skeleton';
 import { usePostHog } from 'posthog-react-native';
@@ -90,11 +90,17 @@ export default function ChatScreen() {
   // Use React Query for proactive messages (Poke/Iris-style)
   const { data: proactiveData, refetch: refetchProactive } = useProactiveMessages();
 
+  // Use React Query for Cortex greeting (savage roast-style)
+  const { data: cortexGreetingData, refetch: refetchCortexGreeting } = useCortexGreeting();
+
   // State to control when suggestions are visible (only after clicking Suggest actions)
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   // Track if we've loaded proactive messages this session
   const [proactiveLoaded, setProactiveLoaded] = useState(false);
+
+  // Track if we've shown the Cortex greeting this session
+  const [cortexGreetingShown, setCortexGreetingShown] = useState(false);
 
   // Pull-to-refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -111,9 +117,32 @@ export default function ChatScreen() {
     setChatDraft(inputText);
   }, [inputText, setChatDraft]);
 
-  // Load proactive messages on mount (Poke/Iris-style: Cortex texts you first)
+  // Load Cortex greeting on mount (savage roast-style: Cortex initiates conversation)
   useEffect(() => {
-    if (proactiveData && !proactiveLoaded && chatMessages.length === 0) {
+    if (cortexGreetingData && !cortexGreetingShown && chatMessages.length === 0) {
+      const greeting = cortexGreetingData.greeting;
+      if (greeting?.message) {
+        // Add Cortex greeting as first message
+        const greetMessage: ChatMessage = {
+          id: `cortex-greet-${Date.now()}`,
+          role: 'assistant' as const,
+          content: greeting.message,
+          timestamp: new Date(),
+          isCortexGreeting: true,
+          greetType: greeting.greetType,
+        };
+
+        addChatMessage(greetMessage);
+        setCortexGreetingShown(true);
+        logger.log('[Chat] Cortex greeting shown:', greeting.greetType);
+      }
+    }
+  }, [cortexGreetingData, cortexGreetingShown, chatMessages.length, addChatMessage]);
+
+  // Load proactive messages on mount (Poke/Iris-style: Cortex texts you first)
+  // Note: This runs after Cortex greeting, so it may not fire if greeting is shown
+  useEffect(() => {
+    if (proactiveData && !proactiveLoaded && chatMessages.length === 0 && !cortexGreetingShown) {
       const messages = proactiveData || [];
       if (messages.length > 0) {
         // Add recent proactive messages to chat
@@ -136,7 +165,7 @@ export default function ChatScreen() {
         logger.log('[Chat] Loaded proactive messages:', proactiveMessages.length);
       }
     }
-  }, [proactiveData, proactiveLoaded, chatMessages.length, addChatMessage]);
+  }, [proactiveData, proactiveLoaded, chatMessages.length, addChatMessage, cortexGreetingShown]);
 
   // Auto-refresh suggestions when screen comes into focus
   useFocusEffect(
