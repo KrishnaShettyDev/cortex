@@ -242,7 +242,7 @@ async function getUserPreferences(
   // Get interests from entities (topics, organizations)
   const interests = await db.prepare(`
     SELECT name FROM entities
-    WHERE user_id = ? AND type IN ('topic', 'interest', 'hobby')
+    WHERE user_id = ? AND entity_type IN ('topic', 'interest', 'hobby')
     ORDER BY mention_count DESC
     LIMIT 10
   `).bind(userId).all();
@@ -384,13 +384,12 @@ async function getUpcomingCommitments(
 ): Promise<Array<{ content: string; dueDate: string | null; entityName: string | null }>> {
   const commitments = await db.prepare(`
     SELECT
-      c.content,
+      c.description,
       c.due_date,
-      e.name as entity_name
+      c.to_entity_name as entity_name
     FROM commitments c
-    LEFT JOIN entities e ON c.entity_id = e.id
     WHERE c.user_id = ?
-    AND c.status = 'active'
+    AND c.status IN ('pending', 'active')
     AND (c.due_date IS NULL OR c.due_date >= date('now'))
     ORDER BY
       CASE WHEN c.due_date IS NULL THEN 1 ELSE 0 END,
@@ -399,7 +398,7 @@ async function getUpcomingCommitments(
   `).bind(userId).all();
 
   return (commitments.results as any[]).map(c => ({
-    content: c.content,
+    content: c.description,
     dueDate: c.due_date,
     entityName: c.entity_name,
   }));

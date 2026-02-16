@@ -25,10 +25,8 @@ import {
   type HybridSearchOptions,
 } from '../lib/retrieval';
 import { getFormattedProfile } from '../lib/db/profiles';
-import { generateEmbedding, generateEmbeddingsBatch, insertMemoryVector, batchUpsertVectors } from '../lib/vectorize';
-import { invalidateSearchCache } from '../lib/cache';
-import { createProcessingJob, ProcessingPipeline } from '../lib/processing/pipeline';
-import type { ProcessingContext } from '../lib/processing/types';
+import { generateEmbedding, insertMemoryVector } from '../lib/vectorize';
+import { processMemory } from '../lib/processor';
 import { processMemoryWithAUDN } from '../lib/audn';
 import {
   extractContextualMemories,
@@ -41,8 +39,8 @@ import {
  */
 export async function addMemory(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
-    const userId = c.get('jwtPayload').sub;
-    const scope = c.get('tenantScope') || { containerTag: 'default' };
+    const userId = c.get('userId');
+    const scope = c.get('tenantScope');
     const body = await c.req.json<{
       content: string;
       source?: string;
@@ -128,81 +126,16 @@ export async function addMemory(c: Context<{ Bindings: Bindings }>) {
       embedding
     );
 
-    // Invalidate search cache for this user (non-blocking)
-    if (c.env.CACHE) {
-      invalidateSearchCache(c.env.CACHE, userId).catch((err) => {
-        console.warn('[Cache] Failed to invalidate search cache:', err);
-      });
-    }
-
-    // Process async with unified pipeline
+    // Process async (extraction, etc.)
     // SKIP processing for benchmark data (too slow for benchmarking)
-    let job = null;
-    let processingMode = 'skipped';
-
     if (body.source !== 'memorybench') {
-      // Create processing job
-      job = await createProcessingJob(
-        {
-          DB: c.env.DB,
-          VECTORIZE: c.env.VECTORIZE,
-          AI: c.env.AI,
-          QUEUE: c.env.PROCESSING_QUEUE,
-        },
-        memory.id,
-        userId,
-        scope.containerTag
-      );
-
-      // Enqueue for async processing
-      if (c.env.PROCESSING_QUEUE) {
-        // Queue-based processing (preferred)
-        console.log(`[Handler] Sending to queue: ${job.id}`);
-        await c.env.PROCESSING_QUEUE.send({
-          type: 'process_memory',
-          jobId: job.id,
-          memoryId: memory.id,
-          userId,
-          containerTag: scope.containerTag,
-          timestamp: new Date().toISOString(),
-        });
-        processingMode = 'async';
-        console.log(`[Handler] ✓ Queued successfully`);
-      } else {
-        // Fallback: use waitUntil
-        console.log(`[Handler] Using waitUntil for job: ${job.id}`);
-        const ctx: ProcessingContext = {
-          job,
-          env: {
-            DB: c.env.DB,
-            VECTORIZE: c.env.VECTORIZE,
-            AI: c.env.AI,
-            QUEUE: c.env.PROCESSING_QUEUE,
-          },
-        };
-        console.log(`[Handler] Creating pipeline with context:`, {
-          hasJob: !!ctx.job,
-          hasEnv: !!ctx.env,
-          jobId: ctx.job?.id,
-        });
-        const pipeline = new ProcessingPipeline(ctx);
-        console.log(`[Handler] Pipeline created, calling execute via waitUntil`);
-        c.executionCtx.waitUntil(
-          pipeline.execute().catch(err => {
-            console.error(`[Handler] Pipeline execution failed in waitUntil:`, err);
-          })
-        );
-        processingMode = 'waitUntil';
-        console.log(`[Handler] ✓ waitUntil scheduled`);
-      }
+      c.executionCtx.waitUntil(processMemory(c.env, memory.id, userId));
     }
 
     return c.json({
       id: memory.id,
       content: memory.content,
       processing_status: body.source === 'memorybench' ? 'done' : 'queued',
-      processing_mode: processingMode,
-      job_id: job?.id,
       audn_action: body.useAUDN !== false ? 'add' : undefined,
       created_at: memory.created_at,
     });
@@ -218,8 +151,8 @@ export async function addMemory(c: Context<{ Bindings: Bindings }>) {
  */
 export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) {
   return handleError(c, async () => {
-    const userId = c.get('jwtPayload').sub;
-    const scope = c.get('tenantScope') || { containerTag: 'default' };
+    const userId = c.get('userId');
+    const scope = c.get('tenantScope');
     const body = await c.req.json<{
       content: string;
       source?: string;
@@ -259,9 +192,6 @@ export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) 
     }
 
     // Extract contextual memories
-    // NOTE: This is SYNCHRONOUS and slow (30-60s per session).
-    // For production, we should move this to async processing with status polling.
-    // For benchmarking, we keep it sync so the provider can track all extracted memory IDs.
     const contextualMemories = await extractContextualMemories(
       c.env,
       messages,
@@ -278,26 +208,15 @@ export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) 
       `[ContextualMemory] Extracted ${contextualMemories.length} facts`
     );
 
-    // BATCH OPTIMIZATION: Generate all embeddings in one call
-    const facts = contextualMemories.map(cm => cm.fact);
-    const embeddings = await generateEmbeddingsBatch(c.env, facts);
-
-    // Create all memories in D1
+    // Store each extracted fact as a separate memory
     const memoryIds: string[] = [];
     const results = [];
-    const vectorsToUpsert: Array<{
-      id: string;
-      userId: string;
-      content: string;
-      containerTag: string;
-      embedding: number[];
-    }> = [];
 
-    for (let i = 0; i < contextualMemories.length; i++) {
-      const extracted = contextualMemories[i];
-      const embedding = embeddings[i];
-
+    for (const extracted of contextualMemories) {
       try {
+        // Generate embedding
+        const embedding = await generateEmbedding(c.env, extracted.fact);
+
         // Create memory (skip AUDN for now to avoid complexity)
         const memory = await createMemory(c.env.DB, {
           userId,
@@ -312,20 +231,21 @@ export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) 
           },
         });
 
+        // Insert vector
+        await insertMemoryVector(
+          c.env.VECTORIZE,
+          memory.id,
+          userId,
+          extracted.fact,
+          memory.container_tag,
+          embedding
+        );
+
         memoryIds.push(memory.id);
         results.push({
           id: memory.id,
           fact: extracted.fact,
           entities: extracted.entities,
-        });
-
-        // Queue for batch vector upsert
-        vectorsToUpsert.push({
-          id: memory.id,
-          userId,
-          content: extracted.fact,
-          containerTag: memory.container_tag,
-          embedding,
         });
       } catch (error) {
         console.error(
@@ -333,11 +253,6 @@ export async function addContextualMemories(c: Context<{ Bindings: Bindings }>) 
           error
         );
       }
-    }
-
-    // BATCH OPTIMIZATION: Upsert all vectors at once
-    if (vectorsToUpsert.length > 0) {
-      await batchUpsertVectors(c.env.VECTORIZE, vectorsToUpsert);
     }
 
     return c.json({
@@ -431,9 +346,9 @@ export async function deleteMemory(c: Context<{ Bindings: Bindings }>) {
     const userId = c.get('jwtPayload').sub;
     const memoryId = c.req.param('id');
 
-    // Get memory (with user_id filter for security)
-    const memory = await getMemoryById(c.env.DB, memoryId, userId);
-    if (!memory) {
+    // Verify ownership
+    const memory = await getMemoryById(c.env.DB, memoryId);
+    if (!memory || memory.user_id !== userId) {
       return c.json({ error: 'Memory not found' }, 404);
     }
 
@@ -459,9 +374,9 @@ export async function updateMemoryHandler(c: Context<{ Bindings: Bindings }>) {
       relationType?: 'updates' | 'extends';
     }>();
 
-    // Get memory (with user_id filter for security)
-    const memory = await getMemoryById(c.env.DB, memoryId, userId);
-    if (!memory) {
+    // Verify ownership
+    const memory = await getMemoryById(c.env.DB, memoryId);
+    if (!memory || memory.user_id !== userId) {
       return c.json({ error: 'Memory not found' }, 404);
     }
 
