@@ -956,16 +956,6 @@ export default function ChatScreen() {
           </BlurView>
         )}
 
-        {/* Suggestions overlay - appears when button clicked */}
-        {renderSuggestionsOverlay()}
-
-        {/* Suggest actions button - fixed above input */}
-        {!isLoading && !actionToReview && !isRecording && !isTranscribing && (
-          <View style={styles.suggestButtonContainer}>
-            <SuggestActionsButton onPress={handleSuggestActions} />
-          </View>
-        )}
-
         {/* Input Bar with FAB */}
         <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, spacing.sm), backgroundColor: colors.bgPrimary }]}>
           <View style={styles.inputRow}>
