@@ -1,82 +1,128 @@
 /**
  * Skeleton loader for calendar view
+ * Matches the design language of the app's Skeleton components
  */
-import React from 'react';
-import { View, StyleSheet } from 'react-native';
-import Reanimated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import React, { useEffect, useRef } from 'react';
+import { View, StyleSheet, Animated } from 'react-native';
 import { colors, spacing, borderRadius, useTheme } from '../theme';
-import { HOUR_HEIGHT } from '../utils/calendarHelpers';
+import { HOUR_HEIGHT, START_HOUR, END_HOUR } from '../utils/calendarHelpers';
 
-const AnimatedSkeletonView = Reanimated.createAnimatedComponent(View);
+// Reusable animated skeleton block
+const SkeletonBlock: React.FC<{
+  width: number | string;
+  height: number;
+  radius?: number;
+  style?: any;
+  shimmerAnim: Animated.Value;
+  backgroundColor: string;
+}> = ({ width, height, radius = borderRadius.sm, style, shimmerAnim, backgroundColor }) => {
+  const opacity = shimmerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.3, 0.7],
+  });
+
+  return (
+    <Animated.View
+      style={[
+        {
+          width,
+          height,
+          borderRadius: radius,
+          backgroundColor,
+          opacity,
+        },
+        style,
+      ]}
+    />
+  );
+};
 
 export const CalendarSkeletonLoader: React.FC = () => {
   const { colors: themeColors } = useTheme();
-  const opacity = useSharedValue(0.3);
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
 
-  React.useEffect(() => {
-    // Use withRepeat for proper looping animation
-    opacity.value = withRepeat(
-      withTiming(0.7, { duration: 800 }),
-      -1, // Infinite repeat
-      true // Reverse on each iteration
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shimmerAnim, {
+          toValue: 0,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+      ])
     );
-  }, []);
+    animation.start();
+    return () => animation.stop();
+  }, [shimmerAnim]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
+  // Generate realistic event placeholders
+  const eventPlaceholders = [
+    { row: 0, width: '75%', height: 50 },
+    { row: 2, width: '60%', height: 70 },
+    { row: 3, width: '45%', height: 40 },
+    { row: 5, width: '80%', height: 55 },
+    { row: 7, width: '50%', height: 45 },
+  ];
+
+  const hours = Array.from({ length: 8 }, (_, i) => i);
 
   return (
     <View style={styles.container}>
-      {/* Skeleton hour rows with event placeholders */}
-      {Array.from({ length: 8 }).map((_, rowIndex) => (
-        <View key={rowIndex} style={[styles.hourRow, { borderBottomColor: themeColors.glassBorder }]}>
-          {/* Hour label skeleton */}
-          <AnimatedSkeletonView style={[styles.hourLabel, { backgroundColor: themeColors.bgTertiary }, animatedStyle]} />
-          {/* Event skeleton - varying sizes */}
-          {rowIndex % 2 === 0 && (
-            <AnimatedSkeletonView
-              style={[
-                styles.eventBlock,
-                { width: 50 + (rowIndex * 5), backgroundColor: themeColors.bgTertiary },
-                animatedStyle
-              ]}
-            />
-          )}
-          {rowIndex === 1 && (
-            <AnimatedSkeletonView
-              style={[
-                styles.eventBlock,
-                { width: 150, height: 80, backgroundColor: themeColors.bgTertiary },
-                animatedStyle
-              ]}
-            />
-          )}
-          {rowIndex === 3 && (
-            <AnimatedSkeletonView
-              style={[
-                styles.eventBlock,
-                { width: 120, height: 60, backgroundColor: themeColors.bgTertiary },
-                animatedStyle
-              ]}
-            />
-          )}
-          {rowIndex === 5 && (
-            <AnimatedSkeletonView
-              style={[
-                styles.eventBlock,
-                { width: 100, height: 45, backgroundColor: themeColors.bgTertiary },
-                animatedStyle
-              ]}
-            />
-          )}
+      <View style={styles.timelineContainer}>
+        {/* Hours column */}
+        <View style={styles.hoursColumn}>
+          {hours.map((_, index) => (
+            <View key={index} style={styles.hourRow}>
+              <SkeletonBlock
+                width={40}
+                height={12}
+                radius={4}
+                shimmerAnim={shimmerAnim}
+                backgroundColor={themeColors.bgTertiary}
+              />
+            </View>
+          ))}
         </View>
-      ))}
+
+        {/* Events column */}
+        <View style={[styles.eventsColumn, { borderLeftColor: themeColors.glassBorder }]}>
+          {/* Grid lines */}
+          {hours.map((_, index) => (
+            <View
+              key={`grid-${index}`}
+              style={[
+                styles.gridLine,
+                { top: index * HOUR_HEIGHT, backgroundColor: themeColors.glassBorder }
+              ]}
+            />
+          ))}
+
+          {/* Event placeholders */}
+          {eventPlaceholders.map((event, index) => (
+            <View
+              key={`event-${index}`}
+              style={[
+                styles.eventPlaceholder,
+                { top: event.row * HOUR_HEIGHT + 4 }
+              ]}
+            >
+              <SkeletonBlock
+                width={event.width}
+                height={event.height}
+                radius={borderRadius.sm}
+                shimmerAnim={shimmerAnim}
+                backgroundColor={themeColors.bgTertiary}
+                style={styles.eventBlock}
+              />
+            </View>
+          ))}
+        </View>
+      </View>
     </View>
   );
 };
@@ -84,27 +130,41 @@ export const CalendarSkeletonLoader: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
   },
-  hourRow: {
+  timelineContainer: {
     flexDirection: 'row',
-    height: HOUR_HEIGHT,
-    alignItems: 'flex-start',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.glassBorder,
+    flex: 1,
   },
-  hourLabel: {
-    width: 50,
-    height: 12,
-    backgroundColor: colors.bgTertiary,
-    borderRadius: 4,
+  hoursColumn: {
+    width: 60,
+    paddingRight: spacing.sm,
+  },
+  hourRow: {
+    height: HOUR_HEIGHT,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-end',
+    paddingRight: spacing.sm,
+  },
+  eventsColumn: {
+    flex: 1,
+    position: 'relative',
+    borderLeftWidth: 1,
     marginRight: spacing.md,
   },
+  gridLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
+  },
+  eventPlaceholder: {
+    position: 'absolute',
+    left: spacing.sm,
+    right: spacing.sm,
+  },
   eventBlock: {
-    height: 40,
-    backgroundColor: colors.bgTertiary,
-    borderRadius: borderRadius.sm,
-    marginLeft: spacing.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: 'rgba(66, 133, 244, 0.3)',
   },
 });

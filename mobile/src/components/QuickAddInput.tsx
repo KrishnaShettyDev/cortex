@@ -32,6 +32,7 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
   const [isCreating, setIsCreating] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [parsedEvent, setParsedEvent] = useState<ParsedEvent | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
 
   const formatDateContext = (date: Date): string => {
     return date.toLocaleDateString('en-US', {
@@ -141,10 +142,17 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
     setParsedEvent(null);
   }, []);
 
+  const hasText = inputText.trim().length > 0;
+  const canSend = hasText && !isParsing;
+
   return (
     <>
-      <View style={[styles.container, { backgroundColor: themeColors.bgPrimary, borderTopColor: themeColors.glassBorder }]}>
-        <View style={[styles.inputWrapper, { backgroundColor: themeColors.bgSecondary, borderColor: themeColors.glassBorder }]}>
+      <View style={[styles.container, { backgroundColor: themeColors.bgPrimary }]}>
+        <View style={[
+          styles.inputWrapper,
+          { backgroundColor: themeColors.fill },
+          isFocused && { backgroundColor: themeColors.fillSecondary }
+        ]}>
           <Ionicons
             name="calendar-outline"
             size={20}
@@ -155,43 +163,45 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
             style={[styles.input, { color: themeColors.textPrimary }]}
             value={inputText}
             onChangeText={setInputText}
-            placeholder="Add event... &quot;Meeting at 3pm&quot;"
+            placeholder='Add event... "Meeting at 3pm"'
             placeholderTextColor={themeColors.textTertiary}
             editable={!isParsing}
             returnKeyType="send"
             onSubmitEditing={handleSend}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
           />
-          {isParsing && (
+
+          {/* Loading indicator or Send button - inline */}
+          {isParsing ? (
             <ActivityIndicator
               size="small"
               color={themeColors.accent}
-              style={styles.loadingIndicator}
+              style={styles.inlineIndicator}
             />
+          ) : (
+            <TouchableOpacity
+              onPress={handleSend}
+              disabled={!canSend}
+              style={styles.inlineButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              activeOpacity={0.7}
+            >
+              {canSend ? (
+                <LinearGradient
+                  colors={themeGradients.accent}
+                  style={styles.inlineButtonGradient}
+                >
+                  <Ionicons name="arrow-up" size={18} color={themeColors.bgPrimary} />
+                </LinearGradient>
+              ) : (
+                <View style={[styles.inlineButtonInactive, { backgroundColor: themeColors.bgTertiary }]}>
+                  <Ionicons name="arrow-up" size={18} color={themeColors.textTertiary} />
+                </View>
+              )}
+            </TouchableOpacity>
           )}
         </View>
-
-        <TouchableOpacity
-          onPress={handleSend}
-          disabled={!inputText.trim() || isParsing}
-          style={styles.sendButton}
-        >
-          <LinearGradient
-            colors={
-              inputText.trim() && !isParsing
-                ? themeGradients.primary
-                : [themeColors.bgTertiary, themeColors.bgTertiary]
-            }
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.sendGradient}
-          >
-            <Ionicons
-              name="arrow-up"
-              size={20}
-              color={inputText.trim() && !isParsing ? '#fff' : themeColors.textTertiary}
-            />
-          </LinearGradient>
-        </TouchableOpacity>
       </View>
 
       <EventConfirmationModal
@@ -208,45 +218,48 @@ export const QuickAddInput: React.FC<QuickAddInputProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    gap: spacing.sm,
-    backgroundColor: colors.bgPrimary,
-    borderTopWidth: 1,
-    borderTopColor: colors.glassBorder,
   },
   inputWrapper: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.bgSecondary,
-    borderRadius: borderRadius.xl,
-    paddingHorizontal: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
+    borderRadius: 24,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.xs,
+    paddingVertical: spacing.xs,
     minHeight: 48,
+    gap: spacing.sm,
   },
   inputIcon: {
-    marginRight: spacing.sm,
+    marginRight: spacing.xs,
   },
   input: {
     flex: 1,
-    fontSize: 15,
-    color: colors.textPrimary,
+    fontSize: 16,
+    letterSpacing: -0.41,
     paddingVertical: spacing.sm,
   },
-  loadingIndicator: {
-    marginLeft: spacing.sm,
+  inlineIndicator: {
+    marginRight: spacing.sm,
   },
-  sendButton: {
-    borderRadius: 22,
+  inlineButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     overflow: 'hidden',
   },
-  sendGradient: {
-    width: 44,
-    height: 44,
+  inlineButtonGradient: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inlineButtonInactive: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
