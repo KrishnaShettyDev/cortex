@@ -290,7 +290,7 @@ async function getActiveProjects(
     JOIN entity_mentions em ON em.entity_id = e.id
     JOIN memories m ON m.id = em.memory_id
     WHERE e.user_id = ?
-    AND e.type IN ('project', 'work', 'company', 'client')
+    AND e.entity_type IN ('project', 'work', 'company', 'client')
     AND m.created_at > datetime('now', '-30 days')
     GROUP BY e.id
     ORDER BY mention_count DESC
@@ -315,8 +315,8 @@ async function getImportantPeople(
     SELECT
       e.id,
       e.name,
-      json_extract(e.metadata, '$.relationship') as relationship,
-      json_extract(e.metadata, '$.email') as email,
+      json_extract(e.attributes, '$.relationship') as relationship,
+      json_extract(e.attributes, '$.email') as email,
       e.mention_count,
       (
         SELECT MAX(m.created_at)
@@ -325,7 +325,7 @@ async function getImportantPeople(
         WHERE em.entity_id = e.id
       ) as last_contact
     FROM entities e
-    WHERE e.user_id = ? AND e.type = 'person'
+    WHERE e.user_id = ? AND e.entity_type = 'person'
     ORDER BY e.mention_count DESC
     LIMIT 20
   `).bind(userId).all();
@@ -366,7 +366,7 @@ async function getRecentTopics(
     JOIN memories m ON m.id = em.memory_id
     WHERE e.user_id = ?
     AND m.created_at > datetime('now', '-7 days')
-    AND e.type NOT IN ('person') -- Exclude people, focus on topics
+    AND e.entity_type NOT IN ('person') -- Exclude people, focus on topics
     GROUP BY e.id
     ORDER BY cnt DESC
     LIMIT 10

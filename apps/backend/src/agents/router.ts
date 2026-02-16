@@ -918,12 +918,46 @@ Example: "Bitcoin is currently trading at $70,423.20" NOT {"price": "70423.20"}`
           location: args.location,
         });
 
-      case 'calendar_list_events':
-        return this.composioExecute('GOOGLECALENDAR_EVENTS_LIST', connectedAccountId!, {
+      case 'calendar_list_events': {
+        const calendarResult = await this.composioExecute('GOOGLECALENDAR_EVENTS_LIST', connectedAccountId!, {
           time_min: args.time_min || new Date().toISOString(),
           time_max: args.time_max,
           max_results: args.max_results || 10,
         });
+
+        // Transform calendar response to cleaner format for the LLM
+        try {
+          const parsed = JSON.parse(calendarResult);
+          const rawEvents = parsed.data?.items || parsed.items || parsed.data?.events || parsed.events || parsed.data || [];
+
+          if (Array.isArray(rawEvents)) {
+            const events = rawEvents.map((event: any) => ({
+              id: event.id || '',
+              title: event.summary || event.title || '(No title)',
+              start: event.start?.dateTime || event.start?.date || event.startTime || '',
+              end: event.end?.dateTime || event.end?.date || event.endTime || '',
+              location: event.location || null,
+              description: event.description ? event.description.substring(0, 200) : null,
+              attendees: event.attendees?.map((a: any) => a.email || a).slice(0, 5) || [],
+              isAllDay: !event.start?.dateTime,
+              status: event.status || 'confirmed',
+            }));
+
+            return JSON.stringify({
+              success: true,
+              message: events.length > 0
+                ? `Found ${events.length} calendar event(s). STOP calling tools and return this data.`
+                : 'No events found for the specified time range.',
+              events,
+              _instruction: 'Calendar data retrieved successfully. Return this to the user now.',
+            });
+          }
+        } catch {
+          // If parsing fails, return the raw result
+        }
+
+        return calendarResult;
+      }
 
       case 'calendar_update_event':
         return this.composioExecute('GOOGLECALENDAR_UPDATE_EVENT', connectedAccountId!, {
