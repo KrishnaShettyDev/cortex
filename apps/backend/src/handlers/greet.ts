@@ -52,8 +52,12 @@ app.get('/', async (c) => {
 
     const userName = user?.name || user?.email?.split('@')[0] || 'friend';
 
-    // Generate greeting
-    const generator = new CortexGreetGenerator(c.env.DB, c.env.OPENAI_API_KEY);
+    // Generate greeting with Composio integration
+    const generator = new CortexGreetGenerator(
+      c.env.DB,
+      c.env.OPENAI_API_KEY,
+      c.env.COMPOSIO_API_KEY // Pass Composio key for Gmail/Calendar access
+    );
     const greeting = await generator.generateGreeting(userId, userName);
 
     const response = {

@@ -77,6 +77,31 @@ export function buildGreetPrompt(target: RoastTarget, context: GreetContext): st
       prompt += `\nRoast them playfully about having nothing planned. Ask if they're being mysterious/spontaneous or just not getting invited to things.`;
       break;
 
+    case 'email_pile':
+      prompt += `- User has ${target.data.count} UNREAD emails piling up\n`;
+      if (target.data.emails && target.data.emails.length > 0) {
+        prompt += `- Recent unread from: ${target.data.emails.slice(0, 3).map((e: any) => e.from).join(', ')}\n`;
+        prompt += `- Sample subjects: ${target.data.emails.slice(0, 2).map((e: any) => `"${e.subject}"`).join(', ')}\n`;
+      }
+      prompt += `\nRoast them about ignoring their inbox. Call out the email pile and ask what they're avoiding. Be specific about the number.`;
+      break;
+
+    case 'upcoming_meeting':
+      const meeting = target.data.meeting;
+      prompt += `- User has a meeting "${meeting.title}" starting in ${target.data.minutesUntil} minutes\n`;
+      if (target.data.attendeeCount > 0) {
+        prompt += `- Meeting has ${target.data.attendeeCount} attendees\n`;
+      }
+      prompt += `\nRoast them about opening this app with an imminent meeting. Ask if they're prepared or just winging it. Mention the specific meeting name.`;
+      break;
+
+    case 'new_user':
+      prompt += `- This is a new user with very little data\n`;
+      prompt += `- They have ${target.data.memoryCount} memories total\n`;
+      prompt += `- No Gmail or Calendar connected yet\n`;
+      prompt += `\nGive them a playful welcome. Encourage them to connect their email/calendar so you can "properly judge their life choices." Keep it light and curious, asking what's on their mind.`;
+      break;
+
     case 'celebration':
       prompt += `- User has no overdue commitments\n`;
       prompt += `- No neglected relationships (everyone contacted recently)\n`;
