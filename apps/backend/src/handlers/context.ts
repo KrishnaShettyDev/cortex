@@ -346,14 +346,15 @@ export async function deleteMemory(c: Context<{ Bindings: Bindings }>) {
     const userId = c.get('jwtPayload').sub;
     const memoryId = c.req.param('id');
 
-    // Verify ownership
-    const memory = await getMemoryById(c.env.DB, memoryId);
-    if (!memory || memory.user_id !== userId) {
-      return c.json({ error: 'Memory not found' }, 404);
+    // Soft delete in D1 with user isolation
+    try {
+      await forgetMemory(c.env.DB, memoryId, userId);
+    } catch (error: any) {
+      if (error.message?.includes('not found') || error.message?.includes('not authorized')) {
+        return c.json({ error: 'Memory not found' }, 404);
+      }
+      throw error;
     }
-
-    // Soft delete in D1
-    await forgetMemory(c.env.DB, memoryId);
 
     // Note: Vectorize doesn't support delete yet, or we'd delete the vector here
 
@@ -374,18 +375,22 @@ export async function updateMemoryHandler(c: Context<{ Bindings: Bindings }>) {
       relationType?: 'updates' | 'extends';
     }>();
 
-    // Verify ownership
-    const memory = await getMemoryById(c.env.DB, memoryId);
-    if (!memory || memory.user_id !== userId) {
-      return c.json({ error: 'Memory not found' }, 404);
-    }
-
     // Update memory (creates new version)
-    const newMemory = await updateMemory(c.env.DB, {
-      memoryId,
-      newContent: body.content,
-      relationType: body.relationType || 'updates',
-    });
+    // User isolation is enforced by updateMemory via userId parameter
+    let newMemory;
+    try {
+      newMemory = await updateMemory(c.env.DB, {
+        memoryId,
+        userId, // Required for user isolation
+        newContent: body.content,
+        relationType: body.relationType || 'updates',
+      });
+    } catch (error: any) {
+      if (error.message?.includes('not found') || error.message?.includes('not authorized')) {
+        return c.json({ error: 'Memory not found' }, 404);
+      }
+      throw error;
+    }
 
     // Generate embedding for new version
     const embedding = await generateEmbedding(c.env, body.content);

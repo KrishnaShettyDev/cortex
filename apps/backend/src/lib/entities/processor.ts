@@ -30,17 +30,22 @@ import {
 
 export class EntityProcessor {
   private extractor: EntityExtractor;
-  private deduplicator: EntityDeduplicator;
   private db: D1Database;
   private ai: any;
   private cache?: KVNamespace;
 
   constructor(ai: any, db: D1Database, cache?: KVNamespace) {
     this.extractor = new EntityExtractor(ai);
-    this.deduplicator = new EntityDeduplicator(db, ai);
     this.db = db;
     this.ai = ai;
     this.cache = cache;
+  }
+
+  /**
+   * Create deduplicator for specific user (for isolation)
+   */
+  private createDeduplicator(userId: string): EntityDeduplicator {
+    return new EntityDeduplicator(this.db, this.ai, userId);
   }
 
   /**
@@ -138,10 +143,13 @@ export class EntityProcessor {
     const entityNameToId = new Map<string, string>();
 
     // 1. Store all entities (with deduplication)
+    // Create deduplicator with userId for user isolation
+    const deduplicator = this.createDeduplicator(userId);
+
     for (const extracted of result.entities) {
       try {
         // Check for duplicates
-        const deduplicationResult = await this.deduplicator.findMatch(
+        const deduplicationResult = await deduplicator.findMatch(
           extracted,
           userId,
           containerTag

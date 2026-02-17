@@ -39,7 +39,7 @@ export async function getProvenanceChainHandler(c: Context<{ Bindings: Bindings 
     }
 
     // Get provenance chain
-    const tracker = new ProvenanceTracker(c.env.DB);
+    const tracker = new ProvenanceTracker(c.env.DB, userId);
     const chain = await tracker.getProvenanceChain(artifactId, artifactType, direction, maxDepth);
 
     return c.json({
@@ -77,7 +77,7 @@ export async function getEntitySourcesHandler(c: Context<{ Bindings: Bindings }>
     }
 
     // Get source memories via provenance tracker
-    const tracker = new ProvenanceTracker(c.env.DB);
+    const tracker = new ProvenanceTracker(c.env.DB, userId);
     const sourceMemories = await tracker.getSourceMemoriesForEntity(entityId);
 
     // Apply pagination
@@ -125,7 +125,7 @@ export async function getMemoryExtractionsHandler(c: Context<{ Bindings: Binding
     }
 
     // Get all extractions from memory
-    const tracker = new ProvenanceTracker(c.env.DB);
+    const tracker = new ProvenanceTracker(c.env.DB, userId);
     const extractions = await tracker.getExtractionsFromMemory(memoryId);
 
     // Group by extraction type
@@ -187,7 +187,7 @@ export async function getEntityHistoryHandler(c: Context<{ Bindings: Bindings }>
     }
 
     // Get entity history
-    const tracker = new ProvenanceTracker(c.env.DB);
+    const tracker = new ProvenanceTracker(c.env.DB, userId);
     const history = await tracker.getEntityHistory(entityId);
 
     return c.json({
@@ -222,7 +222,7 @@ export async function getProvenanceStatsHandler(c: Context<{ Bindings: Bindings 
     const containerTag = c.req.query('container_tag') || 'default';
 
     // Get provenance stats
-    const tracker = new ProvenanceTracker(c.env.DB);
+    const tracker = new ProvenanceTracker(c.env.DB, userId);
     const stats = await tracker.getProvenanceStats(userId, containerTag);
 
     return c.json({
@@ -256,7 +256,7 @@ export async function getMemoryDerivationsHandler(c: Context<{ Bindings: Binding
     }
 
     // Get forward chain (what was derived from this memory)
-    const tracker = new ProvenanceTracker(c.env.DB);
+    const tracker = new ProvenanceTracker(c.env.DB, userId);
     const chain = await tracker.getProvenanceChain(memoryId, 'memory', 'forward', 5);
 
     return c.json({

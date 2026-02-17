@@ -21,6 +21,7 @@ import { generateEmbedding } from '../vectorize';
 export class EntityDeduplicator {
   private db: D1Database;
   private ai: any;
+  private userId: string; // Required for user isolation
 
   // Thresholds for matching
   private static readonly EXACT_MATCH_THRESHOLD = 1.0;
@@ -28,9 +29,10 @@ export class EntityDeduplicator {
   private static readonly EMBEDDING_MATCH_THRESHOLD = 0.90; // 90% cosine similarity
   private static readonly LLM_CONFIDENCE_THRESHOLD = 0.8;
 
-  constructor(db: D1Database, ai: any) {
+  constructor(db: D1Database, ai: any, userId: string) {
     this.db = db;
     this.ai = ai;
+    this.userId = userId;
   }
 
   /**
@@ -442,12 +444,13 @@ Respond with JSON:
   }
 
   /**
-   * Get entity by ID (helper)
+   * Get entity by ID with user isolation (helper)
    */
   private async getEntityById(entityId: string): Promise<Entity | null> {
+    // Include user_id in WHERE clause for security
     const result = await this.db
-      .prepare('SELECT * FROM entities WHERE id = ?')
-      .bind(entityId)
+      .prepare('SELECT * FROM entities WHERE id = ? AND user_id = ?')
+      .bind(entityId, this.userId)
       .first<any>();
 
     if (!result) return null;
@@ -469,6 +472,6 @@ export async function deduplicateEntity(
   userId: string,
   containerTag: string
 ): Promise<DeduplicationResult> {
-  const deduplicator = new EntityDeduplicator(db, ai);
+  const deduplicator = new EntityDeduplicator(db, ai, userId);
   return deduplicator.findMatch(extracted, userId, containerTag);
 }

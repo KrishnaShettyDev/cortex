@@ -58,6 +58,7 @@ export interface ArtifactNode {
 export class ProvenanceTracker {
   constructor(
     private db: D1Database,
+    private userId: string, // Required for user isolation
     private version: string = '1.0.0'
   ) {}
 
@@ -276,28 +277,29 @@ export class ProvenanceTracker {
   }
 
   /**
-   * Fetch artifact details from appropriate table
+   * Fetch artifact details from appropriate table with user isolation
    */
   private async fetchArtifact(id: string, type: ArtifactType): Promise<ArtifactNode | null> {
     try {
       let result: any;
 
+      // All queries include user_id for security isolation
       switch (type) {
         case 'memory':
-          result = await this.db.prepare('SELECT id, content, created_at FROM memories WHERE id = ?')
-            .bind(id).first();
+          result = await this.db.prepare('SELECT id, content, created_at FROM memories WHERE id = ? AND user_id = ?')
+            .bind(id, this.userId).first();
           break;
         case 'entity':
-          result = await this.db.prepare('SELECT id, name as content, created_at FROM entities WHERE id = ?')
-            .bind(id).first();
+          result = await this.db.prepare('SELECT id, name as content, created_at FROM entities WHERE id = ? AND user_id = ?')
+            .bind(id, this.userId).first();
           break;
         case 'relationship':
-          result = await this.db.prepare('SELECT id, relationship_type as content, created_at FROM entity_relationships WHERE id = ?')
-            .bind(id).first();
+          result = await this.db.prepare('SELECT id, relationship_type as content, created_at FROM entity_relationships WHERE id = ? AND user_id = ?')
+            .bind(id, this.userId).first();
           break;
         case 'commitment':
-          result = await this.db.prepare('SELECT id, title as content, created_at FROM commitments WHERE id = ?')
-            .bind(id).first();
+          result = await this.db.prepare('SELECT id, description as content, created_at FROM commitments WHERE id = ? AND user_id = ?')
+            .bind(id, this.userId).first();
           break;
         default:
           return null;

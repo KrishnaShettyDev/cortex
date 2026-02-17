@@ -314,7 +314,7 @@ export class ConsolidationPipeline {
     for (const cluster of clusters) {
       for (const memory of cluster.memories) {
         try {
-          await forgetMemory(this.context.db, memory.id);
+          await forgetMemory(this.context.db, memory.id, this.context.userId);
           archivedCount++;
         } catch (error) {
           console.error(`[Consolidation] Failed to archive memory ${memory.id}:`, error);

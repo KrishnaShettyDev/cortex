@@ -244,8 +244,10 @@ export async function applyAUDNDecision(
       }
 
       // Update existing memory (creates new version)
+      // userId is required for user isolation security
       const updatedMemory = await updateMemory(env.DB, {
         memoryId: decision.target_memory_id,
+        userId, // Required for user isolation
         newContent,
         relationType: 'updates',
       });
@@ -259,8 +261,8 @@ export async function applyAUDNDecision(
         throw new Error('DELETE action requires target_memory_id');
       }
 
-      // Soft delete (forget) the contradicted memory
-      await forgetMemory(env.DB, decision.target_memory_id);
+      // Soft delete (forget) the contradicted memory with user isolation
+      await forgetMemory(env.DB, decision.target_memory_id, userId);
 
       console.log(`[AUDN] Deleted (forgot) memory ${decision.target_memory_id}`);
 

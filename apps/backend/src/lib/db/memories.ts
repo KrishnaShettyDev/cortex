@@ -63,6 +63,7 @@ export interface CreateMemoryOptions {
 
 export interface UpdateMemoryOptions {
   memoryId: string;
+  userId: string; // Required for user isolation
   newContent: string;
   relationType: 'updates' | 'extends';
 }
@@ -169,14 +170,14 @@ export async function updateMemory(
   db: D1Database,
   options: UpdateMemoryOptions
 ): Promise<Memory> {
-  // Get the current memory
+  // Get the current memory with user_id verification for security
   const current = await db
-    .prepare('SELECT * FROM memories WHERE id = ? AND is_latest = 1')
-    .bind(options.memoryId)
+    .prepare('SELECT * FROM memories WHERE id = ? AND user_id = ? AND is_latest = 1')
+    .bind(options.memoryId, options.userId)
     .first<Memory>();
 
   if (!current) {
-    throw new Error('Memory not found or not latest version');
+    throw new Error('Memory not found or not authorized');
   }
 
   const now = new Date().toISOString();
@@ -311,14 +312,20 @@ export async function getMemoryHistory(
  */
 export async function forgetMemory(
   db: D1Database,
-  memoryId: string
+  memoryId: string,
+  userId: string // Required for user isolation
 ): Promise<void> {
   const now = new Date().toISOString();
 
-  await db
-    .prepare('UPDATE memories SET is_forgotten = 1, updated_at = ? WHERE id = ?')
-    .bind(now, memoryId)
+  // Include user_id in WHERE clause to prevent cross-user memory deletion
+  const result = await db
+    .prepare('UPDATE memories SET is_forgotten = 1, updated_at = ? WHERE id = ? AND user_id = ?')
+    .bind(now, memoryId, userId)
     .run();
+
+  if (result.meta.changes === 0) {
+    throw new Error('Memory not found or not authorized');
+  }
 }
 
 /**
