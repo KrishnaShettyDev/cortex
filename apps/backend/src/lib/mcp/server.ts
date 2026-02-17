@@ -623,17 +623,29 @@ export class CortexMCPServer {
   private async getEntities(args: { type?: string; limit?: number }) {
     const { type = 'all', limit = 20 } = args;
 
-    let typeFilter = '';
+    // Use parameterized query to prevent SQL injection
+    let query: string;
+    let bindings: any[];
+
     if (type !== 'all') {
-      typeFilter = `AND entity_type = '${type}'`;
+      query = `
+        SELECT * FROM entities
+        WHERE user_id = ? AND entity_type = ?
+        ORDER BY importance_score DESC
+        LIMIT ?
+      `;
+      bindings = [this.config.userId, type, limit];
+    } else {
+      query = `
+        SELECT * FROM entities
+        WHERE user_id = ?
+        ORDER BY importance_score DESC
+        LIMIT ?
+      `;
+      bindings = [this.config.userId, limit];
     }
 
-    const entities = await this.config.db.prepare(`
-      SELECT * FROM entities
-      WHERE user_id = ? ${typeFilter}
-      ORDER BY importance_score DESC
-      LIMIT ?
-    `).bind(this.config.userId, limit).all();
+    const entities = await this.config.db.prepare(query).bind(...bindings).all();
 
     return {
       count: entities.results?.length || 0,

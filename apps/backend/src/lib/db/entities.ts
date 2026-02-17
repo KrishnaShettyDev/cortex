@@ -751,23 +751,24 @@ export async function batchUpsertRelationships(
 
   const now = new Date().toISOString();
 
-  // First, find existing relationships
-  const checks = relationships.map((r) =>
-    `(source_entity_id = '${r.sourceEntityId}' AND target_entity_id = '${r.targetEntityId}' AND relationship_type = '${r.relationshipType}')`
-  );
-
-  const existingResult = await db
-    .prepare(
-      `SELECT id, source_entity_id, target_entity_id, relationship_type, source_memory_ids
-       FROM entity_relationships
-       WHERE (${checks.join(' OR ')}) AND valid_to IS NULL`
-    )
-    .all<any>();
-
+  // First, find existing relationships using parameterized queries
+  // Query individually to avoid SQL injection from string interpolation
   const existingMap = new Map<string, any>();
-  for (const row of existingResult.results || []) {
-    const key = `${row.source_entity_id}:${row.target_entity_id}:${row.relationship_type}`;
-    existingMap.set(key, row);
+
+  for (const rel of relationships) {
+    const result = await db
+      .prepare(
+        `SELECT id, source_entity_id, target_entity_id, relationship_type, source_memory_ids
+         FROM entity_relationships
+         WHERE source_entity_id = ? AND target_entity_id = ? AND relationship_type = ? AND valid_to IS NULL`
+      )
+      .bind(rel.sourceEntityId, rel.targetEntityId, rel.relationshipType)
+      .first<any>();
+
+    if (result) {
+      const key = `${result.source_entity_id}:${result.target_entity_id}:${result.relationship_type}`;
+      existingMap.set(key, result);
+    }
   }
 
   // Build batch statements
