@@ -453,29 +453,37 @@ export default function ChatScreen() {
   };
 
   const handleMicPress = async () => {
-    if (isRecording) {
-      setIsRecording(false);
-      const result = await speechService.stopRecording();
+    // Voice transcription temporarily disabled
+    Alert.alert(
+      'Coming Soon',
+      'Voice input is being improved and will be available soon!',
+      [{ text: 'OK' }]
+    );
+    return;
 
-      if (result && result.uri) {
-        posthog?.capture(ANALYTICS_EVENTS.VOICE_RECORDING_COMPLETED, { context: 'chat' });
-        processVoiceInputForChat(result.uri).catch((error) => {
-          logger.error('Voice input error:', error);
-        });
-      }
-    } else {
-      const started = await speechService.startRecording();
-      if (started) {
-        setIsRecording(true);
-        posthog?.capture(ANALYTICS_EVENTS.VOICE_RECORDING_STARTED, { context: 'chat' });
-      } else {
-        Alert.alert(
-          'Microphone Access',
-          'Please enable microphone access in Settings to record voice notes.',
-          [{ text: 'OK' }]
-        );
-      }
-    }
+    // Original implementation (disabled):
+    // if (isRecording) {
+    //   setIsRecording(false);
+    //   const result = await speechService.stopRecording();
+    //   if (result && result.uri) {
+    //     posthog?.capture(ANALYTICS_EVENTS.VOICE_RECORDING_COMPLETED, { context: 'chat' });
+    //     processVoiceInputForChat(result.uri).catch((error) => {
+    //       logger.error('Voice input error:', error);
+    //     });
+    //   }
+    // } else {
+    //   const started = await speechService.startRecording();
+    //   if (started) {
+    //     setIsRecording(true);
+    //     posthog?.capture(ANALYTICS_EVENTS.VOICE_RECORDING_STARTED, { context: 'chat' });
+    //   } else {
+    //     Alert.alert(
+    //       'Microphone Access',
+    //       'Please enable microphone access in Settings to record voice notes.',
+    //       [{ text: 'OK' }]
+    //     );
+    //   }
+    // }
   };
 
   const processVoiceInputForChat = async (audioUri: string) => {
@@ -939,25 +947,7 @@ export default function ChatScreen() {
           showsVerticalScrollIndicator={false}
         />
 
-        {/* Recording indicator */}
-        {isRecording && (
-          <View style={[styles.recordingIndicator, { backgroundColor: colors.fill }]}>
-            <View style={[styles.recordingDot, { backgroundColor: colors.error }]} />
-            <Text style={[styles.recordingText, { color: colors.error }]}>Recording... Tap mic to stop</Text>
-          </View>
-        )}
-
-        {/* Transcribing indicator - Glassmorphic iOS style */}
-        {isTranscribing && (
-          <BlurView intensity={80} tint={isDark ? 'dark' : 'light'} style={styles.transcribingContainer}>
-            <View style={[styles.transcribingContent, { backgroundColor: colors.fill }]}>
-              <View style={[styles.transcribingPulse, { backgroundColor: colors.accentLight }]}>
-                <Animated.View style={[styles.transcribingDot, { backgroundColor: colors.accent, transform: [{ scale: pulseAnim }] }]} />
-              </View>
-              <Text style={[styles.transcribingText, { color: colors.textPrimary }]}>Transcribing...</Text>
-            </View>
-          </BlurView>
-        )}
+        {/* Voice recording/transcription indicators removed - feature temporarily disabled */}
 
         {/* Input Bar with FAB */}
         <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, spacing.sm), backgroundColor: colors.bgPrimary }]}>
@@ -977,42 +967,26 @@ export default function ChatScreen() {
                 onBlur={() => setIsFocused(false)}
                 multiline
                 maxLength={1000}
-                editable={!isRecording && !isTranscribing}
+                editable={!isLoading}
                 blurOnSubmit={false}
               />
-              {/* Mic/Send button inside input */}
-              <TouchableOpacity
-                style={[
-                  styles.inlineButton,
-                  isRecording && [styles.recordingButton, { shadowColor: colors.error }],
-                ]}
-                onPress={handleSendPress}
-                disabled={isLoading}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                activeOpacity={0.7}
-              >
-                <Animated.View style={{ transform: [{ scale: isRecording ? pulseAnim : 1 }] }}>
-                  {inputText.trim() ? (
-                    <LinearGradient
-                      colors={gradients.accent}
-                      style={styles.inlineButtonGradient}
-                    >
-                      <Ionicons name="arrow-up" size={18} color={colors.bgPrimary} />
-                    </LinearGradient>
-                  ) : (
-                    <View style={[
-                      styles.micButton,
-                      isRecording && [styles.micButtonRecording, { backgroundColor: colors.error }]
-                    ]}>
-                      <Ionicons
-                        name={isRecording ? 'stop' : 'mic'}
-                        size={20}
-                        color={isRecording ? colors.textPrimary : colors.textSecondary}
-                      />
-                    </View>
-                  )}
-                </Animated.View>
-              </TouchableOpacity>
+              {/* Send button inside input - only show when there's text */}
+              {inputText.trim() ? (
+                <TouchableOpacity
+                  style={styles.inlineButton}
+                  onPress={handleSendPress}
+                  disabled={isLoading}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  activeOpacity={0.7}
+                >
+                  <LinearGradient
+                    colors={gradients.accent}
+                    style={styles.inlineButtonGradient}
+                  >
+                    <Ionicons name="arrow-up" size={18} color={colors.bgPrimary} />
+                  </LinearGradient>
+                </TouchableOpacity>
+              ) : null}
             </View>
             {/* Add Context FAB */}
             <FloatingActionButton
