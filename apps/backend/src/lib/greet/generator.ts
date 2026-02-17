@@ -472,9 +472,14 @@ export class CortexGreetGenerator {
   }
 
   private selectBestTarget(targets: RoastTarget[]): RoastTarget {
-    // Sort by priority and pick the highest
+    // Sort by priority
     targets.sort((a, b) => b.priority - a.priority);
-    return targets[0];
+
+    // Add randomness: pick from top 3 targets randomly (if available)
+    // This ensures variety in greetings while still prioritizing important targets
+    const topTargets = targets.slice(0, Math.min(3, targets.length));
+    const randomIndex = Math.floor(Math.random() * topTargets.length);
+    return topTargets[randomIndex];
   }
 
   private async generateWithLLM(target: RoastTarget, context: GreetContext): Promise<GreetResult> {

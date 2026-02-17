@@ -44,6 +44,7 @@ import { ChatMessage, PendingAction, MemoryReference, ActionTaken } from '../../
 import { colors, spacing, borderRadius, useTheme } from '../../src/theme';
 import { logger } from '../../src/utils/logger';
 import { useChatSuggestions, useGreeting, useProactiveMessages, useCortexGreeting } from '../../src/hooks/useChat';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAppStore } from '../../src/stores/appStore';
 import { SkeletonChip } from '../../src/components/Skeleton';
 import { usePostHog } from 'posthog-react-native';
@@ -54,6 +55,7 @@ export default function ChatScreen() {
   const posthog = usePostHog();
   const insets = useSafeAreaInsets();
   const { colors, gradients, isDark } = useTheme();
+  const queryClient = useQueryClient();
   const {
     chatDraft,
     setChatDraft,
@@ -512,12 +514,13 @@ export default function ChatScreen() {
     }
   };
 
-  const clearConversation = () => {
+  const clearConversation = async () => {
     clearChatMessages();
     // Reset greeting state so it shows again after clearing
     setCortexGreetingShown(false);
     setProactiveLoaded(false);
-    // Refetch greeting to get a fresh one
+    // Invalidate React Query cache and refetch fresh greeting
+    await queryClient.invalidateQueries({ queryKey: ['cortex-greeting'] });
     refetchCortexGreeting();
   };
 
