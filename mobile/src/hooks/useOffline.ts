@@ -2,6 +2,7 @@ import { useEffect, useCallback, useState } from 'react';
 import { useAppStore } from '../stores/appStore';
 import { useQueryClient } from '@tanstack/react-query';
 import { addBreadcrumb } from '../lib/sentry';
+import { API_BASE_URL } from '../config/env';
 
 // Check if NetInfo native module is available
 const checkNativeModuleAvailable = (): boolean => {
@@ -56,7 +57,7 @@ export const useOffline = () => {
   const checkApiHealth = useCallback(async () => {
     try {
       const response = await fetch(
-        `${process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000'}/health`,
+        `${API_BASE_URL}/health`,
         {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
