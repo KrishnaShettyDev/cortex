@@ -73,8 +73,8 @@ export async function getEntity(c: Context<{ Bindings: Bindings }>) {
       return c.json({ error: 'Entity not found' }, 404);
     }
 
-    // Get relationships
-    const relationships = await getEntityRelationships(c.env.DB, entityId, {
+    // Get relationships (with user_id for security)
+    const relationships = await getEntityRelationships(c.env.DB, entityId, userId, {
       direction: 'both',
     });
 
@@ -97,8 +97,8 @@ export async function getEntity(c: Context<{ Bindings: Bindings }>) {
       relatedEntities.filter((e) => e !== null).map((e) => [e!.id, e!])
     );
 
-    // Get recent memories
-    const memoryIds = await getEntityMemories(c.env.DB, entityId, 10);
+    // Get recent memories (with user_id for security)
+    const memoryIds = await getEntityMemories(c.env.DB, entityId, userId, 10);
     const memories = await Promise.all(
       memoryIds.map((id) => getMemoryById(c.env.DB, id, userId))
     );
@@ -167,7 +167,7 @@ export async function getEntityRelationshipsHandler(
       return c.json({ error: 'Entity not found' }, 404);
     }
 
-    const relationships = await getEntityRelationships(c.env.DB, entityId, {
+    const relationships = await getEntityRelationships(c.env.DB, entityId, userId, {
       direction: direction || 'both',
       relationship_type: relationshipType,
       valid_at: validAt,
@@ -231,7 +231,7 @@ export async function getEntityMemoriesHandler(
       return c.json({ error: 'Entity not found' }, 404);
     }
 
-    const memoryIds = await getEntityMemories(c.env.DB, entityId, limit);
+    const memoryIds = await getEntityMemories(c.env.DB, entityId, userId, limit);
     const memories = await Promise.all(
       memoryIds.map((id) => getMemoryById(c.env.DB, id, userId))
     );

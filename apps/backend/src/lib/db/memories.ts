@@ -402,11 +402,23 @@ export async function searchMemories(
 
 /**
  * Get memory relationships
+ * SECURITY: Requires userId to verify memory ownership
  */
 export async function getMemoryRelations(
   db: D1Database,
-  memoryId: string
+  memoryId: string,
+  userId: string
 ): Promise<MemoryRelation[]> {
+  // First verify the memory belongs to the user
+  const memoryCheck = await db
+    .prepare('SELECT id FROM memories WHERE id = ? AND user_id = ?')
+    .bind(memoryId, userId)
+    .first();
+
+  if (!memoryCheck) {
+    return []; // Memory not found or not authorized
+  }
+
   const result = await db
     .prepare(
       `SELECT * FROM memory_relations

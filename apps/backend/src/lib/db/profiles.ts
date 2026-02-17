@@ -114,28 +114,43 @@ export async function getUserProfile(
 
 /**
  * Update profile fact confidence
+ * SECURITY: Requires userId to prevent cross-tenant updates
  */
 export async function updateProfileConfidence(
   db: D1Database,
   profileId: string,
+  userId: string,
   newConfidence: number
 ): Promise<void> {
   const now = new Date().toISOString();
 
-  await db
-    .prepare('UPDATE user_profiles SET confidence = ?, updated_at = ? WHERE id = ?')
-    .bind(newConfidence, now, profileId)
+  const result = await db
+    .prepare('UPDATE user_profiles SET confidence = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+    .bind(newConfidence, now, profileId, userId)
     .run();
+
+  if (result.meta.changes === 0) {
+    throw new Error('Profile not found or not authorized');
+  }
 }
 
 /**
  * Delete profile fact
+ * SECURITY: Requires userId to prevent cross-tenant deletion
  */
 export async function deleteProfileFact(
   db: D1Database,
-  profileId: string
+  profileId: string,
+  userId: string
 ): Promise<void> {
-  await db.prepare('DELETE FROM user_profiles WHERE id = ?').bind(profileId).run();
+  const result = await db
+    .prepare('DELETE FROM user_profiles WHERE id = ? AND user_id = ?')
+    .bind(profileId, userId)
+    .run();
+
+  if (result.meta.changes === 0) {
+    throw new Error('Profile not found or not authorized');
+  }
 }
 
 /**

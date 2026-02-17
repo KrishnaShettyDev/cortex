@@ -17,6 +17,7 @@ import { getMemoryEntities } from '../db/entities';
 export class ImportanceScorer {
   private db: D1Database;
   private ai: any;
+  private userId: string; // Required for user isolation
 
   // Scoring weights
   private static readonly WEIGHTS = {
@@ -31,9 +32,10 @@ export class ImportanceScorer {
   private static readonly DECAY_HALF_LIFE_DAYS = 30; // Importance halves every 30 days
   private static readonly MAX_AGE_DAYS = 180; // 6 months
 
-  constructor(db: D1Database, ai: any) {
+  constructor(db: D1Database, ai: any, userId: string) {
     this.db = db;
     this.ai = ai;
+    this.userId = userId;
   }
 
   /**
@@ -227,7 +229,7 @@ export class ImportanceScorer {
    */
   private async calculateEntityScore(memoryId: string): Promise<number> {
     try {
-      const entities = await getMemoryEntities(this.db, memoryId);
+      const entities = await getMemoryEntities(this.db, memoryId, this.userId);
 
       if (entities.length === 0) {
         return 0.1; // No entities = lower importance
@@ -340,6 +342,6 @@ export async function scoreMemoryImportance(
   memory: Memory,
   context: ScoringContext
 ): Promise<ImportanceScore> {
-  const scorer = new ImportanceScorer(db, ai);
+  const scorer = new ImportanceScorer(db, ai, context.user_id);
   return scorer.scoreMemory(memory, context);
 }

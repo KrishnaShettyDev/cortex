@@ -461,9 +461,10 @@ app.get('/locations', async (c) => {
  */
 app.post('/locations', async (c) => {
   const userId = c.get('jwtPayload').sub;
+  let body: any;
 
   try {
-    const body = await c.req.json();
+    body = await c.req.json();
 
     if (!body.name || !body.latitude || !body.longitude) {
       return c.json({
@@ -510,7 +511,7 @@ app.post('/locations', async (c) => {
     if (error.message?.includes('UNIQUE constraint')) {
       return c.json({
         error: 'Location already exists',
-        message: `You already have a location named "${(await c.req.json()).name}"`,
+        message: `You already have a location named "${body.name}"`,
       }, 400);
     }
     console.error('[KnownLocations] Create failed:', error);

@@ -105,21 +105,27 @@ export async function createDocument(
 
 /**
  * Update document status
+ * SECURITY: Requires userId to prevent cross-tenant updates
  */
 export async function updateDocumentStatus(
   db: D1Database,
   documentId: string,
+  userId: string,
   status: Document['status'],
   errorMessage?: string
 ): Promise<void> {
   const now = new Date().toISOString();
 
-  await db
+  const result = await db
     .prepare(
-      'UPDATE documents SET status = ?, error_message = ?, updated_at = ? WHERE id = ?'
+      'UPDATE documents SET status = ?, error_message = ?, updated_at = ? WHERE id = ? AND user_id = ?'
     )
-    .bind(status, errorMessage || null, now, documentId)
+    .bind(status, errorMessage || null, now, documentId, userId)
     .run();
+
+  if (result.meta.changes === 0) {
+    throw new Error('Document not found or not authorized');
+  }
 }
 
 /**
@@ -174,13 +180,22 @@ export async function listDocuments(
 
 /**
  * Delete document
+ * SECURITY: Requires userId to prevent cross-tenant deletion
  */
 export async function deleteDocument(
   db: D1Database,
-  documentId: string
+  documentId: string,
+  userId: string
 ): Promise<void> {
   // Chunks will be deleted via CASCADE
-  await db.prepare('DELETE FROM documents WHERE id = ?').bind(documentId).run();
+  const result = await db
+    .prepare('DELETE FROM documents WHERE id = ? AND user_id = ?')
+    .bind(documentId, userId)
+    .run();
+
+  if (result.meta.changes === 0) {
+    throw new Error('Document not found or not authorized');
+  }
 }
 
 /**
@@ -239,16 +254,22 @@ export async function createDocumentChunks(
 
 /**
  * Get document chunks
+ * SECURITY: Requires userId to verify document ownership
  */
 export async function getDocumentChunks(
   db: D1Database,
-  documentId: string
+  documentId: string,
+  userId: string
 ): Promise<DocumentChunk[]> {
+  // Join with documents table to verify user owns the document
   const result = await db
-    .prepare(
-      'SELECT * FROM document_chunks WHERE document_id = ? ORDER BY chunk_index ASC'
-    )
-    .bind(documentId)
+    .prepare(`
+      SELECT dc.* FROM document_chunks dc
+      INNER JOIN documents d ON dc.document_id = d.id
+      WHERE dc.document_id = ? AND d.user_id = ?
+      ORDER BY dc.chunk_index ASC
+    `)
+    .bind(documentId, userId)
     .all<DocumentChunk>();
 
   return result.results || [];

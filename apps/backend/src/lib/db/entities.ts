@@ -207,6 +207,7 @@ export async function getEntitiesByUser(
 
 /**
  * Create or update entity relationship
+ * SECURITY: Verifies both source and target entities belong to the user
  */
 export async function upsertEntityRelationship(
   db: D1Database,
@@ -222,13 +223,29 @@ export async function upsertEntityRelationship(
 ): Promise<EntityRelationship> {
   const now = new Date().toISOString();
 
-  // Check if relationship exists
+  // SECURITY: Verify both entities belong to the user
+  const sourceEntity = await db
+    .prepare('SELECT id FROM entities WHERE id = ? AND user_id = ?')
+    .bind(relationship.source_entity_id, relationship.user_id)
+    .first();
+
+  const targetEntity = await db
+    .prepare('SELECT id FROM entities WHERE id = ? AND user_id = ?')
+    .bind(relationship.target_entity_id, relationship.user_id)
+    .first();
+
+  if (!sourceEntity || !targetEntity) {
+    throw new Error('Source or target entity not found or not authorized');
+  }
+
+  // Check if relationship exists (include user_id for security)
   const existing = await db
     .prepare(
       `SELECT * FROM entity_relationships
-       WHERE source_entity_id = ? AND target_entity_id = ? AND relationship_type = ? AND valid_to IS NULL`
+       WHERE user_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relationship_type = ? AND valid_to IS NULL`
     )
     .bind(
+      relationship.user_id,
       relationship.source_entity_id,
       relationship.target_entity_id,
       relationship.relationship_type
@@ -248,14 +265,15 @@ export async function upsertEntityRelationship(
       .prepare(
         `UPDATE entity_relationships
          SET attributes = ?, source_memory_ids = ?, confidence = ?, updated_at = ?
-         WHERE id = ?`
+         WHERE id = ? AND user_id = ?`
       )
       .bind(
         JSON.stringify(relationship.attributes || {}),
         JSON.stringify(updatedMemoryIds),
         relationship.confidence || existing.confidence,
         now,
-        existing.id
+        existing.id,
+        relationship.user_id
       )
       .run();
 
@@ -309,22 +327,35 @@ export async function upsertEntityRelationship(
 
 /**
  * Get relationships for an entity
+ * SECURITY: Requires userId to verify entity ownership and filter relationships
  */
 export async function getEntityRelationships(
   db: D1Database,
   entityId: string,
+  userId: string,
   options?: {
     direction?: 'outgoing' | 'incoming' | 'both';
     relationship_type?: string;
     valid_at?: string; // Get relationships valid at specific time
   }
 ): Promise<EntityRelationship[]> {
+  // First verify the entity belongs to the user
+  const entityCheck = await db
+    .prepare('SELECT id FROM entities WHERE id = ? AND user_id = ?')
+    .bind(entityId, userId)
+    .first();
+
+  if (!entityCheck) {
+    return []; // Entity not found or not authorized
+  }
+
   let query = '';
   const bindings: any[] = [];
 
+  // Add user_id filter to all queries for security
   if (options?.direction === 'outgoing' || options?.direction === 'both' || !options?.direction) {
-    query += 'SELECT * FROM entity_relationships WHERE source_entity_id = ?';
-    bindings.push(entityId);
+    query += 'SELECT * FROM entity_relationships WHERE source_entity_id = ? AND user_id = ?';
+    bindings.push(entityId, userId);
   }
 
   if (options?.direction === 'both') {
@@ -333,11 +364,11 @@ export async function getEntityRelationships(
 
   if (options?.direction === 'incoming' || options?.direction === 'both') {
     if (!query) {
-      query = 'SELECT * FROM entity_relationships WHERE target_entity_id = ?';
-      bindings.push(entityId);
+      query = 'SELECT * FROM entity_relationships WHERE target_entity_id = ? AND user_id = ?';
+      bindings.push(entityId, userId);
     } else {
-      query += 'SELECT * FROM entity_relationships WHERE target_entity_id = ?';
-      bindings.push(entityId);
+      query += 'SELECT * FROM entity_relationships WHERE target_entity_id = ? AND user_id = ?';
+      bindings.push(entityId, userId);
     }
   }
 
@@ -348,7 +379,7 @@ export async function getEntityRelationships(
     if (query.includes('UNION')) {
       const parts = query.split('UNION');
       query = parts[0] + typeFilter + ' UNION ' + parts[1] + typeFilter;
-      bindings.splice(1, 0, options.relationship_type);
+      bindings.splice(2, 0, options.relationship_type); // After entityId and userId
       bindings.push(options.relationship_type);
     } else {
       query += typeFilter;
@@ -409,20 +440,24 @@ export async function linkMemoryToEntity(
 
 /**
  * Get entities linked to a memory
+ * SECURITY: Requires userId to verify memory ownership
  */
 export async function getMemoryEntities(
   db: D1Database,
-  memoryId: string
+  memoryId: string,
+  userId: string
 ): Promise<Array<Entity & { role: EntityRole; confidence: number }>> {
+  // Join with memories table to verify user owns the memory
   const result = await db
     .prepare(
       `SELECT e.*, me.role, me.confidence
        FROM entities e
        JOIN memory_entities me ON e.id = me.entity_id
-       WHERE me.memory_id = ?
+       JOIN memories m ON me.memory_id = m.id
+       WHERE me.memory_id = ? AND m.user_id = ?
        ORDER BY me.confidence DESC`
     )
-    .bind(memoryId)
+    .bind(memoryId, userId)
     .all<any>();
 
   return (result.results || []).map((e) => ({
@@ -433,12 +468,24 @@ export async function getMemoryEntities(
 
 /**
  * Get memories linked to an entity
+ * SECURITY: Requires userId to verify entity ownership
  */
 export async function getEntityMemories(
   db: D1Database,
   entityId: string,
+  userId: string,
   limit: number = 50
 ): Promise<string[]> {
+  // First verify the entity belongs to the user
+  const entityCheck = await db
+    .prepare('SELECT id FROM entities WHERE id = ? AND user_id = ?')
+    .bind(entityId, userId)
+    .first();
+
+  if (!entityCheck) {
+    return []; // Entity not found or not authorized
+  }
+
   const result = await db
     .prepare(
       `SELECT memory_id FROM memory_entities
@@ -454,35 +501,47 @@ export async function getEntityMemories(
 
 /**
  * Update entity importance score
+ * SECURITY: Requires userId to prevent cross-tenant updates
  */
 export async function updateEntityImportance(
   db: D1Database,
   entityId: string,
+  userId: string,
   importanceScore: number
 ): Promise<void> {
-  await db
+  const result = await db
     .prepare(
-      'UPDATE entities SET importance_score = ?, updated_at = ? WHERE id = ?'
+      'UPDATE entities SET importance_score = ?, updated_at = ? WHERE id = ? AND user_id = ?'
     )
-    .bind(importanceScore, new Date().toISOString(), entityId)
+    .bind(importanceScore, new Date().toISOString(), entityId, userId)
     .run();
+
+  if (result.meta.changes === 0) {
+    throw new Error('Entity not found or not authorized');
+  }
 }
 
 /**
  * Invalidate relationship (set valid_to)
+ * SECURITY: Requires userId to prevent cross-tenant updates
  */
 export async function invalidateRelationship(
   db: D1Database,
   relationshipId: string,
+  userId: string,
   validTo?: string
 ): Promise<void> {
   const validToDate = validTo || new Date().toISOString();
-  await db
+  const result = await db
     .prepare(
-      'UPDATE entity_relationships SET valid_to = ?, updated_at = ? WHERE id = ?'
+      'UPDATE entity_relationships SET valid_to = ?, updated_at = ? WHERE id = ? AND user_id = ?'
     )
-    .bind(validToDate, new Date().toISOString(), relationshipId)
+    .bind(validToDate, new Date().toISOString(), relationshipId, userId)
     .run();
+
+  if (result.meta.changes === 0) {
+    throw new Error('Relationship not found or not authorized');
+  }
 }
 
 // ============================================================================

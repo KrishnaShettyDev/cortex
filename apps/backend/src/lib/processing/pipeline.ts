@@ -614,7 +614,7 @@ export class ProcessingPipeline {
     const { ImportanceScorer } = await import('../consolidation/importance-scorer');
 
     try {
-      const scorer = new ImportanceScorer(this.ctx.env.DB, this.ctx.env.AI);
+      const scorer = new ImportanceScorer(this.ctx.env.DB, this.ctx.env.AI, job.userId);
       const result = await scorer.scoreMemory(memory, {
         user_id: job.userId,
         current_date: new Date(),

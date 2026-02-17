@@ -140,13 +140,30 @@ async function handleCallback(
   if (!userId) {
     console.log(`[${config.name} Callback] userId missing, looking up pending connection...`);
 
-    // Find most recent pending connection for this provider (within last 10 minutes)
-    const pending = await c.env.DB.prepare(`
-      SELECT id, user_id FROM pending_connections
-      WHERE provider = ? AND created_at > datetime('now', '-10 minutes')
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).bind(provider).first<{ id: string; user_id: string }>();
+    // SECURITY FIX: Use connectedAccountId to match the specific pending connection
+    // Fallback to provider-only match ONLY if no connectedAccountId available
+    let pending: { id: string; user_id: string } | null = null;
+
+    if (connectedAccountId) {
+      // Best case: Match by the specific connection ID stored when initiating OAuth
+      pending = await c.env.DB.prepare(`
+        SELECT id, user_id FROM pending_connections
+        WHERE id = ? AND provider = ? AND created_at > datetime('now', '-10 minutes')
+        LIMIT 1
+      `).bind(connectedAccountId, provider).first<{ id: string; user_id: string }>();
+    }
+
+    // Only fall back to recent-by-provider if we have no connectedAccountId at all
+    // This is less secure but necessary for some OAuth flows
+    if (!pending && !connectedAccountId) {
+      console.warn(`[${config.name} Callback] No connectedAccountId, using fallback lookup (less secure)`);
+      pending = await c.env.DB.prepare(`
+        SELECT id, user_id FROM pending_connections
+        WHERE provider = ? AND created_at > datetime('now', '-10 minutes')
+        ORDER BY created_at DESC
+        LIMIT 1
+      `).bind(provider).first<{ id: string; user_id: string }>();
+    }
 
     if (pending) {
       // ALWAYS use our stored ID (which is the UUID for v2 API compatibility)
