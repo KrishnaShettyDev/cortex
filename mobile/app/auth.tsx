@@ -205,7 +205,7 @@ export default function AuthScreen() {
       <View style={styles.content}>
         {/* Top Section - Logo and Brand */}
         <View style={styles.brandSection}>
-          <GradientIcon size={80} variant="solid" />
+          <GradientIcon size={80} />
           <Text style={styles.brandName}>Cortex</Text>
           <Text style={styles.tagline}>Your AI-powered second brain</Text>
         </View>
