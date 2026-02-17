@@ -44,8 +44,12 @@ async function fetchNudges(): Promise<NudgesResponse> {
     const response = await api.request<NudgesResponse>('/v3/nudges');
     return response;
   } catch (error: unknown) {
-    logger.error('Failed to fetch nudges:', error);
-    // Return empty state on error
+    // Don't log session expiration errors - handled by auth system
+    const errorMessage = error instanceof Error ? error.message : '';
+    if (!errorMessage.includes('Session expired')) {
+      logger.warn('Nudges: fetch failed (non-critical):', errorMessage);
+    }
+    // Return empty state on error - UI handles this gracefully
     return {
       nudges: [],
       metadata: {

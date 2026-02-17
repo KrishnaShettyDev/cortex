@@ -540,7 +540,11 @@ class ChatService {
 
       return { suggestions };
     } catch (error) {
-      logger.warn('ChatService: Failed to fetch suggestions from /v3/nudges', error);
+      // Don't log session expiration - handled by auth system
+      const errorMessage = error instanceof Error ? error.message : '';
+      if (!errorMessage.includes('Session expired')) {
+        logger.warn('ChatService: Failed to fetch suggestions', errorMessage);
+      }
       return { suggestions: [] };
     }
   }
@@ -603,7 +607,11 @@ class ChatService {
       });
       return response;
     } catch (error) {
-      logger.warn('ChatService: Failed to fetch Cortex greeting', error);
+      // Don't log session expiration - handled by auth system
+      const errorMessage = error instanceof Error ? error.message : '';
+      if (!errorMessage.includes('Session expired')) {
+        logger.warn('ChatService: Failed to fetch Cortex greeting', errorMessage);
+      }
       // Return a fallback greeting
       return {
         greeting: {
@@ -778,7 +786,11 @@ class ChatService {
         generated_at: new Date().toISOString(),
       };
     } catch (error) {
-      logger.warn('ChatService: Failed to fetch briefing from /v3/briefing', error);
+      // Don't log session expiration - handled by auth system
+      const errorMessage = error instanceof Error ? error.message : '';
+      if (!errorMessage.includes('Session expired')) {
+        logger.warn('ChatService: Failed to fetch briefing', errorMessage);
+      }
       // Fallback to legacy method if consolidated endpoint fails
       return this.getBriefingLegacy();
     }
@@ -881,7 +893,11 @@ class ChatService {
         triggerId: msg.trigger_id,
       }));
     } catch (error) {
-      logger.warn('ChatService: Failed to fetch proactive messages', error);
+      // Don't log session expiration - handled by auth system
+      const errorMessage = error instanceof Error ? error.message : '';
+      if (!errorMessage.includes('Session expired')) {
+        logger.warn('ChatService: Failed to fetch proactive messages', errorMessage);
+      }
       return [];
     }
   }

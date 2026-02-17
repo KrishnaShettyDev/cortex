@@ -6,6 +6,24 @@ import { MemoryReference, PendingAction, ActionTaken } from '../types';
 // Re-export ActionTaken from types to maintain backwards compatibility
 export type { ActionTaken } from '../types';
 
+// Session expiration handler - set by AuthContext
+let sessionExpiredHandler: (() => void) | null = null;
+
+export function setSessionExpiredHandler(handler: () => void) {
+  sessionExpiredHandler = handler;
+}
+
+export function clearSessionExpiredHandler() {
+  sessionExpiredHandler = null;
+}
+
+function handleSessionExpired() {
+  logger.warn('API: Session expired, triggering logout');
+  if (sessionExpiredHandler) {
+    sessionExpiredHandler();
+  }
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
   body?: unknown;
@@ -241,6 +259,8 @@ class ApiService {
           }
           return retryResponse.json();
         }
+        // Session truly expired - trigger logout
+        handleSessionExpired();
         throw new Error('Session expired. Please log in again.');
       }
 
@@ -348,6 +368,8 @@ class ApiService {
           token = await storage.getAccessToken();
           response = await makeRequest(token);
         } else {
+          // Session truly expired - trigger logout
+          handleSessionExpired();
           callbacks.onError?.('Session expired. Please log in again.');
           return;
         }

@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { authService } from '../services/auth';
 import { storage } from '../services/storage';
+import { setSessionExpiredHandler, clearSessionExpiredHandler } from '../services/api';
 import { User } from '../types';
 import { logger } from '../utils/logger';
 
@@ -23,6 +24,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Handle session expiration - automatically sign out user
+  const handleSessionExpired = useCallback(async () => {
+    logger.warn('AuthContext: Session expired, signing out user');
+    await authService.signOut();
+    setUser(null);
+    setIsAuthenticated(false);
+    setError('Your session has expired. Please sign in again.');
+  }, []);
+
+  // Register session expiration handler with API service
+  useEffect(() => {
+    setSessionExpiredHandler(handleSessionExpired);
+    return () => {
+      clearSessionExpiredHandler();
+    };
+  }, [handleSessionExpired]);
 
   useEffect(() => {
     checkAuth();
