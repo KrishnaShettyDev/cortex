@@ -131,6 +131,43 @@ function PhotoMemoryCard({ photoUrl }: { photoUrl: string }) {
 
 // ============ ACTION CARD (Completed actions) ============
 function ActionCard({ action, colors }: { action: ActionTaken; colors: any }) {
+  // Get user-friendly failure message based on action type and error
+  const getFailureInfo = (): { title: string; subtitle: string } => {
+    const errorMsg = (action.result.message || '').toLowerCase();
+    const tool = action.tool.toLowerCase();
+
+    // Restaurant/booking related failures
+    if (tool.includes('reserv') || tool.includes('book') || tool.includes('restaurant') ||
+        errorMsg.includes('reserv') || errorMsg.includes('book')) {
+      return {
+        title: 'Online Booking Unavailable',
+        subtitle: 'Call the venue directly to reserve',
+      };
+    }
+
+    // Max iterations = couldn't complete the task
+    if (errorMsg.includes('max iteration') || errorMsg.includes('iteration')) {
+      return {
+        title: 'Couldn\'t Complete',
+        subtitle: 'Try a simpler request or do it manually',
+      };
+    }
+
+    // Integration/connection issues
+    if (errorMsg.includes('connect') || errorMsg.includes('auth') || errorMsg.includes('permission')) {
+      return {
+        title: 'Connection Issue',
+        subtitle: 'Check your connected accounts',
+      };
+    }
+
+    // Default failure message
+    return {
+      title: 'Couldn\'t Complete',
+      subtitle: action.result.message || 'Something went wrong',
+    };
+  };
+
   const getActionInfo = () => {
     switch (action.tool) {
       case 'create_calendar_event':
@@ -185,7 +222,12 @@ function ActionCard({ action, colors }: { action: ActionTaken; colors: any }) {
 
   const renderIcon = () => {
     if (!isSuccess) {
-      return <Ionicons name="close-circle" size={18} color={colors.error} />;
+      // Use info icon for "unavailable" scenarios (less alarming than error)
+      const failureInfo = getFailureInfo();
+      if (failureInfo.title.includes('Unavailable') || failureInfo.title.includes('Connection')) {
+        return <Ionicons name="information-circle" size={18} color={colors.warning || '#F59E0B'} />;
+      }
+      return <Ionicons name="alert-circle" size={18} color={colors.warning || '#F59E0B'} />;
     }
     if (info.useServiceIcon === 'gmail') {
       return <GmailIcon size={18} />;
@@ -202,9 +244,21 @@ function ActionCard({ action, colors }: { action: ActionTaken; colors: any }) {
     }
   };
 
+  // Determine if this is a "soft" failure (unavailable) vs hard error
+  const failureInfo = !isSuccess ? getFailureInfo() : null;
+  const isSoftFailure = failureInfo?.title.includes('Unavailable') || failureInfo?.title.includes('Connection');
+  const warningColor = '#F59E0B'; // Amber warning color
+
   return (
     <TouchableOpacity
-      style={[styles.actionCard, { backgroundColor: colors.fill, borderColor: colors.glassBorder }, !isSuccess && styles.actionCardError]}
+      style={[
+        styles.actionCard,
+        { backgroundColor: colors.fill, borderColor: colors.glassBorder },
+        !isSuccess && (isSoftFailure
+          ? { borderColor: warningColor + '40', backgroundColor: warningColor + '10' }
+          : styles.actionCardError
+        ),
+      ]}
       onPress={handlePress}
       disabled={!action.result.event_url}
       activeOpacity={0.7}
@@ -213,9 +267,11 @@ function ActionCard({ action, colors }: { action: ActionTaken; colors: any }) {
         {renderIcon()}
       </View>
       <View style={styles.actionContent}>
-        <Text style={[styles.actionTitle, { color: colors.textPrimary }]}>{isSuccess ? info.title : 'Action Failed'}</Text>
+        <Text style={[styles.actionTitle, { color: colors.textPrimary }]}>
+          {isSuccess ? info.title : getFailureInfo().title}
+        </Text>
         <Text style={[styles.actionSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-          {isSuccess ? info.subtitle : action.result.message}
+          {isSuccess ? info.subtitle : getFailureInfo().subtitle}
         </Text>
       </View>
       {action.result.event_url && (
